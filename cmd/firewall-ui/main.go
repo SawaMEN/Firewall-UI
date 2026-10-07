@@ -10,13 +10,16 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/SawaMEN/Firewall-UI/internal/appconfig"
+	"github.com/SawaMEN/Firewall-UI/internal/audit"
 	"github.com/SawaMEN/Firewall-UI/internal/buildinfo"
+	"github.com/SawaMEN/Firewall-UI/internal/history"
 	"github.com/SawaMEN/Firewall-UI/internal/server"
 	"github.com/SawaMEN/Firewall-UI/internal/service"
 	"github.com/SawaMEN/Firewall-UI/internal/updater"
@@ -100,6 +103,11 @@ func main() {
 	}
 	updateManager := updater.New(app.Restart)
 	app.Updater = updateManager
+	dataDir := filepath.Dir(cfg.StatePath)
+	app.Audit = audit.New(filepath.Join(dataDir, "audit.jsonl"))
+	app.History = history.New(filepath.Join(dataDir, "history.jsonl"))
+	portMonitor := service.NewPortMonitor("/proc", time.Duration(cfg.PortScanInterval)*time.Second)
+	app.PortMonitor = portMonitor
 	app.Firewall.StartAutoSync()
 
 	srv := &http.Server{
@@ -115,6 +123,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	portMonitor.Start(ctx)
 	go updateManager.Run(ctx, *configPath)
 	go func() {
 		<-ctx.Done()
