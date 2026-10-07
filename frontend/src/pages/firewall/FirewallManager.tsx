@@ -187,7 +187,7 @@ export function FirewallManager() {
   }
 
   async function deleteAdvanced(id: string) {
-    setAction(\`advanced-\${id}\`);
+    setAction(`advanced-${id}`);
     try {
       const result = await HttpUtil.post<AdvancedResponse>('/api/firewall/advanced/delete', { id });
       if (result.success && result.obj) setAdvanced(result.obj.rules);
@@ -255,7 +255,7 @@ export function FirewallManager() {
       <Card className="panel-card" title={text.activeRules}>
         <Table<FirewallRule>
           size="small"
-          rowKey={(rule) => \`\${portLabel(rule)}-\${rule.protocol}-\${rule.source}\`}
+          rowKey={(rule) => `${portLabel(rule)}-${rule.protocol}-${rule.source}`}
           dataSource={status.rules || []}
           pagination={false}
           scroll={{ x: 700 }}
@@ -303,7 +303,7 @@ export function FirewallManager() {
         <Table<FirewallManualRule>
           size="small"
           pagination={false}
-          rowKey={(rule) => \`\${rule.port}-\${rule.protocol}\`}
+          rowKey={(rule) => `${rule.port}-${rule.protocol}`}
           dataSource={status.manualRules || []}
           columns={[
             { title: text.port, dataIndex: 'port', width: 100 },
@@ -313,7 +313,7 @@ export function FirewallManager() {
               title: '',
               width: 100,
               render: (_, rule) => (
-                <Popconfirm title={ru ? 'Удалить правило?' : 'Delete rule?'} onConfirm={() => void mutate('/panel/api/server/firewall/rules/delete', { port: rule.port, protocol: rule.protocol }, \`basic-\${rule.port}-\${rule.protocol}\`)}>
+                <Popconfirm title={ru ? 'Удалить правило?' : 'Delete rule?'} onConfirm={() => void mutate('/panel/api/server/firewall/rules/delete', { port: rule.port, protocol: rule.protocol }, `basic-${rule.port}-${rule.protocol}`)}>
                   <Button danger size="small">{text.remove}</Button>
                 </Popconfirm>
               ),
@@ -359,7 +359,7 @@ export function FirewallManager() {
           columns={[
             { title: text.action, dataIndex: 'action', width: 100, render: (value: string) => <Tag color={value === 'deny' ? 'error' : 'success'}>{value.toUpperCase()}</Tag> },
             { title: text.protocol, dataIndex: 'protocol', width: 100, render: (value: string) => <Tag>{value.toUpperCase()}</Tag> },
-            { title: text.range, render: (_, rule) => rule.portStart ? (rule.portEnd && rule.portEnd !== rule.portStart ? \`\${rule.portStart}-\${rule.portEnd}\` : rule.portStart) : 'ANY', width: 120 },
+            { title: text.range, render: (_, rule) => rule.portStart ? (rule.portEnd && rule.portEnd !== rule.portStart ? `${rule.portStart}-${rule.portEnd}` : rule.portStart) : 'ANY', width: 120 },
             { title: text.sourceCidr, dataIndex: 'sourceCidr', render: (value?: string) => value || 'ANY' },
             { title: text.iface, dataIndex: 'interface', render: (value?: string) => value || 'ANY', width: 120 },
             { title: text.family, dataIndex: 'ipVersion', width: 100 },
@@ -371,7 +371,7 @@ export function FirewallManager() {
               fixed: 'right',
               render: (_, rule) => (
                 <Popconfirm title={ru ? 'Удалить расширенное правило?' : 'Delete advanced rule?'} onConfirm={() => void deleteAdvanced(rule.id)}>
-                  <Button danger size="small" loading={action === \`advanced-\${rule.id}\`}>{text.remove}</Button>
+                  <Button danger size="small" loading={action === `advanced-${rule.id}`}>{text.remove}</Button>
                 </Popconfirm>
               ),
             },
