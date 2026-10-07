@@ -561,7 +561,7 @@ export default function SettingsPage() {
         <Card className="panel-card" title={text.audit}>
           <Table<AuditEntry>
             size="small"
-            rowKey={(row) => \`\${row.time}-\${row.action}-\${row.remoteIp || ''}\`}
+            rowKey={(row) => `${row.time}-${row.action}-${row.remoteIp || ''}`}
             dataSource={audit}
             pagination={{ pageSize: 12, showSizeChanger: true }}
             scroll={{ x: 760 }}
