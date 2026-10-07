@@ -63,7 +63,7 @@ type Manager struct {
 
 func New(restart func()) *Manager {
 	return &Manager{
-		client: &http.Client{Timeout: 30 * time.Second},
+		client:  &http.Client{Timeout: 30 * time.Second},
 		restart: restart,
 		trigger: make(chan struct{}, 1),
 	}
@@ -180,13 +180,13 @@ func statusFor(channel string, manifest Manifest) Status {
 		available = current.Channel != "stable" || stableVersionNewer(current.Version, manifest.Version)
 	}
 	return Status{
-		CurrentVersion: current.Version,
-		CurrentChannel: current.Channel,
-		CurrentCommit: current.Commit,
+		CurrentVersion:  current.Version,
+		CurrentChannel:  current.Channel,
+		CurrentCommit:   current.Commit,
 		SelectedChannel: channel,
-		LatestVersion: manifest.Version,
-		LatestCommit: manifest.Commit,
-		Available: available,
+		LatestVersion:   manifest.Version,
+		LatestCommit:    manifest.Commit,
+		Available:       available,
 	}
 }
 
