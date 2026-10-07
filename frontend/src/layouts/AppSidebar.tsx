@@ -1,6 +1,7 @@
 import { useState, type CSSProperties } from 'react';
 import { Button, Drawer, Layout, Menu, Select, Space } from 'antd';
 import {
+  DashboardOutlined,
   DatabaseOutlined,
   LogoutOutlined,
   MenuOutlined,
@@ -13,7 +14,7 @@ import { useTheme, type ThemeMode } from '@/hooks/useTheme';
 import { HttpUtil } from '@/utils';
 import './AppSidebar.css';
 
-export type PageKey = 'firewall' | 'ports' | 'settings';
+export type PageKey = 'overview' | 'firewall' | 'ports' | 'settings';
 
 type Props = {
   page: PageKey;
@@ -28,6 +29,7 @@ export default function AppSidebar({ page, onPageChange }: Props) {
   const ru = i18n.language.startsWith('ru');
 
   const items = [
+    { key: 'overview', icon: <DashboardOutlined />, label: ru ? 'Обзор' : 'Overview' },
     { key: 'firewall', icon: <SafetyOutlined />, label: ru ? 'Файрволл' : 'Firewall' },
     { key: 'ports', icon: <DatabaseOutlined />, label: ru ? 'Порты и процессы' : 'Ports & processes' },
     { key: 'settings', icon: <SettingOutlined />, label: ru ? 'Настройки' : 'Settings' },
