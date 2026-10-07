@@ -1,0 +1,29 @@
+name: Format hardening branch
+on:
+  push:
+    branches:
+      - firewall-v2-hardening
+permissions:
+  contents: write
+jobs:
+  gofmt:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: firewall-v2-hardening
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+      - run: gofmt -w ./cmd ./internal
+      - name: Commit formatting
+        run: |
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add cmd internal
+          git commit -m "Apply gofmt"
+          git push origin HEAD:firewall-v2-hardening
