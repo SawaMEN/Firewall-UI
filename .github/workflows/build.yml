@@ -37,8 +37,10 @@ jobs:
       - name: Build Linux binaries
         run: |
           mkdir -p dist
+          short_sha="${GITHUB_SHA:0:12}"
+          ldflags="-s -w -X github.com/SawaMEN/Firewall-UI/internal/updater.Version=ci-${short_sha} -X github.com/SawaMEN/Firewall-UI/internal/updater.Commit=${GITHUB_SHA} -X github.com/SawaMEN/Firewall-UI/internal/updater.BuildChannel=dev"
           for arch in amd64 arm64; do
-            GOOS=linux GOARCH=$arch CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o dist/firewall-ui-linux-$arch ./cmd/firewall-ui
+            GOOS=linux GOARCH=$arch CGO_ENABLED=0 go build -trimpath -ldflags="$ldflags" -o dist/firewall-ui-linux-$arch ./cmd/firewall-ui
           done
       - uses: actions/upload-artifact@v4
         with:
