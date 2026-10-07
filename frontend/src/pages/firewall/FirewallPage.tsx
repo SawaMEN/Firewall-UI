@@ -1,10 +1,16 @@
 import { useMemo, useState } from 'react';
 import { ConfigProvider, Layout, Space, Typography } from 'antd';
-import { DatabaseOutlined, SafetyOutlined, SettingOutlined } from '@ant-design/icons';
+import {
+  DashboardOutlined,
+  DatabaseOutlined,
+  SafetyOutlined,
+  SettingOutlined,
+} from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 
 import AppSidebar, { type PageKey } from '@/layouts/AppSidebar';
 import { useTheme } from '@/hooks/useTheme';
+import DashboardPage from '@/pages/dashboard/DashboardPage';
 import SettingsPage from '@/pages/settings/SettingsPage';
 import { FirewallManager } from './FirewallManager';
 import { PortsTable } from './PortsTable';
@@ -12,31 +18,38 @@ import { PortsTable } from './PortsTable';
 export default function FirewallPage() {
   const { i18n } = useTranslation();
   const { antdThemeConfig } = useTheme();
-  const [page, setPage] = useState<PageKey>('firewall');
+  const [page, setPage] = useState<PageKey>('overview');
   const ru = (i18n.resolvedLanguage || i18n.language || '').toLowerCase().startsWith('ru');
 
   const meta = useMemo(
     () => ({
+      overview: {
+        icon: <DashboardOutlined />,
+        title: ru ? 'Обзор' : 'Overview',
+        subtitle: ru
+          ? 'Состояние файрволла, публичные сервисы, контейнеры и потенциально опасные порты.'
+          : 'Firewall health, public services, containers and potentially exposed ports.',
+      },
       firewall: {
         icon: <SafetyOutlined />,
         title: ru ? 'Файрволл' : 'Firewall',
         subtitle: ru
-          ? 'Управление системным файрволлом, автоматической синхронизацией и ручными правилами.'
-          : 'Manage the system firewall, automatic synchronization, and manual rules.',
+          ? 'Автосинхронизация, простые правила и расширенные CIDR/allow/deny политики.'
+          : 'Auto-sync, simple rules and advanced CIDR/allow/deny policies.',
       },
       ports: {
         icon: <DatabaseOutlined />,
         title: ru ? 'Порты и процессы' : 'Ports & processes',
         subtitle: ru
-          ? 'Все локальные TCP/UDP-сокеты IPv4/IPv6 и процессы, которые их используют.'
-          : 'All local IPv4/IPv6 TCP/UDP sockets and the processes that own them.',
+          ? 'Live TCP/UDP-сокеты, процессы и публикации Docker/Podman.'
+          : 'Live TCP/UDP sockets, processes and Docker/Podman publications.',
       },
       settings: {
         icon: <SettingOutlined />,
         title: ru ? 'Настройки' : 'Settings',
         subtitle: ru
-          ? 'Параметры доступа к веб-панели и безопасный перезапуск сервиса.'
-          : 'Web-panel access settings and safe service restart.',
+          ? 'Доступ к панели, 2FA, CIDR allowlist, backup, история, журнал и обновления.'
+          : 'Panel access, 2FA, CIDR allowlist, backups, history, audit log and updates.',
       },
     }),
     [ru],
@@ -60,8 +73,8 @@ export default function FirewallPage() {
                   <Typography.Text type="secondary">{selected.subtitle}</Typography.Text>
                 </div>
               </div>
-
               <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+                {page === 'overview' ? <DashboardPage /> : null}
                 {page === 'firewall' ? <FirewallManager /> : null}
                 {page === 'ports' ? <PortsTable /> : null}
                 {page === 'settings' ? <SettingsPage /> : null}
