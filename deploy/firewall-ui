@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SERVICE="firewall-ui"
+INSTALL_DIR="/usr/local/firewall-ui"
+BIN="\${INSTALL_DIR}/firewall-ui"
+CONFIG="/etc/firewall-ui/config.json"
+ENV_FILE="/etc/firewall-ui/environment"
+REPO="SawaMEN/Firewall-UI"
+
+require_root() {
+  if [[ \${EUID:-$(id -u)} -ne 0 ]]; then
+    echo "Run as root."
+    exit 1
+  fi
+}
+
+arch_name() {
+  case "$(uname -m)" in
+    x86_64|amd64) echo amd64 ;;
+    aarch64|arm64) echo arm64 ;;
+    *) echo "Unsupported architecture: $(uname -m)" >&2; return 1 ;;
+  esac
+}
+
+release_url() {
+  echo "https://github.com/\${REPO}/releases/latest/download/firewall-ui-linux-$(arch_name)"
+}
+
+service_action() {
+  systemctl "$1" "\${SERVICE}.service"
+}
+
+show_status() {
+  systemctl --no-pager --full status "\${SERVICE}.service" || true
+  echo
+  if [[ -f "$CONFIG" ]]; then
+    echo "Configuration:"
+    cat "$CONFIG"
+  fi
+}
+
+show_logs() {
+  journalctl -u "\${SERVICE}.service" -n 100 -f
+}
+
+update_binary() {
+  require_root
+  command -v curl >/dev/null 2>&1 || { echo "curl is required"; exit 1; }
+  local tmp
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' RETURN
+  echo "Downloading latest Firewall-UI..."
+  curl -fL --retry 3 --connect-timeout 15 "$(release_url)" -o "$tmp"
+  install -m 0755 "$tmp" "$BIN"
+  systemctl restart "\${SERVICE}.service"
+  echo "Firewall-UI updated."
+}
+
+escape_env_value() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+change_credentials() {
+  require_root
+  local username password
+  read -r -p "Username [admin]: " username
+  username="\${username:-admin}"
+  while true; do
+    read -r -s -p "Password (12+ characters): " password
+    echo
+    [[ \${#password} -ge 12 ]] && break
+    echo "Password is too short."
+  done
+  install -d -m 0700 "$(dirname "$ENV_FILE")"
+  {
+    printf 'FIREWALL_UI_USERNAME="%s"\n' "$(escape_env_value "$username")"
+    printf 'FIREWALL_UI_PASSWORD="%s"\n' "$(escape_env_value "$password")"
+  } > "$ENV_FILE"
+  chmod 0600 "$ENV_FILE"
+  systemctl restart "\${SERVICE}.service"
+  echo "Credentials updated."
+}
+
+uninstall_service() {
+  require_root
+  systemctl disable --now "\${SERVICE}.service" >/dev/null 2>&1 || true
+  rm -f "/etc/systemd/system/\${SERVICE}.service"
+  rm -rf "$INSTALL_DIR"
+  rm -f "/usr/local/bin/firewall-ui"
+  systemctl daemon-reload
+  read -r -p "Remove configuration and state too? [y/N]: " answer
+  if [[ "$answer" =~ ^[Yy]$ ]]; then
+    rm -rf /etc/firewall-ui /var/lib/firewall-ui
+  fi
+  echo "Firewall-UI uninstalled."
+}
+
+menu() {
+  while true; do
+    echo
+    echo "Firewall-UI"
+    echo "1) Status"
+    echo "2) Start"
+    echo "3) Stop"
+    echo "4) Restart"
+    echo "5) Logs"
+    echo "6) Update"
+    echo "7) Change username/password"
+    echo "8) Uninstall"
+    echo "0) Exit"
+    read -r -p "Select: " choice
+    case "$choice" in
+      1) show_status ;;
+      2) require_root; service_action start ;;
+      3) require_root; service_action stop ;;
+      4) require_root; service_action restart ;;
+      5) show_logs ;;
+      6) update_binary ;;
+      7) change_credentials ;;
+      8) uninstall_service; exit 0 ;;
+      0) exit 0 ;;
+      *) echo "Unknown option." ;;
+    esac
+  done
+}
+
+case "\${1:-}" in
+  start|stop|restart|reload)
+    require_root
+    service_action "$1"
+    ;;
+  status)
+    show_status
+    ;;
+  log|logs)
+    show_logs
+    ;;
+  update)
+    update_binary
+    ;;
+  credentials|password)
+    change_credentials
+    ;;
+  uninstall)
+    uninstall_service
+    ;;
+  ""|menu)
+    menu
+    ;;
+  *)
+    echo "Usage: firewall-ui [start|stop|restart|status|logs|update|credentials|uninstall]"
+    exit 2
+    ;;
+esac
