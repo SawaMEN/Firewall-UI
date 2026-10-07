@@ -1,41 +1,151 @@
-name: Release
+name: Publish releases
+
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_run:
+    workflows:
+      - Build and test
+    types:
+      - completed
+    branches:
+      - main
+
 permissions:
   contents: write
+
+concurrency:
+  group: firewall-ui-publish
+  cancel-in-progress: true
+
 jobs:
-  release:
+  publish:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.x'
+
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci --ignore-scripts
+
+      - name: Build frontend
         working-directory: frontend
-      - run: npm run build
-        working-directory: frontend
-      - run: go test ./...
-      - run: go vet ./...
-      - name: Build Linux binaries
         run: |
-          mkdir -p dist
-          for arch in amd64 arm64; do
-            GOOS=linux GOARCH=$arch CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o dist/firewall-ui-linux-$arch ./cmd/firewall-ui
-          done
-      - name: Publish release
+          npm ci --ignore-scripts
+          npm run build
+
+      - name: Build DEV and Stable binaries
+        env:
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          if [[ -z "$VERSION" ]]; then
+            echo "VERSION is empty" >&2
+            exit 1
+          fi
+
+          SHORT_SHA="${SOURCE_SHA:0:12}"
+          DEV_VERSION="dev-${SHORT_SHA}"
+          mkdir -p dist/dev dist/stable
+
+          build_channel() {
+            local channel="$1"
+            local version="$2"
+            local output_dir="$3"
+            local ldflags="-s -w -X github.com/SawaMEN/Firewall-UI/internal/updater.Version=${version} -X github.com/SawaMEN/Firewall-UI/internal/updater.Commit=${SOURCE_SHA} -X github.com/SawaMEN/Firewall-UI/internal/updater.BuildChannel=${channel}"
+
+            for arch in amd64 arm64; do
+              GOOS=linux GOARCH="$arch" CGO_ENABLED=0 go build \
+                -trimpath \
+                -ldflags="$ldflags" \
+                -o "$output_dir/firewall-ui-linux-$arch" \
+                ./cmd/firewall-ui
+            done
+
+            (
+              cd "$output_dir"
+              sha256sum firewall-ui-linux-amd64 firewall-ui-linux-arm64 > checksums.txt
+            )
+
+            printf '{"version":"%s","commit":"%s","channel":"%s"}\n' \
+              "$version" "$SOURCE_SHA" "$channel" > "$output_dir/version.json"
+          }
+
+          build_channel dev "$DEV_VERSION" dist/dev
+          build_channel stable "$VERSION" dist/stable
+
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "DEV_VERSION=$DEV_VERSION" >> "$GITHUB_ENV"
+          echo "SOURCE_SHA=$SOURCE_SHA" >> "$GITHUB_ENV"
+
+      - name: Verify release binaries
+        run: |
+          set -euo pipefail
+          dist/dev/firewall-ui-linux-amd64 -version-json
+          dist/stable/firewall-ui-linux-amd64 -version-json
+          sha256sum -c dist/dev/checksums.txt --directory dist/dev
+          sha256sum -c dist/stable/checksums.txt --directory dist/stable
+
+      - name: Publish rolling DEV release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
+          set -euo pipefail
+
+          git tag -f dev "$SOURCE_SHA"
+          git push --force origin refs/tags/dev
+
+          if gh release view dev >/dev/null 2>&1; then
+            gh release upload dev \
+              dist/dev/firewall-ui-linux-amd64 \
+              dist/dev/firewall-ui-linux-arm64 \
+              dist/dev/checksums.txt \
+              dist/dev/version.json \
+              --clobber
+            gh release edit dev \
+              --title "Firewall-UI DEV $DEV_VERSION" \
+              --notes "Automatic development build from main at $SOURCE_SHA. This release is updated after every successful main build." \
+              --prerelease
+          else
+            gh release create dev \
+              --target "$SOURCE_SHA" \
+              --title "Firewall-UI DEV $DEV_VERSION" \
+              --notes "Automatic development build from main at $SOURCE_SHA. This release is updated after every successful main build." \
+              --prerelease \
+              dist/dev/firewall-ui-linux-amd64 \
+              dist/dev/firewall-ui-linux-arm64 \
+              dist/dev/checksums.txt \
+              dist/dev/version.json
+          fi
+
+      - name: Publish Stable release when VERSION changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          TAG="v$VERSION"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Stable $TAG already exists; leaving it immutable."
+            exit 0
+          fi
+
+          gh release create "$TAG" \
+            --target "$SOURCE_SHA" \
+            --title "Firewall-UI $VERSION" \
             --generate-notes \
-            dist/firewall-ui-linux-amd64 \
-            dist/firewall-ui-linux-arm64 \
+            dist/stable/firewall-ui-linux-amd64 \
+            dist/stable/firewall-ui-linux-arm64 \
+            dist/stable/checksums.txt \
+            dist/stable/version.json \
             install.sh
