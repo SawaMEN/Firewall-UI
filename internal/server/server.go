@@ -287,11 +287,11 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 }
 
 type runtimeSettingsResponse struct {
-	ListenHost    string `json:"listenHost"`
-	ListenPort    int    `json:"listenPort"`
-	ExternalPort  int    `json:"externalPort"`
-	SecureCookies bool   `json:"secureCookies"`
-	TLSEnabled    bool   `json:"tlsEnabled"`
+	ListenHost       string   `json:"listenHost"`
+	ListenPort       int      `json:"listenPort"`
+	ExternalPort     int      `json:"externalPort"`
+	SecureCookies    bool     `json:"secureCookies"`
+	TLSEnabled       bool     `json:"tlsEnabled"`
 	UpdateChannel    string   `json:"updateChannel"`
 	AllowedCIDRs     []string `json:"allowedCidrs"`
 	TOTPEnabled      bool     `json:"totpEnabled"`
@@ -302,11 +302,11 @@ type runtimeSettingsResponse struct {
 
 func runtimeSettingsView(cfg appconfig.Config, restarting bool) runtimeSettingsResponse {
 	return runtimeSettingsResponse{
-		ListenHost:    cfg.ListenHost,
-		ListenPort:    cfg.ListenPort,
-		ExternalPort:  cfg.ExternalPort,
-		SecureCookies: cfg.SecureCookies,
-		TLSEnabled:    cfg.TLSCert != "" && cfg.TLSKey != "",
+		ListenHost:       cfg.ListenHost,
+		ListenPort:       cfg.ListenPort,
+		ExternalPort:     cfg.ExternalPort,
+		SecureCookies:    cfg.SecureCookies,
+		TLSEnabled:       cfg.TLSCert != "" && cfg.TLSKey != "",
 		UpdateChannel:    cfg.UpdateChannel,
 		AllowedCIDRs:     append([]string(nil), cfg.AllowedCIDRs...),
 		TOTPEnabled:      cfg.TOTPEnabled,
@@ -330,10 +330,10 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		ListenHost    string `json:"listenHost"`
-		ListenPort    int    `json:"listenPort"`
-		ExternalPort  int    `json:"externalPort"`
-		SecureCookies bool   `json:"secureCookies"`
+		ListenHost       string   `json:"listenHost"`
+		ListenPort       int      `json:"listenPort"`
+		ExternalPort     int      `json:"externalPort"`
+		SecureCookies    bool     `json:"secureCookies"`
 		UpdateChannel    string   `json:"updateChannel"`
 		AllowedCIDRs     []string `json:"allowedCidrs"`
 		RollbackSeconds  int      `json:"rollbackSeconds"`

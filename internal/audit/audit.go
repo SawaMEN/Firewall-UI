@@ -11,13 +11,13 @@ import (
 )
 
 type Entry struct {
-	Time      time.Time      `json:"time"`
-	User      string         `json:"user,omitempty"`
-	RemoteIP  string         `json:"remoteIp,omitempty"`
-	Action    string         `json:"action"`
-	Success   bool           `json:"success"`
-	Message   string         `json:"message,omitempty"`
-	Metadata  map[string]any `json:"metadata,omitempty"`
+	Time     time.Time      `json:"time"`
+	User     string         `json:"user,omitempty"`
+	RemoteIP string         `json:"remoteIp,omitempty"`
+	Action   string         `json:"action"`
+	Success  bool           `json:"success"`
+	Message  string         `json:"message,omitempty"`
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 type Logger struct {

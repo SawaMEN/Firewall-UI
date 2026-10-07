@@ -39,18 +39,18 @@ type runtimeBackup struct {
 }
 
 type dashboardResponse struct {
-	Backend          string                  `json:"backend"`
-	FirewallEnabled  bool                    `json:"firewallEnabled"`
-	AutoSync         bool                    `json:"autoSync"`
-	ListeningPorts   int                     `json:"listeningPorts"`
-	PublicPorts      int                     `json:"publicPorts"`
-	ManagedRules     int                     `json:"managedRules"`
-	ManualRules      int                     `json:"manualRules"`
-	AdvancedRules    int                     `json:"advancedRules"`
-	Containers       int                     `json:"containers"`
-	RiskyPorts       []service.Port          `json:"riskyPorts"`
-	ContainerPorts   []service.ContainerPort `json:"containerPorts"`
-	LastPortScan     time.Time               `json:"lastPortScan"`
+	Backend         string                  `json:"backend"`
+	FirewallEnabled bool                    `json:"firewallEnabled"`
+	AutoSync        bool                    `json:"autoSync"`
+	ListeningPorts  int                     `json:"listeningPorts"`
+	PublicPorts     int                     `json:"publicPorts"`
+	ManagedRules    int                     `json:"managedRules"`
+	ManualRules     int                     `json:"manualRules"`
+	AdvancedRules   int                     `json:"advancedRules"`
+	Containers      int                     `json:"containers"`
+	RiskyPorts      []service.Port          `json:"riskyPorts"`
+	ContainerPorts  []service.ContainerPort `json:"containerPorts"`
+	LastPortScan    time.Time               `json:"lastPortScan"`
 }
 
 func (s *Server) handleExtendedAPI(w http.ResponseWriter, r *http.Request, sess session) bool {
