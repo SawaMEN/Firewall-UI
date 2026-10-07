@@ -65,7 +65,6 @@ func TestValidateRejectsUnsafeValues(t *testing.T) {
 	}
 }
 
-
 func TestLoadLegacyConfigDefaultsToStable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	raw := []byte(`{
