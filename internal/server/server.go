@@ -502,7 +502,14 @@ func (s *Server) manage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var before *service.FirewallBackup
 	if operation != "status" && operation != "install-ufw" {
+		snapshot, snapshotErr := s.Firewall.ExportBackup()
+		if snapshotErr != nil {
+			reply(w, http.StatusOK, nil, snapshotErr)
+			return
+		}
+		before = &snapshot
 		if err := s.Firewall.MigrateManagedBackendIfNeeded(ctx); err != nil {
 			reply(w, http.StatusOK, nil, err)
 			return
@@ -552,16 +559,34 @@ func (s *Server) manage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ping, err := s.Firewall.ManagedPingEnabled()
+	if err != nil {
+		reply(w, http.StatusOK, nil, err)
+		return
+	}
+	var pending *rollback.Pending
+	if before != nil {
+		tx, txErr := s.beginRollback(*before, "firewall."+operation, r)
+		if txErr != nil {
+			reply(w, http.StatusOK, nil, txErr)
+			return
+		}
+		pending = &tx
+		s.audit(r, "firewall."+operation, true, "", map[string]any{
+			"port": req.Port, "protocol": req.Protocol, "enabled": req.Enabled,
+		})
+	}
 	detected := firewall.Detect(ctx)
 	reply(w, http.StatusOK, struct {
 		service.FirewallManagedStatus
-		Ping       bool `json:"pingEnabled"`
-		CanInstall bool `json:"canInstallUfw"`
+		Ping       bool              `json:"pingEnabled"`
+		CanInstall bool              `json:"canInstallUfw"`
+		Rollback   *rollback.Pending `json:"rollback,omitempty"`
 	}{
 		FirewallManagedStatus: status,
 		Ping:                  ping,
 		CanInstall:            !detected.Installed && os.Geteuid() == 0,
-	}, err)
+		Rollback:              pending,
+	}, nil)
 }
 
 func (s *Server) static(w http.ResponseWriter, r *http.Request) {
