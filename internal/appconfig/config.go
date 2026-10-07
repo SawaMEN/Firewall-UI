@@ -23,8 +23,8 @@ type Config struct {
 
 func Default() Config {
 	return Config{
-		ListenHost: "127.0.0.1",
-		ListenPort: 8088,
+		ListenHost:    "127.0.0.1",
+		ListenPort:    8088,
 		StatePath:     "/var/lib/firewall-ui/state.json",
 		UpdateChannel: "stable",
 	}
