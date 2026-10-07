@@ -248,6 +248,15 @@ func (s *FirewallService) applyAdvancedChangeLocked(ctx context.Context, rule Fi
 	return applyLegacyAdvancedRule(ctx, backend, rule, add)
 }
 
+func isFirewallSafetyRule(rule FirewallRule) bool {
+	switch rule.Source {
+	case "panel", "session", "ssh":
+		return true
+	default:
+		return false
+	}
+}
+
 func advancedPortExpression(rule FirewallAdvancedRule, separator string) string {
 	if rule.PortStart == 0 {
 		return ""
