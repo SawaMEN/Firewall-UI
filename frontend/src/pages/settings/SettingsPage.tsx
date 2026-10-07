@@ -35,6 +35,11 @@ type RuntimeSettings = {
   buildChannel: UpdateChannel | string;
 };
 
+type SettingsFormValues = Pick<
+  RuntimeSettings,
+  'listenHost' | 'listenPort' | 'externalPort' | 'secureCookies' | 'updateChannel'
+>;
+
 type SaveSettingsResponse = RuntimeSettings & {
   restarting: boolean;
 };
@@ -63,7 +68,7 @@ type StableUpdateResponse = {
 export default function SettingsPage() {
   const { i18n } = useTranslation();
   const ru = (i18n.resolvedLanguage || i18n.language || '').toLowerCase().startsWith('ru');
-  const [form] = Form.useForm<RuntimeSettings>();
+  const [form] = Form.useForm<SettingsFormValues>();
   const selectedChannel = Form.useWatch('updateChannel', form) as UpdateChannel | undefined;
   const [current, setCurrent] = useState<RuntimeSettings | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
@@ -168,7 +173,13 @@ export default function SettingsPage() {
           return;
         }
         setCurrent(result.obj);
-        form.setFieldsValue(result.obj);
+        form.setFieldsValue({
+          listenHost: result.obj.listenHost,
+          listenPort: result.obj.listenPort,
+          externalPort: result.obj.externalPort,
+          secureCookies: result.obj.secureCookies,
+          updateChannel: result.obj.updateChannel,
+        });
 
         try {
           const status = await HttpUtil.get<UpdateStatus>('/api/update/status');
@@ -191,7 +202,7 @@ export default function SettingsPage() {
     };
   }, [form, text.failed]);
 
-  async function save(values: RuntimeSettings) {
+  async function save(values: SettingsFormValues) {
     setSaving(true);
     setError('');
     try {
@@ -272,7 +283,7 @@ export default function SettingsPage() {
           description={text.reconnect}
           style={{ marginBottom: 20 }}
         />
-        <Form<RuntimeSettings>
+        <Form<SettingsFormValues>
           form={form}
           layout="vertical"
           onFinish={(values) => void save(values)}
