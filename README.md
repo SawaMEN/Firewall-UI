@@ -1,20 +1,110 @@
 # Firewall-UI
 
-Автономный веб-сервис управления системным файрволлом Linux. Интерфейс, темы и код управления файрволлом перенесены из [SawaMEN/3x-ui](https://github.com/SawaMEN/3x-ui), исходный коммит `cf730af652387a2e99fa1cda20674b038a6edfdf`.
+Автономная веб-панель управления системным файрволлом Linux. Основана на firewall-логике и визуальном стиле [SawaMEN/3x-ui](https://github.com/SawaMEN/3x-ui), но работает как отдельный сервис без 3x-ui и собственной базы данных.
 
 ## Возможности
 
-- Исходный React / Ant Design интерфейс файрволла 3x-ui: включение, синхронизация, ping IPv4/IPv6, ручные правила TCP / UDP / TCP+UDP с описанием.
-- Шесть исходных тем: светлая, тёмная, ultra-dark, colorful, blue-gray, cyberpunk. Русский и английский интерфейс.
-- UFW, firewalld, nftables и iptables; установка UFW через apt, dnf, yum, pacman, zypper или apk.
-- Таблица всех локальных TCP/UDP-сокетов IPv4/IPv6: порт, адрес привязки, состояние, процесс, PID; путь исполняемого файла в подсказке. Общие сокеты показывают всех владельцев. По умолчанию показаны слушающие сокеты; переключатель позволяет видеть остальные соединения.
-- Поиск по порту, адресу, процессу, PID и пути; фильтр протокола, сортировка, пагинация и автообновление раз в 5 секунд.
-- Автосинхронизация открывает порты слушающих сервисов и закрывает собственные правила после исчезновения сервиса. Порты, привязанные только к loopback, автоматически не открываются. По умолчанию автосинхронизация включена после включения управления; её можно отключить и пользоваться ручными правилами.
-- Защита порта панели, явно заданного внешнего порта reverse proxy и обнаруженных SSH-портов.
-- Отдельные nftables-таблица `firewall_ui` и iptables-цепочка `FIREWALL-UI`; чужие нативные input hooks не перезаписываются. Для UFW/firewalld выключение удаляет только правила, созданные этой панелью, сохраняя системный файрволл.
-- Сессии с HttpOnly/SameSite cookie, CSRF-защита, ограничение попыток входа. Состояние сохраняется атомарно в JSON; база данных и 3x-ui не нужны.
+- UFW, firewalld, nftables и iptables.
+- Установка UFW из панели и автоматическая установка UFW установщиком, если на сервере не найден поддерживаемый файрволл.
+- Безопасное включение и выключение управления правилами без уничтожения чужой конфигурации файрволла.
+- Автоматическая синхронизация открытых портов со слушающими TCP/UDP-сервисами.
+- Ручные правила TCP, UDP и TCP+UDP с описаниями.
+- Защита порта веб-панели, настроенного внешнего reverse-proxy порта и SSH.
+- Управление входящим ICMP/ping.
+- Таблица всех локальных TCP/UDP IPv4/IPv6-сокетов: порт, адрес, состояние, процесс, PID и executable.
+- Поиск по порту, адресу, процессу, PID и пути, фильтры и автообновление.
+- Отдельные страницы «Файрволл», «Порты и процессы» и «Настройки».
+- Настройка bind-адреса, порта панели, внешнего reverse-proxy порта и Secure Cookie из веб-интерфейса.
+- Шесть тем из интерфейса 3x-ui: light, dark, ultra-dark, colorful, blue-gray и cyberpunk.
+- Русский и английский интерфейс.
+- HttpOnly/SameSite session cookie, CSRF-защита и ограничение попыток входа.
+- CLI-меню `firewall-ui` для службы, логов, обновления, смены логина/пароля и удаления.
 
-## Сборка
+## Быстрая установка
+
+Рекомендуемый вариант — опубликованный release:
+
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/SawaMEN/Firewall-UI/main/install.sh)
+```
+
+Установщик:
+
+1. проверяет Linux, systemd и архитектуру;
+2. проверяет наличие поддерживаемого файрволла;
+3. если UFW/firewalld/nftables/iptables отсутствуют — устанавливает UFW через системный пакетный менеджер;
+4. загружает бинарник для amd64 или arm64;
+5. создаёт конфигурацию и credentials;
+6. устанавливает systemd unit и CLI `firewall-ui`;
+7. запускает и включает сервис.
+
+UFW устанавливается, но не включается автоматически. Управление файрволлом включается пользователем из веб-панели.
+
+Если release-бинарник ещё не опубликован, установщик может собрать текущий `main` из исходников при наличии Go, Node.js/npm и tar.
+
+По умолчанию установщик слушает `0.0.0.0:8088`. Значения можно задать заранее:
+
+```bash
+sudo FIREWALL_UI_PORT=2096 \
+  FIREWALL_UI_LISTEN_HOST=127.0.0.1 \
+  FIREWALL_UI_USERNAME=admin \
+  FIREWALL_UI_PASSWORD='long-random-password' \
+  bash install.sh
+```
+
+## Управление после установки
+
+```bash
+firewall-ui
+```
+
+Также доступны команды:
+
+```bash
+firewall-ui status
+firewall-ui start
+firewall-ui stop
+firewall-ui restart
+firewall-ui logs
+firewall-ui update
+firewall-ui credentials
+firewall-ui uninstall
+```
+
+Бинарник сервиса устанавливается в `/usr/local/firewall-ui/firewall-ui`, конфигурация — в `/etc/firewall-ui/config.json`, credentials — в `/etc/firewall-ui/environment`, состояние — в `/var/lib/firewall-ui/state.json`.
+
+## Настройки панели
+
+В разделе «Настройки» можно изменить:
+
+- доступ только с localhost, со всех IPv4-интерфейсов или со всех IPv6-интерфейсов;
+- порт панели;
+- внешний порт reverse proxy;
+- режим Secure Cookie.
+
+При смене порта Firewall-UI сначала добавляет новый порт в защитные правила, сохраняет конфигурацию и только затем перезапускается через systemd. При прямом доступе браузер автоматически переходит на новый порт.
+
+Логин и пароль меняются командой:
+
+```bash
+firewall-ui credentials
+```
+
+## Reverse proxy и HTTPS
+
+Для reverse proxy рекомендуется оставить внутренний bind на `127.0.0.1`, указать внешний публичный порт в настройках панели и включить Secure Cookie при HTTPS.
+
+Встроенный TLS также поддерживается через конфигурацию или аргументы запуска:
+
+```bash
+/usr/local/firewall-ui/firewall-ui \
+  -config /etc/firewall-ui/config.json \
+  -tls-cert /path/fullchain.pem \
+  -tls-key /path/privkey.pem \
+  -secure-cookies
+```
+
+## Ручная сборка
 
 Нужны Go 1.25+, Node.js 24+ и npm.
 
@@ -23,69 +113,32 @@ make build
 make test
 ```
 
-Интерфейс встраивается в бинарник Go. После сборки Node.js на сервере не требуется. GitHub Actions проверяет проект и собирает бинарники Linux amd64/arm64 в артефакт `firewall-ui-linux`.
+Frontend встраивается в Go-бинарник. После сборки Node.js на сервере не требуется.
 
-## Запуск
+GitHub Actions проверяет проект и собирает Linux amd64/arm64. Workflow `Release` публикует установочные бинарники при push тега вида `v*`.
 
-Запускайте на самом Linux-сервере от root: права нужны для изменения файрволла и просмотра всех владельцев сокетов.
+## Ручной запуск
 
 ```bash
 export FIREWALL_UI_USERNAME=admin
-read -rs -p 'Password (12+ characters): ' FIREWALL_UI_PASSWORD
-export FIREWALL_UI_PASSWORD
-sudo --preserve-env=FIREWALL_UI_USERNAME,FIREWALL_UI_PASSWORD ./firewall-ui \
-  -listen 127.0.0.1:8088 \
-  -state /var/lib/firewall-ui/state.json
+export FIREWALL_UI_PASSWORD='long-random-password'
+
+./firewall-ui \
+  -config ./config.json
 ```
 
-Пароля по умолчанию нет. Введите минимум 12 символов. Доступ через SSH-туннель:
+При отсутствии config-файла используются безопасные значения по умолчанию: `127.0.0.1:8088`, состояние в `/var/lib/firewall-ui/state.json`.
 
-```bash
-ssh -L 8088:127.0.0.1:8088 root@SERVER
-```
-
-Откройте `http://127.0.0.1:8088`. Сам запуск не включает файрволл: управление активируется переключателем в интерфейсе.
-
-Для прямого HTTPS:
-
-```bash
-./firewall-ui -listen 0.0.0.0:8088 \
-  -tls-cert /path/fullchain.pem -tls-key /path/privkey.pem
-```
-
-При HTTPS reverse proxy направьте запросы на `127.0.0.1:8088`, сохраняя исходный заголовок Host; добавьте `-external-port 443 -secure-cookies` к запуску. Внешний порт задаётся администратором, а не берётся из произвольных клиентских заголовков.
-
-## systemd
-
-```bash
-sudo install -m 0755 firewall-ui /usr/local/bin/firewall-ui
-sudo install -d -m 0700 /etc/firewall-ui
-sudo install -m 0644 deploy/firewall-ui.service /etc/systemd/system/
-sudo install -m 0600 /dev/null /etc/firewall-ui/environment
-sudoedit /etc/firewall-ui/environment
-```
-
-Запишите в файл:
-
-```ini
-FIREWALL_UI_USERNAME=admin
-FIREWALL_UI_PASSWORD=YOUR_LONG_RANDOM_PASSWORD
-```
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now firewall-ui
-sudo journalctl -u firewall-ui -f
-```
-
-При использовании reverse proxy измените `ExecStart`, добавив параметры внешнего порта и secure cookie.
+Старые параметры `-listen`, `-state`, `-external-port`, `-tls-cert`, `-tls-key` и `-secure-cookies` сохранены как overrides поверх config-файла.
 
 ## Ограничения
 
-Список сокетов соответствует сетевому namespace сервиса: при обычном запуске systemd это весь хост. Сокеты внутри изолированных container namespaces и перенаправления DNAT без локального сокета не представлены как отдельные процессы хоста. Имена владельцев зависят от прав `/proc`; у завершившихся процессов, TIME_WAIT и некоторых ядерных сокетов PID отсутствует. Снимок обновляется, поэтому процесс может исчезнуть между чтением сокета и его владельца.
+Список сокетов соответствует network namespace процесса Firewall-UI. При обычном запуске через systemd это namespace хоста. Сокеты внутри отдельных container namespaces и DNAT-перенаправления без локального сокета не отображаются как отдельные процессы хоста.
 
-Автосинхронизация открывает каждый обнаруженный нелокальный слушающий TCP/UDP-порт. Для выборочного доступа отключите её и задайте ручные правила. Совместная работа двух панелей, одновременно меняющих политику одного системного файрволла, требует согласования администратором.
+Данные PID/executable зависят от прав доступа к `/proc`. Поэтому сервис рекомендуется запускать от root.
+
+Автосинхронизация открывает обнаруженные нелокальные слушающие TCP/UDP-порты. Если нужен строго выборочный доступ, отключите автосинхронизацию и используйте ручные правила.
 
 ## Лицензия
 
-GPL-3.0, как и исходный 3x-ui. Сведения о перенесённом коде: [NOTICE.md](NOTICE.md).
+GPL-3.0. Подробности о перенесённом коде: [NOTICE.md](NOTICE.md).
