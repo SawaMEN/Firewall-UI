@@ -31,8 +31,8 @@ func NewManager() *Manager {
 }
 
 func (m *Manager) Begin(backup service.FirewallBackup, ttl time.Duration, rollback func(service.FirewallBackup)) (Pending, error) {
-	if ttl < 5*time.Second {
-		return Pending{}, errors.New("rollback timeout is too short")
+	if ttl <= 0 {
+		return Pending{}, errors.New("rollback timeout must be positive")
 	}
 	raw := make([]byte, 18)
 	if _, err := rand.Read(raw); err != nil {
