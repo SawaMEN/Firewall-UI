@@ -109,7 +109,7 @@ func (s *FirewallService) RestoreBackup(ctx context.Context, backup FirewallBack
 	if err := setFirewallManagedEnabledPreference(backup.ManagedEnabled); err != nil {
 		return err
 	}
-	if err := writeFirewallPingEnabled(backup.PingEnabled); err != nil {
+	if err := settings.setBool(firewallPingEnabledKey, backup.PingEnabled); err != nil {
 		return err
 	}
 
@@ -117,7 +117,10 @@ func (s *FirewallService) RestoreBackup(ctx context.Context, backup FirewallBack
 		return nil
 	}
 	if !backup.ManagedEnabled {
-		return disableManagedBackendSafe(ctx, backend)
+		if err := disableManagedBackendSafe(ctx, backend); err != nil {
+			return err
+		}
+		return s.reconcileManagedPingStateLocked(false)
 	}
 	if (backend.name == "ufw" || backend.name == "firewalld") && !on {
 		if err := setFirewallBackendEnabled(ctx, backend, true); err != nil {
