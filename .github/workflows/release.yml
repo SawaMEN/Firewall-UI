@@ -93,8 +93,8 @@ jobs:
           set -euo pipefail
           dist/dev/firewall-ui-linux-amd64 -version-json
           dist/stable/firewall-ui-linux-amd64 -version-json
-          sha256sum -c dist/dev/checksums.txt --directory dist/dev
-          sha256sum -c dist/stable/checksums.txt --directory dist/stable
+          (cd dist/dev && sha256sum -c checksums.txt)
+          (cd dist/stable && sha256sum -c checksums.txt)
 
       - name: Publish rolling DEV release
         env:
