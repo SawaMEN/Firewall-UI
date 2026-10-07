@@ -246,8 +246,12 @@ export function PortsTable() {
               const manual = manualSet.has(k);
               return (
                 <Space>
-                  <Tag color={rule?.exists ? 'success' : 'warning'}>
-                    {rule?.exists ? (rule.source === 'service' ? 'AUTO' : 'OPEN') : 'CLOSED'}
+                  <Tag color={!firewall?.enabled ? 'warning' : rule?.exists ? 'success' : 'error'}>
+                    {!firewall?.enabled
+                      ? (ru ? 'НЕ ФИЛЬТРУЕТСЯ' : 'UNFILTERED')
+                      : rule?.exists
+                        ? (rule.source === 'service' ? 'AUTO' : 'OPEN')
+                        : 'CLOSED'}
                   </Tag>
                   {manual || !rule?.exists ? (
                     <Button
