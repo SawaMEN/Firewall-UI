@@ -36,7 +36,7 @@ func TestRuntimeSettingsPersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	body := `{"listenHost":"0.0.0.0","listenPort":8088,"externalPort":443,"secureCookies":true}`
+	body := `{"listenHost":"0.0.0.0","listenPort":8088,"externalPort":443,"secureCookies":true,"updateChannel":"dev"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewBufferString(body))
 	req.RemoteAddr = "127.0.0.1:12345"
 	req.AddCookie(cookies[0])
@@ -51,7 +51,7 @@ func TestRuntimeSettingsPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ListenHost != "0.0.0.0" || cfg.ListenPort != 8088 || cfg.ExternalPort != 443 || !cfg.SecureCookies {
+	if cfg.ListenHost != "0.0.0.0" || cfg.ListenPort != 8088 || cfg.ExternalPort != 443 || !cfg.SecureCookies || cfg.UpdateChannel != "dev" {
 		t.Fatalf("unexpected saved config: %#v", cfg)
 	}
 

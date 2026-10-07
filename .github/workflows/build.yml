@@ -25,14 +25,27 @@ jobs:
       - run: npm run build
         working-directory: frontend
       - name: Check Go formatting
-        run: test -z "$(gofmt -l ./cmd ./internal)"
+        run: |
+          files="$(gofmt -l ./cmd ./internal)"
+          printf "%s\\n" "$files"
+          test -z "$files"
       - run: go test -race ./...
       - run: go vet ./...
       - name: Build Linux binaries
         run: |
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          DEV_VERSION="dev-${GITHUB_SHA::7}"
           mkdir -p dist
           for arch in amd64 arm64; do
-            GOOS=linux GOARCH=$arch CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o dist/firewall-ui-linux-$arch ./cmd/firewall-ui
+            GOOS=linux GOARCH=$arch CGO_ENABLED=0 go build \
+              -trimpath \
+              -ldflags="-s -w \
+                -X github.com/SawaMEN/Firewall-UI/internal/buildinfo.Version=$DEV_VERSION \
+                -X github.com/SawaMEN/Firewall-UI/internal/buildinfo.Channel=dev \
+                -X github.com/SawaMEN/Firewall-UI/internal/buildinfo.Commit=$GITHUB_SHA \
+                -X github.com/SawaMEN/Firewall-UI/internal/buildinfo.BuildTime=$BUILD_TIME" \
+              -o "dist/firewall-ui-linux-$arch" \
+              ./cmd/firewall-ui
           done
       - uses: actions/upload-artifact@v4
         with:

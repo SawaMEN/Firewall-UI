@@ -16,8 +16,10 @@ import (
 	"time"
 
 	"github.com/SawaMEN/Firewall-UI/internal/appconfig"
+	"github.com/SawaMEN/Firewall-UI/internal/buildinfo"
 	"github.com/SawaMEN/Firewall-UI/internal/server"
 	"github.com/SawaMEN/Firewall-UI/internal/service"
+	"github.com/SawaMEN/Firewall-UI/internal/updater"
 	"github.com/SawaMEN/Firewall-UI/internal/webassets"
 )
 
@@ -96,6 +98,8 @@ func main() {
 			_ = process.Signal(syscall.SIGTERM)
 		}
 	}
+	updateManager := updater.New(app.Restart)
+	app.Updater = updateManager
 	app.Firewall.StartAutoSync()
 
 	srv := &http.Server{
@@ -111,6 +115,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go updateManager.Run(ctx, *configPath)
 	go func() {
 		<-ctx.Done()
 		deadline, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -118,7 +123,8 @@ func main() {
 		_ = srv.Shutdown(deadline)
 	}()
 
-	log.Printf("Firewall-UI listening on %s (user %s)", cfg.Address(), user)
+	info := buildinfo.Current()
+	log.Printf("Firewall-UI %s (%s, %s) listening on %s (user %s)", info.Version, info.Channel, info.Commit, cfg.Address(), user)
 	if cfg.TLSCert != "" {
 		err = srv.ListenAndServeTLS(cfg.TLSCert, cfg.TLSKey)
 	} else {

@@ -22,6 +22,7 @@ import (
 	"github.com/SawaMEN/Firewall-UI/internal/appconfig"
 	"github.com/SawaMEN/Firewall-UI/internal/firewall"
 	"github.com/SawaMEN/Firewall-UI/internal/service"
+	"github.com/SawaMEN/Firewall-UI/internal/updater"
 )
 
 type session struct {
@@ -44,6 +45,7 @@ type Server struct {
 	ConfigPath    string
 	RuntimeConfig appconfig.Config
 	Restart       func()
+	Updater       *updater.Manager
 	mu            sync.Mutex
 	sessions      map[string]session
 	attempts      map[string]attempt
@@ -172,6 +174,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.settings(w, r)
 		return
 	}
+	if r.URL.Path == "/api/update/status" {
+		s.updateStatus(w, r)
+		return
+	}
+	if r.URL.Path == "/api/update/apply" {
+		s.applyUpdate(w, r)
+		return
+	}
 
 	s.manage(w, r)
 }
@@ -248,6 +258,7 @@ type runtimeSettingsResponse struct {
 	ExternalPort  int    `json:"externalPort"`
 	SecureCookies bool   `json:"secureCookies"`
 	TLSEnabled    bool   `json:"tlsEnabled"`
+	UpdateChannel string `json:"updateChannel"`
 	Restarting    bool   `json:"restarting,omitempty"`
 }
 
@@ -258,6 +269,7 @@ func runtimeSettingsView(cfg appconfig.Config, restarting bool) runtimeSettingsR
 		ExternalPort:  cfg.ExternalPort,
 		SecureCookies: cfg.SecureCookies,
 		TLSEnabled:    cfg.TLSCert != "" && cfg.TLSKey != "",
+		UpdateChannel: cfg.UpdateChannel,
 		Restarting:    restarting,
 	}
 }
@@ -280,6 +292,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		ListenPort    int    `json:"listenPort"`
 		ExternalPort  int    `json:"externalPort"`
 		SecureCookies bool   `json:"secureCookies"`
+		UpdateChannel string `json:"updateChannel"`
 	}
 	if err := decode(w, r, &req); err != nil {
 		reply(w, http.StatusBadRequest, nil, err)
@@ -293,10 +306,14 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	cfg := s.RuntimeConfig
 	s.mu.Unlock()
+	oldCfg := cfg
 	cfg.ListenHost = strings.TrimSpace(req.ListenHost)
 	cfg.ListenPort = req.ListenPort
 	cfg.ExternalPort = req.ExternalPort
 	cfg.SecureCookies = req.SecureCookies
+	if strings.TrimSpace(req.UpdateChannel) != "" {
+		cfg.UpdateChannel = strings.ToLower(strings.TrimSpace(req.UpdateChannel))
+	}
 	if err := appconfig.Validate(cfg); err != nil {
 		reply(w, http.StatusBadRequest, nil, err)
 		return
@@ -326,7 +343,12 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.RuntimeConfig = cfg
 	s.mu.Unlock()
-	restarting := s.Restart != nil
+	channelChanged := oldCfg.UpdateChannel != cfg.UpdateChannel
+	requiresRestart := oldCfg.ListenHost != cfg.ListenHost || oldCfg.ListenPort != cfg.ListenPort || oldCfg.ExternalPort != cfg.ExternalPort || oldCfg.SecureCookies != cfg.SecureCookies
+	restarting := requiresRestart && s.Restart != nil
+	if channelChanged && !restarting && s.Updater != nil {
+		s.Updater.Trigger()
+	}
 	reply(w, http.StatusOK, runtimeSettingsView(cfg, restarting), nil)
 
 	if restarting {
@@ -335,6 +357,46 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			s.Restart()
 		}()
 	}
+}
+
+func (s *Server) updateStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		reply(w, http.StatusMethodNotAllowed, nil, fmt.Errorf("method not allowed"))
+		return
+	}
+	if s.Updater == nil {
+		reply(w, http.StatusServiceUnavailable, nil, fmt.Errorf("updater is not configured"))
+		return
+	}
+	s.mu.Lock()
+	channel := s.RuntimeConfig.UpdateChannel
+	s.mu.Unlock()
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	status, err := s.Updater.Check(ctx, channel)
+	reply(w, http.StatusOK, status, err)
+}
+
+func (s *Server) applyUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		reply(w, http.StatusMethodNotAllowed, nil, fmt.Errorf("method not allowed"))
+		return
+	}
+	if s.Updater == nil {
+		reply(w, http.StatusServiceUnavailable, nil, fmt.Errorf("updater is not configured"))
+		return
+	}
+	s.mu.Lock()
+	channel := s.RuntimeConfig.UpdateChannel
+	s.mu.Unlock()
+	if channel != "stable" {
+		reply(w, http.StatusConflict, nil, fmt.Errorf("dev updates are installed automatically"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	status, err := s.Updater.Apply(ctx, "stable")
+	reply(w, http.StatusOK, status, err)
 }
 
 func (s *Server) manage(w http.ResponseWriter, r *http.Request) {

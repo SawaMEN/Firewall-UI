@@ -1,41 +1,166 @@
-name: Release
+name: Publish releases
+
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
+  workflow_dispatch:
+
 permissions:
   contents: write
+
+concurrency:
+  group: firewall-ui-release-main
+  cancel-in-progress: true
+
 jobs:
-  release:
+  publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.x'
+
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
+      - name: Validate shell scripts
+        run: bash -n install.sh deploy/firewall-ui
+
       - run: npm ci --ignore-scripts
         working-directory: frontend
+
       - run: npm run build
         working-directory: frontend
-      - run: go test ./...
+
+      - name: Check Go formatting
+        run: test -z "$(gofmt -l ./cmd ./internal)"
+
+      - run: go test -race ./...
       - run: go vet ./...
-      - name: Build Linux binaries
+
+      - name: Build dev release
+        shell: bash
         run: |
-          mkdir -p dist
+          set -euo pipefail
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          DEV_VERSION="dev-$(date -u +%Y%m%d)-${GITHUB_SHA::7}"
+          mkdir -p dist-dev
           for arch in amd64 arm64; do
-            GOOS=linux GOARCH=$arch CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o dist/firewall-ui-linux-$arch ./cmd/firewall-ui
+            GOOS=linux GOARCH="$arch" CGO_ENABLED=0 go build \
+              -trimpath \
+              -ldflags="-s -w \
+                -X github.com/SawaMEN/Firewall-UI/internal/buildinfo.Version=$DEV_VERSION \
+                -X github.com/SawaMEN/Firewall-UI/internal/buildinfo.Channel=dev \
+                -X github.com/SawaMEN/Firewall-UI/internal/buildinfo.Commit=$GITHUB_SHA \
+                -X github.com/SawaMEN/Firewall-UI/internal/buildinfo.BuildTime=$BUILD_TIME" \
+              -o "dist-dev/firewall-ui-linux-$arch" \
+              ./cmd/firewall-ui
           done
-      - name: Publish release
+
+          AMD64_SHA="$(sha256sum dist-dev/firewall-ui-linux-amd64 | awk '{print $1}')"
+          ARM64_SHA="$(sha256sum dist-dev/firewall-ui-linux-arm64 | awk '{print $1}')"
+
+          cat > dist-dev/update.json <<EOF
+          {
+            "version": "$DEV_VERSION",
+            "channel": "dev",
+            "commit": "$GITHUB_SHA",
+            "buildTime": "$BUILD_TIME",
+            "assets": {
+              "amd64": {
+                "url": "https://github.com/$GITHUB_REPOSITORY/releases/download/dev/firewall-ui-linux-amd64",
+                "sha256": "$AMD64_SHA"
+              },
+              "arm64": {
+                "url": "https://github.com/$GITHUB_REPOSITORY/releases/download/dev/firewall-ui-linux-arm64",
+                "sha256": "$ARM64_SHA"
+              }
+            }
+          }
+          EOF
+
+      - name: Publish rolling dev release
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
-          gh release create "$GITHUB_REF_NAME" \
+          set -euo pipefail
+          gh release delete dev --cleanup-tag -y >/dev/null 2>&1 || true
+          gh release create dev \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "Firewall-UI Dev" \
+            --notes "Automated development build from commit $GITHUB_SHA." \
+            dist-dev/firewall-ui-linux-amd64 \
+            dist-dev/firewall-ui-linux-arm64 \
+            dist-dev/update.json \
+            install.sh
+
+      - name: Publish stable version when VERSION changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          STABLE_VERSION="$(tr -d '[:space:]' < VERSION)"
+          if [[ -z "$STABLE_VERSION" ]]; then
+            echo "VERSION is empty"
+            exit 1
+          fi
+          TAG="v$STABLE_VERSION"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "$TAG already exists; stable release unchanged."
+            exit 0
+          fi
+
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          mkdir -p dist-stable
+          for arch in amd64 arm64; do
+            GOOS=linux GOARCH="$arch" CGO_ENABLED=0 go build \
+              -trimpath \
+              -ldflags="-s -w \
+                -X github.com/SawaMEN/Firewall-UI/internal/buildinfo.Version=$STABLE_VERSION \
+                -X github.com/SawaMEN/Firewall-UI/internal/buildinfo.Channel=stable \
+                -X github.com/SawaMEN/Firewall-UI/internal/buildinfo.Commit=$GITHUB_SHA \
+                -X github.com/SawaMEN/Firewall-UI/internal/buildinfo.BuildTime=$BUILD_TIME" \
+              -o "dist-stable/firewall-ui-linux-$arch" \
+              ./cmd/firewall-ui
+          done
+
+          AMD64_SHA="$(sha256sum dist-stable/firewall-ui-linux-amd64 | awk '{print $1}')"
+          ARM64_SHA="$(sha256sum dist-stable/firewall-ui-linux-arm64 | awk '{print $1}')"
+
+          cat > dist-stable/update.json <<EOF
+          {
+            "version": "$STABLE_VERSION",
+            "channel": "stable",
+            "commit": "$GITHUB_SHA",
+            "buildTime": "$BUILD_TIME",
+            "assets": {
+              "amd64": {
+                "url": "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/firewall-ui-linux-amd64",
+                "sha256": "$AMD64_SHA"
+              },
+              "arm64": {
+                "url": "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/firewall-ui-linux-arm64",
+                "sha256": "$ARM64_SHA"
+              }
+            }
+          }
+          EOF
+
+          gh release create "$TAG" \
+            --target "$GITHUB_SHA" \
+            --title "Firewall-UI $STABLE_VERSION" \
             --generate-notes \
-            dist/firewall-ui-linux-amd64 \
-            dist/firewall-ui-linux-arm64 \
+            dist-stable/firewall-ui-linux-amd64 \
+            dist-stable/firewall-ui-linux-arm64 \
+            dist-stable/update.json \
             install.sh

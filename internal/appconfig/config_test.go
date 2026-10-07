@@ -13,6 +13,7 @@ func TestSaveLoad(t *testing.T) {
 	cfg.ListenPort = 9090
 	cfg.ExternalPort = 443
 	cfg.SecureCookies = true
+	cfg.UpdateChannel = "dev"
 
 	if err := Save(path, cfg); err != nil {
 		t.Fatal(err)
@@ -56,6 +57,12 @@ func TestValidateRejectsUnsafeValues(t *testing.T) {
 	cfg.ListenPort = 70000
 	if err := Validate(cfg); err == nil {
 		t.Fatal("accepted invalid listen port")
+	}
+
+	cfg = Default()
+	cfg.UpdateChannel = "nightly"
+	if err := Validate(cfg); err == nil {
+		t.Fatal("accepted invalid update channel")
 	}
 
 	cfg = Default()
