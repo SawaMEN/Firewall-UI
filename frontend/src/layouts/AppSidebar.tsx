@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { Button, Drawer, Layout, Menu, Select, Space } from 'antd';
 import {
   DatabaseOutlined,
@@ -74,12 +74,14 @@ export default function AppSidebar({ page, onPageChange }: Props) {
     </Space>
   );
 
+  const railStyle = {
+    flexBasis: collapsed ? 72 : 250,
+    '--sider-rail': collapsed ? '72px' : '250px',
+  } as CSSProperties & Record<'--sider-rail', string>;
+
   return (
     <>
-      <aside
-        className="ant-sidebar sidebar-pinned"
-        style={{ flexBasis: collapsed ? 72 : 250, ['--sider-rail' as string]: collapsed ? '72px' : '250px' }}
-      >
+      <aside className="ant-sidebar sidebar-pinned" style={railStyle}>
         <Layout.Sider
           width={250}
           collapsedWidth={72}
