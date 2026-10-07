@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -228,13 +229,18 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	a := s.attempts[ip]
-	if a.count >= 10 || len(s.attempts) > 4096 {
+	if a.count >= 5 || len(s.attempts) > 4096 {
+		retryAfter := int(time.Until(a.until).Seconds())
+		if retryAfter < 1 {
+			retryAfter = 1
+		}
 		s.mu.Unlock()
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 		reply(w, http.StatusTooManyRequests, nil, fmt.Errorf("too many login attempts"))
 		return
 	}
 	if a.count == 0 {
-		a.until = now.Add(10 * time.Minute)
+		a.until = now.Add(15 * time.Minute)
 	}
 	a.count++
 	s.attempts[ip] = a
