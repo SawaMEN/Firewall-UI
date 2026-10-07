@@ -22,6 +22,7 @@ import (
 	"github.com/SawaMEN/Firewall-UI/internal/appconfig"
 	"github.com/SawaMEN/Firewall-UI/internal/firewall"
 	"github.com/SawaMEN/Firewall-UI/internal/service"
+	"github.com/SawaMEN/Firewall-UI/internal/updater"
 )
 
 type session struct {
@@ -172,6 +173,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.settings(w, r)
 		return
 	}
+	if r.URL.Path == "/api/update/status" {
+		s.updateStatus(w, r)
+		return
+	}
+	if r.URL.Path == "/api/update/stable" {
+		s.updateStable(w, r)
+		return
+	}
 
 	s.manage(w, r)
 }
@@ -248,17 +257,26 @@ type runtimeSettingsResponse struct {
 	ExternalPort  int    `json:"externalPort"`
 	SecureCookies bool   `json:"secureCookies"`
 	TLSEnabled    bool   `json:"tlsEnabled"`
+	UpdateChannel string `json:"updateChannel"`
+	CurrentVersion string `json:"currentVersion"`
+	CurrentCommit string `json:"currentCommit"`
+	BuildChannel string `json:"buildChannel"`
 	Restarting    bool   `json:"restarting,omitempty"`
 }
 
 func runtimeSettingsView(cfg appconfig.Config, restarting bool) runtimeSettingsResponse {
+	build := updater.Current()
 	return runtimeSettingsResponse{
 		ListenHost:    cfg.ListenHost,
 		ListenPort:    cfg.ListenPort,
 		ExternalPort:  cfg.ExternalPort,
 		SecureCookies: cfg.SecureCookies,
-		TLSEnabled:    cfg.TLSCert != "" && cfg.TLSKey != "",
-		Restarting:    restarting,
+		TLSEnabled:     cfg.TLSCert != "" && cfg.TLSKey != "",
+		UpdateChannel:  cfg.UpdateChannel,
+		CurrentVersion: build.Version,
+		CurrentCommit:  build.Commit,
+		BuildChannel:   build.Channel,
+		Restarting:     restarting,
 	}
 }
 
@@ -280,6 +298,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		ListenPort    int    `json:"listenPort"`
 		ExternalPort  int    `json:"externalPort"`
 		SecureCookies bool   `json:"secureCookies"`
+		UpdateChannel string `json:"updateChannel"`
 	}
 	if err := decode(w, r, &req); err != nil {
 		reply(w, http.StatusBadRequest, nil, err)
@@ -297,6 +316,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	cfg.ListenPort = req.ListenPort
 	cfg.ExternalPort = req.ExternalPort
 	cfg.SecureCookies = req.SecureCookies
+	cfg.UpdateChannel = strings.TrimSpace(req.UpdateChannel)
 	if err := appconfig.Validate(cfg); err != nil {
 		reply(w, http.StatusBadRequest, nil, err)
 		return
@@ -330,6 +350,74 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	reply(w, http.StatusOK, runtimeSettingsView(cfg, restarting), nil)
 
 	if restarting {
+		go func() {
+			time.Sleep(350 * time.Millisecond)
+			s.Restart()
+		}()
+	}
+}
+
+type updateStatusResponse struct {
+	Current         updater.Info      `json:"current"`
+	Channel         string            `json:"channel"`
+	Available       *updater.Manifest `json:"available,omitempty"`
+	UpdateAvailable bool              `json:"updateAvailable"`
+	Error           string            `json:"error,omitempty"`
+}
+
+func (s *Server) updateStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		reply(w, http.StatusMethodNotAllowed, nil, fmt.Errorf("method not allowed"))
+		return
+	}
+	s.mu.Lock()
+	channel := s.RuntimeConfig.UpdateChannel
+	s.mu.Unlock()
+
+	result := updateStatusResponse{
+		Current: updater.Current(),
+		Channel: channel,
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	remote, err := updater.Remote(ctx, channel)
+	if err != nil {
+		result.Error = err.Error()
+		reply(w, http.StatusOK, result, nil)
+		return
+	}
+	result.Available = &remote
+	result.UpdateAvailable = updater.Available(remote)
+	reply(w, http.StatusOK, result, nil)
+}
+
+func (s *Server) updateStable(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		reply(w, http.StatusMethodNotAllowed, nil, fmt.Errorf("method not allowed"))
+		return
+	}
+	s.mu.Lock()
+	channel := s.RuntimeConfig.UpdateChannel
+	s.mu.Unlock()
+	if channel != "stable" {
+		reply(w, http.StatusConflict, nil, fmt.Errorf("switch update channel to stable first"))
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+	updated, remote, err := updater.Apply(ctx, "stable")
+	if err != nil {
+		reply(w, http.StatusOK, nil, err)
+		return
+	}
+	reply(w, http.StatusOK, map[string]any{
+		"updated":    updated,
+		"version":    remote.Version,
+		"commit":     remote.Commit,
+		"restarting": updated && s.Restart != nil,
+	}, nil)
+	if updated && s.Restart != nil {
 		go func() {
 			time.Sleep(350 * time.Millisecond)
 			s.Restart()
