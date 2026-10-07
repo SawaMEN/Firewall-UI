@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -126,7 +127,11 @@ func (s *FirewallService) ReplaceAdvancedRulesSafe(ctx context.Context, rules []
 
 func loadAdvancedFirewallRules() ([]FirewallAdvancedRule, error) {
 	var rules []FirewallAdvancedRule
-	if err := loadFirewallJSON(firewallAdvancedRulesKey, &rules); err != nil {
+	raw, err := firewallSetting(firewallAdvancedRulesKey, "[]")
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal([]byte(raw), &rules); err != nil {
 		return nil, err
 	}
 	for i := range rules {
