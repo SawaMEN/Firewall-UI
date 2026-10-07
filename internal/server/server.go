@@ -252,25 +252,25 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 }
 
 type runtimeSettingsResponse struct {
-	ListenHost    string `json:"listenHost"`
-	ListenPort    int    `json:"listenPort"`
-	ExternalPort  int    `json:"externalPort"`
-	SecureCookies bool   `json:"secureCookies"`
-	TLSEnabled    bool   `json:"tlsEnabled"`
-	UpdateChannel string `json:"updateChannel"`
+	ListenHost     string `json:"listenHost"`
+	ListenPort     int    `json:"listenPort"`
+	ExternalPort   int    `json:"externalPort"`
+	SecureCookies  bool   `json:"secureCookies"`
+	TLSEnabled     bool   `json:"tlsEnabled"`
+	UpdateChannel  string `json:"updateChannel"`
 	CurrentVersion string `json:"currentVersion"`
-	CurrentCommit string `json:"currentCommit"`
-	BuildChannel string `json:"buildChannel"`
-	Restarting    bool   `json:"restarting,omitempty"`
+	CurrentCommit  string `json:"currentCommit"`
+	BuildChannel   string `json:"buildChannel"`
+	Restarting     bool   `json:"restarting,omitempty"`
 }
 
 func runtimeSettingsView(cfg appconfig.Config, restarting bool) runtimeSettingsResponse {
 	build := updater.Current()
 	return runtimeSettingsResponse{
-		ListenHost:    cfg.ListenHost,
-		ListenPort:    cfg.ListenPort,
-		ExternalPort:  cfg.ExternalPort,
-		SecureCookies: cfg.SecureCookies,
+		ListenHost:     cfg.ListenHost,
+		ListenPort:     cfg.ListenPort,
+		ExternalPort:   cfg.ExternalPort,
+		SecureCookies:  cfg.SecureCookies,
 		TLSEnabled:     cfg.TLSCert != "" && cfg.TLSKey != "",
 		UpdateChannel:  cfg.UpdateChannel,
 		CurrentVersion: build.Version,
