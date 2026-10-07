@@ -665,8 +665,7 @@ func deleteFirewallRule(ctx context.Context, b firewallBackend, r FirewallRule) 
 		return errors.New("invalid firewall rule")
 	}
 	if b.name == "ufw" {
-		_, err := runFirewallCommand(ctx, b.binary, "--force", "delete", "allow", ufwFirewallSpec(spec))
-		return err
+		return deleteUFWManagedRules(ctx, b.binary, "Firewall-UI managed", ufwFirewallSpec(spec))
 	}
 	on, _ := b.enabled(ctx)
 	if !on {
