@@ -1,6 +1,7 @@
 package security
 
 import (
+	"encoding/base32"
 	"testing"
 	"time"
 )
