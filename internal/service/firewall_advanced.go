@@ -343,11 +343,10 @@ func applyLegacyAdvancedRule(ctx context.Context, backend firewallBackend, rule 
 		if rule.IPVersion != "any" && rule.SourceCIDR == "" {
 			return errors.New("UFW requires a source CIDR/IP for an IPv4-only or IPv6-only advanced rule")
 		}
-		args := []string{}
 		if !add {
-			args = append(args, "--force", "delete")
+			return deleteUFWManagedRules(ctx, backend.binary, "Firewall-UI advanced "+rule.ID, "")
 		}
-		args = append(args, rule.Action)
+		args := []string{rule.Action}
 		if rule.Interface != "" {
 			args = append(args, "in", "on", rule.Interface)
 		}
