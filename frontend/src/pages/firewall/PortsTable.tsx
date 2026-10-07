@@ -1,16 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Card, Input, Select, Space, Switch, Table, Tag, Typography } from 'antd';
-import { ReloadOutlined } from '@ant-design/icons';
+import { PlusOutlined, ReloadOutlined, StopOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 
 import { HttpUtil } from '@/utils';
 
-type Process = {
-  pid: number;
-  name: string;
-  executable?: string;
-};
-
+type Process = { pid: number; name: string; executable?: string };
 type Port = {
   socketId: string;
   port: number;
@@ -22,67 +17,140 @@ type Port = {
   loopback: boolean;
   processes: Process[];
 };
+type ContainerPort = {
+  runtime: string;
+  containerId: string;
+  containerName: string;
+  image: string;
+  hostIp: string;
+  hostPort: number;
+  containerPort: number;
+  protocol: string;
+  public: boolean;
+};
+type Snapshot = { ports: Port[]; containers: ContainerPort[]; updatedAt: string };
+type FirewallRule = {
+  port?: number;
+  protocol: string;
+  source: string;
+  exists: boolean;
+  owned: boolean;
+};
+type ManualRule = { port: number; protocol: string; label?: string };
+type FirewallStatus = {
+  enabled: boolean;
+  autoSync: boolean;
+  rules: FirewallRule[];
+  manualRules: ManualRule[];
+};
+
+const key = (port: number, protocol: string) => \`\${port}/\${protocol}\`;
 
 export function PortsTable() {
   const { i18n } = useTranslation();
   const ru = i18n.language.startsWith('ru');
-  const [ports, setPorts] = useState<Port[]>([]);
+  const [snapshot, setSnapshot] = useState<Snapshot>({ ports: [], containers: [], updatedAt: '' });
+  const [firewall, setFirewall] = useState<FirewallStatus | null>(null);
   const [loading, setLoading] = useState(false);
+  const [acting, setActing] = useState('');
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [protocol, setProtocol] = useState('all');
   const [listening, setListening] = useState(true);
-  const [refresh, setRefresh] = useState(true);
-  const [revision, setRevision] = useState(0);
+  const [live, setLive] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [portsResult, firewallResult] = await Promise.all([
+        HttpUtil.get<Snapshot>('/api/ports'),
+        HttpUtil.get<FirewallStatus>('/panel/api/server/firewall/status'),
+      ]);
+      if (portsResult.success && portsResult.obj) {
+        setSnapshot(portsResult.obj);
+        setError('');
+      } else {
+        setError(portsResult.msg);
+      }
+      if (firewallResult.success && firewallResult.obj) setFirewall(firewallResult.obj);
+    } catch {
+      setError(ru ? 'Не удалось получить список портов' : 'Failed to read ports');
+    } finally {
+      setLoading(false);
+    }
+  }, [ru]);
 
   useEffect(() => {
-    let cancelled = false;
-    let active = false;
+    void load();
+  }, [load]);
 
-    async function update() {
-      if (active) return;
-      active = true;
-      setLoading(true);
+  useEffect(() => {
+    if (!live) return;
+    const source = new EventSource('/api/ports/stream');
+    const handler = (event: MessageEvent<string>) => {
       try {
-        const result = await HttpUtil.get<Port[]>('/api/ports');
-        if (cancelled) return;
-        if (result.success && result.obj) {
-          setPorts(result.obj);
-          setError('');
-        } else {
-          setError(result.msg);
-        }
+        setSnapshot(JSON.parse(event.data) as Snapshot);
       } catch {
-        if (!cancelled) setError(ru ? 'Не удалось получить список портов' : 'Failed to read ports');
-      } finally {
-        active = false;
-        if (!cancelled) setLoading(false);
+        // Ignore malformed transient events and keep the previous snapshot.
       }
-    }
-
-    void update();
-    const timer = refresh
-      ? window.setInterval(() => {
-          if (!document.hidden) void update();
-        }, 5000)
-      : undefined;
-
-    return () => {
-      cancelled = true;
-      if (timer) window.clearInterval(timer);
     };
-  }, [refresh, revision, ru]);
+    source.addEventListener('ports', handler as EventListener);
+    source.onerror = () => {
+      // EventSource reconnects itself; manual refresh remains available.
+    };
+    return () => source.close();
+  }, [live]);
+
+  const ruleMap = useMemo(() => {
+    const map = new Map<string, FirewallRule>();
+    for (const rule of firewall?.rules || []) {
+      if (rule.port) map.set(key(rule.port, rule.protocol), rule);
+    }
+    return map;
+  }, [firewall]);
+
+  const manualSet = useMemo(
+    () => new Set((firewall?.manualRules || []).map((rule) => key(rule.port, rule.protocol))),
+    [firewall],
+  );
+
+  const containerMap = useMemo(() => {
+    const map = new Map<string, ContainerPort[]>();
+    for (const item of snapshot.containers || []) {
+      const k = key(item.hostPort, item.protocol);
+      map.set(k, [...(map.get(k) || []), item]);
+    }
+    return map;
+  }, [snapshot.containers]);
+
+  async function toggleManual(port: Port) {
+    const k = key(port.port, port.protocol);
+    const remove = manualSet.has(k);
+    setActing(k);
+    try {
+      const result = await HttpUtil.post<FirewallStatus>(
+        remove ? '/panel/api/server/firewall/rules/delete' : '/panel/api/server/firewall/rules/add',
+        { port: port.port, protocol: port.protocol, label: port.processes[0]?.name || 'Service' },
+        { silentSuccess: true },
+      );
+      if (result.success && result.obj) setFirewall(result.obj);
+    } finally {
+      setActing('');
+    }
+  }
 
   const query = search.trim().toLowerCase();
-  const filtered = ports.filter((port) => {
+  const filtered = snapshot.ports.filter((port) => {
     if (listening && !port.listening) return false;
     if (protocol !== 'all' && port.protocol !== protocol) return false;
+    const containers = containerMap.get(key(port.port, port.protocol)) || [];
     const haystack = [
       port.port,
       port.address,
       port.state,
       port.family,
       ...port.processes.flatMap((process) => [process.pid, process.name, process.executable || '']),
+      ...containers.flatMap((item) => [item.containerName, item.image, item.runtime]),
     ]
       .join(' ')
       .toLowerCase();
@@ -93,10 +161,10 @@ export function PortsTable() {
     <Card className="panel-card">
       <Space wrap style={{ marginBottom: 16 }}>
         <Input.Search
-          placeholder={ru ? 'Порт, адрес, процесс или PID' : 'Port, address, process or PID'}
+          placeholder={ru ? 'Порт, адрес, процесс, PID или контейнер' : 'Port, address, process, PID or container'}
           value={search}
           onChange={(event) => setSearch(event.target.value)}
-          style={{ width: 300 }}
+          style={{ width: 330 }}
           allowClear
         />
         <Select
@@ -109,19 +177,9 @@ export function PortsTable() {
             { value: 'udp', label: 'UDP' },
           ]}
         />
-        <Space>
-          <Switch checked={listening} onChange={setListening} />
-          <span>{ru ? 'Только слушающие' : 'Listening only'}</span>
-        </Space>
-        <Space>
-          <Switch checked={refresh} onChange={setRefresh} />
-          <span>{ru ? 'Автообновление' : 'Auto refresh'}</span>
-        </Space>
-        <Button
-          icon={<ReloadOutlined />}
-          loading={loading}
-          onClick={() => setRevision((value) => value + 1)}
-        >
+        <Space><Switch checked={listening} onChange={setListening} /><span>{ru ? 'Только слушающие' : 'Listening only'}</span></Space>
+        <Space><Switch checked={live} onChange={setLive} /><span>{ru ? 'Live' : 'Live'}</span></Space>
+        <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
           {ru ? 'Обновить' : 'Refresh'}
         </Button>
       </Space>
@@ -130,24 +188,14 @@ export function PortsTable() {
 
       <Table<Port>
         size="small"
-        rowKey={(port) => `${port.family}-${port.protocol}-${port.socketId}`}
+        rowKey={(port) => \`\${port.family}-\${port.protocol}-\${port.socketId}\`}
         dataSource={filtered}
         loading={loading}
-        scroll={{ x: 880 }}
+        scroll={{ x: 1180 }}
         pagination={{ pageSize: 20, showSizeChanger: true }}
         columns={[
-          {
-            title: ru ? 'Порт' : 'Port',
-            dataIndex: 'port',
-            width: 90,
-            sorter: (a, b) => a.port - b.port,
-          },
-          {
-            title: ru ? 'Протокол' : 'Protocol',
-            dataIndex: 'protocol',
-            width: 100,
-            render: (value: string) => <Tag>{value.toUpperCase()}</Tag>,
-          },
+          { title: ru ? 'Порт' : 'Port', dataIndex: 'port', width: 90, sorter: (a, b) => a.port - b.port },
+          { title: ru ? 'Протокол' : 'Protocol', dataIndex: 'protocol', width: 100, render: (v: string) => <Tag>{v.toUpperCase()}</Tag> },
           {
             title: ru ? 'Адрес' : 'Address',
             dataIndex: 'address',
@@ -159,38 +207,70 @@ export function PortsTable() {
               </Space>
             ),
           },
-          {
-            title: ru ? 'Состояние' : 'State',
-            dataIndex: 'state',
-            render: (value: string, port) => (
-              <Tag color={port.listening ? 'success' : 'default'}>{value || '—'}</Tag>
-            ),
-          },
+          { title: ru ? 'Состояние' : 'State', dataIndex: 'state', width: 120, render: (v: string, p) => <Tag color={p.listening ? 'success' : undefined}>{v || '—'}</Tag> },
           {
             title: ru ? 'Процесс / PID' : 'Process / PID',
-            render: (_, port) =>
-              port.processes.length ? (
+            render: (_, port) => port.processes.length ? (
+              <Space orientation="vertical" size={2}>
+                {port.processes.map((process) => (
+                  <Typography.Text key={process.pid} title={process.executable}>
+                    {process.name || 'process'} <Typography.Text type="secondary">PID {process.pid}</Typography.Text>
+                  </Typography.Text>
+                ))}
+              </Space>
+            ) : <Typography.Text type="secondary">{ru ? 'Нет владельца' : 'No owner'}</Typography.Text>,
+          },
+          {
+            title: 'Container',
+            render: (_, port) => {
+              const items = containerMap.get(key(port.port, port.protocol)) || [];
+              return items.length ? (
                 <Space orientation="vertical" size={2}>
-                  {port.processes.map((process) => (
-                    <Typography.Text key={process.pid} title={process.executable}>
-                      {process.name || 'process'}{' '}
-                      <Typography.Text type="secondary">PID {process.pid}</Typography.Text>
+                  {items.map((item) => (
+                    <Typography.Text key={\`\${item.runtime}-\${item.containerId}\`}>
+                      <Tag>{item.runtime}</Tag>{item.containerName} <Typography.Text type="secondary">{item.containerPort}/{item.protocol}</Typography.Text>
                     </Typography.Text>
                   ))}
                 </Space>
-              ) : (
-                <Typography.Text type="secondary">
-                  {ru ? 'Нет владельца / недостаточно прав' : 'No owner / insufficient permissions'}
-                </Typography.Text>
-              ),
+              ) : '—';
+            },
+          },
+          {
+            title: ru ? 'Файрволл' : 'Firewall',
+            width: 190,
+            fixed: 'right',
+            render: (_, port) => {
+              if (port.loopback || !port.listening) return <Tag>{ru ? 'Локальный' : 'Local'}</Tag>;
+              const k = key(port.port, port.protocol);
+              const rule = ruleMap.get(k);
+              const manual = manualSet.has(k);
+              return (
+                <Space>
+                  <Tag color={rule?.exists ? 'success' : 'warning'}>
+                    {rule?.exists ? (rule.source === 'service' ? 'AUTO' : 'OPEN') : 'CLOSED'}
+                  </Tag>
+                  {manual || !rule?.exists ? (
+                    <Button
+                      size="small"
+                      danger={manual}
+                      icon={manual ? <StopOutlined /> : <PlusOutlined />}
+                      loading={acting === k}
+                      onClick={() => void toggleManual(port)}
+                    >
+                      {manual ? (ru ? 'Убрать' : 'Remove') : (ru ? 'Разрешить' : 'Allow')}
+                    </Button>
+                  ) : null}
+                </Space>
+              );
+            },
           },
         ]}
       />
 
       <Typography.Text type="secondary">
         {ru
-          ? 'Показаны локальные TCP/UDP-сокеты IPv4 и IPv6. Отключите фильтр слушающих портов, чтобы увидеть активные соединения. PID и путь процесса требуют доступа к /proc.'
-          : 'Local IPv4 and IPv6 TCP/UDP sockets. Disable the listening-only filter to inspect active connections. PID and executable path require access to /proc.'}
+          ? 'Список поступает из серверного кэша через SSE и не сканирует /proc на каждый запрос. Docker/Podman публикации сопоставляются с host-портами.'
+          : 'The table is fed from a server-side cache over SSE instead of rescanning /proc per request. Docker/Podman published ports are mapped to host sockets.'}
       </Typography.Text>
     </Card>
   );
