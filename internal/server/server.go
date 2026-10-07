@@ -20,7 +20,11 @@ import (
 	"time"
 
 	"github.com/SawaMEN/Firewall-UI/internal/appconfig"
+	"github.com/SawaMEN/Firewall-UI/internal/audit"
 	"github.com/SawaMEN/Firewall-UI/internal/firewall"
+	"github.com/SawaMEN/Firewall-UI/internal/history"
+	"github.com/SawaMEN/Firewall-UI/internal/rollback"
+	"github.com/SawaMEN/Firewall-UI/internal/security"
 	"github.com/SawaMEN/Firewall-UI/internal/service"
 	"github.com/SawaMEN/Firewall-UI/internal/updater"
 )
@@ -46,6 +50,10 @@ type Server struct {
 	RuntimeConfig appconfig.Config
 	Restart       func()
 	Updater       *updater.Manager
+	PortMonitor   *service.PortMonitor
+	Audit         *audit.Logger
+	History       *history.Store
+	Rollbacks     *rollback.Manager
 	mu            sync.Mutex
 	sessions      map[string]session
 	attempts      map[string]attempt
@@ -60,6 +68,7 @@ func New(user, password string, port int, assets fs.FS) *Server {
 		Port:          port,
 		Assets:        assets,
 		RuntimeConfig: cfg,
+		Rollbacks:     rollback.NewManager(),
 		sessions:      map[string]session{},
 		attempts:      map[string]attempt{},
 	}
@@ -97,6 +106,13 @@ func decode(w http.ResponseWriter, r *http.Request, v any) error {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	allowedCIDRs := append([]string(nil), s.RuntimeConfig.AllowedCIDRs...)
+	s.mu.Unlock()
+	if !security.IPAllowed(r.RemoteAddr, allowedCIDRs) {
+		http.Error(w, "access denied", http.StatusForbidden)
+		return
+	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Referrer-Policy", "same-origin")
@@ -146,7 +162,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.URL.Path == "/api/session" && r.Method == http.MethodGet {
-		reply(w, http.StatusOK, map[string]string{"csrf": sess.csrf, "username": s.Username}, nil)
+		s.mu.Lock()
+		totpEnabled := s.RuntimeConfig.TOTPEnabled
+		s.mu.Unlock()
+		reply(w, http.StatusOK, map[string]any{"csrf": sess.csrf, "username": s.Username, "totpEnabled": totpEnabled}, nil)
 		return
 	}
 	if r.URL.Path == "/api/logout" && r.Method == http.MethodPost {
@@ -166,8 +185,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path == "/api/ports" && r.Method == http.MethodGet {
+		if s.PortMonitor != nil {
+			reply(w, http.StatusOK, s.PortMonitor.Snapshot(), nil)
+			return
+		}
 		ports, err := service.ReadPorts("/proc")
-		reply(w, http.StatusOK, ports, err)
+		reply(w, http.StatusOK, service.PortSnapshot{Ports: ports, UpdatedAt: time.Now().UTC()}, err)
+		return
+	}
+	if s.handleExtendedAPI(w, r, sess) {
 		return
 	}
 	if r.URL.Path == "/api/settings" {
@@ -217,6 +243,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
+		Code     string `json:"code,omitempty"`
 	}
 	if err := decode(w, r, &req); err != nil {
 		reply(w, http.StatusBadRequest, nil, err)
@@ -226,6 +253,13 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	got, want := sha256.Sum256([]byte(req.Password)), sha256.Sum256([]byte(s.Password))
 	if subtle.ConstantTimeCompare(got[:], want[:]) != 1 || req.Username != s.Username {
 		reply(w, http.StatusUnauthorized, nil, fmt.Errorf("invalid credentials"))
+		return
+	}
+	s.mu.Lock()
+	totpEnabled, totpSecret := s.RuntimeConfig.TOTPEnabled, s.RuntimeConfig.TOTPSecret
+	s.mu.Unlock()
+	if totpEnabled && !security.ValidateTOTP(totpSecret, req.Code, now) {
+		reply(w, http.StatusUnauthorized, nil, fmt.Errorf("invalid two-factor code"))
 		return
 	}
 
@@ -258,8 +292,12 @@ type runtimeSettingsResponse struct {
 	ExternalPort  int    `json:"externalPort"`
 	SecureCookies bool   `json:"secureCookies"`
 	TLSEnabled    bool   `json:"tlsEnabled"`
-	UpdateChannel string `json:"updateChannel"`
-	Restarting    bool   `json:"restarting,omitempty"`
+	UpdateChannel    string   `json:"updateChannel"`
+	AllowedCIDRs     []string `json:"allowedCidrs"`
+	TOTPEnabled      bool     `json:"totpEnabled"`
+	RollbackSeconds  int      `json:"rollbackSeconds"`
+	PortScanInterval int      `json:"portScanInterval"`
+	Restarting       bool     `json:"restarting,omitempty"`
 }
 
 func runtimeSettingsView(cfg appconfig.Config, restarting bool) runtimeSettingsResponse {
@@ -269,8 +307,12 @@ func runtimeSettingsView(cfg appconfig.Config, restarting bool) runtimeSettingsR
 		ExternalPort:  cfg.ExternalPort,
 		SecureCookies: cfg.SecureCookies,
 		TLSEnabled:    cfg.TLSCert != "" && cfg.TLSKey != "",
-		UpdateChannel: cfg.UpdateChannel,
-		Restarting:    restarting,
+		UpdateChannel:    cfg.UpdateChannel,
+		AllowedCIDRs:     append([]string(nil), cfg.AllowedCIDRs...),
+		TOTPEnabled:      cfg.TOTPEnabled,
+		RollbackSeconds:  cfg.RollbackSeconds,
+		PortScanInterval: cfg.PortScanInterval,
+		Restarting:       restarting,
 	}
 }
 
@@ -292,7 +334,10 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		ListenPort    int    `json:"listenPort"`
 		ExternalPort  int    `json:"externalPort"`
 		SecureCookies bool   `json:"secureCookies"`
-		UpdateChannel string `json:"updateChannel"`
+		UpdateChannel    string   `json:"updateChannel"`
+		AllowedCIDRs     []string `json:"allowedCidrs"`
+		RollbackSeconds  int      `json:"rollbackSeconds"`
+		PortScanInterval int      `json:"portScanInterval"`
 	}
 	if err := decode(w, r, &req); err != nil {
 		reply(w, http.StatusBadRequest, nil, err)
@@ -314,8 +359,20 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(req.UpdateChannel) != "" {
 		cfg.UpdateChannel = strings.ToLower(strings.TrimSpace(req.UpdateChannel))
 	}
+	cfg.AllowedCIDRs = security.NormalizeCIDRs(req.AllowedCIDRs)
+	if req.RollbackSeconds != 0 {
+		cfg.RollbackSeconds = req.RollbackSeconds
+	}
+	if req.PortScanInterval != 0 {
+		cfg.PortScanInterval = req.PortScanInterval
+	}
 	if err := appconfig.Validate(cfg); err != nil {
 		reply(w, http.StatusBadRequest, nil, err)
+		return
+	}
+
+	if len(cfg.AllowedCIDRs) > 0 && !security.IPAllowed(r.RemoteAddr, cfg.AllowedCIDRs) {
+		reply(w, http.StatusBadRequest, nil, fmt.Errorf("allowed CIDRs would lock out the current client"))
 		return
 	}
 
@@ -344,7 +401,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	s.RuntimeConfig = cfg
 	s.mu.Unlock()
 	channelChanged := oldCfg.UpdateChannel != cfg.UpdateChannel
-	requiresRestart := oldCfg.ListenHost != cfg.ListenHost || oldCfg.ListenPort != cfg.ListenPort || oldCfg.ExternalPort != cfg.ExternalPort || oldCfg.SecureCookies != cfg.SecureCookies
+	requiresRestart := oldCfg.ListenHost != cfg.ListenHost || oldCfg.ListenPort != cfg.ListenPort || oldCfg.ExternalPort != cfg.ExternalPort || oldCfg.SecureCookies != cfg.SecureCookies || oldCfg.PortScanInterval != cfg.PortScanInterval
 	restarting := requiresRestart && s.Restart != nil
 	if channelChanged && !restarting && s.Updater != nil {
 		s.Updater.Trigger()
