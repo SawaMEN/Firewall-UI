@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"flag"
+	"fmt"
 	"io/fs"
 	"log"
 	"net"
@@ -18,6 +20,7 @@ import (
 	"github.com/SawaMEN/Firewall-UI/internal/appconfig"
 	"github.com/SawaMEN/Firewall-UI/internal/server"
 	"github.com/SawaMEN/Firewall-UI/internal/service"
+	"github.com/SawaMEN/Firewall-UI/internal/updater"
 	"github.com/SawaMEN/Firewall-UI/internal/webassets"
 )
 
@@ -29,7 +32,21 @@ func main() {
 	certFlag := flag.String("tls-cert", "", "TLS certificate path (overrides config)")
 	keyFlag := flag.String("tls-key", "", "TLS key path (overrides config)")
 	secureFlag := flag.Bool("secure-cookies", false, "Require HTTPS cookies behind a reverse proxy (overrides config)")
+	versionFlag := flag.Bool("version", false, "Print build version")
+	versionJSONFlag := flag.Bool("version-json", false, "Print build metadata as JSON")
 	flag.Parse()
+
+	if *versionJSONFlag {
+		if err := json.NewEncoder(os.Stdout).Encode(updater.Current()); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if *versionFlag {
+		info := updater.Current()
+		fmt.Printf("Firewall-UI %s (%s, %s)\n", info.Version, info.Channel, info.Commit)
+		return
+	}
 
 	cfg, err := appconfig.Load(*configPath)
 	if err != nil {
@@ -84,18 +101,20 @@ func main() {
 		log.Print("Run as root to manage the firewall and see all process owners")
 	}
 
+	restart := func() {
+		process, findErr := os.FindProcess(os.Getpid())
+		if findErr == nil {
+			_ = process.Signal(syscall.SIGTERM)
+		}
+	}
+
 	service.Configure(cfg.StatePath, cfg.ListenPort, cfg.ExternalPort)
 	assets, _ := fs.Sub(webassets.Files, "dist")
 	app := server.New(user, password, cfg.ListenPort, assets)
 	app.SecureCookies = cfg.SecureCookies
 	app.ConfigPath = *configPath
 	app.RuntimeConfig = cfg
-	app.Restart = func() {
-		process, findErr := os.FindProcess(os.Getpid())
-		if findErr == nil {
-			_ = process.Signal(syscall.SIGTERM)
-		}
-	}
+	app.Restart = restart
 	app.Firewall.StartAutoSync()
 
 	srv := &http.Server{
@@ -111,6 +130,9 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if cfg.UpdateChannel == "dev" {
+		updater.StartDevAutoUpdate(ctx, 10*time.Minute, restart)
+	}
 	go func() {
 		<-ctx.Done()
 		deadline, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -118,7 +140,14 @@ func main() {
 		_ = srv.Shutdown(deadline)
 	}()
 
-	log.Printf("Firewall-UI listening on %s (user %s)", cfg.Address(), user)
+	info := updater.Current()
+	log.Printf(
+		"Firewall-UI %s (%s) listening on %s (user %s)",
+		info.Version,
+		info.Channel,
+		cfg.Address(),
+		user,
+	)
 	if cfg.TLSCert != "" {
 		err = srv.ListenAndServeTLS(cfg.TLSCert, cfg.TLSKey)
 	} else {
