@@ -3,6 +3,7 @@ package appconfig
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -30,7 +31,7 @@ func TestSaveLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != cfg {
+	if !reflect.DeepEqual(got, cfg) {
 		t.Fatalf("loaded config = %#v, want %#v", got, cfg)
 	}
 }
@@ -41,7 +42,7 @@ func TestLoadMissingUsesDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Default()
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("config = %#v, want %#v", got, want)
 	}
 }
