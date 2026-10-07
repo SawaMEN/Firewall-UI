@@ -159,20 +159,22 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	covered := map[string]bool{}
-	for _, rule := range status.Rules {
-		if !rule.Exists && status.Enabled {
-			continue
+	if status.Enabled {
+		for _, rule := range status.Rules {
+			if !rule.Exists {
+				continue
+			}
+			if rule.Port > 0 {
+				covered[fmt.Sprintf("%d/%s", rule.Port, rule.Protocol)] = true
+			}
 		}
-		if rule.Port > 0 {
-			covered[fmt.Sprintf("%d/%s", rule.Port, rule.Protocol)] = true
-		}
-	}
-	for _, rule := range advanced {
-		if rule.Action != "allow" || rule.PortStart == 0 {
-			continue
-		}
-		for port := rule.PortStart; port <= rule.PortEnd && port-rule.PortStart < 2048; port++ {
-			covered[fmt.Sprintf("%d/%s", port, rule.Protocol)] = true
+		for _, rule := range advanced {
+			if rule.Action != "allow" || rule.PortStart == 0 {
+				continue
+			}
+			for port := rule.PortStart; port <= rule.PortEnd && port-rule.PortStart < 2048; port++ {
+				covered[fmt.Sprintf("%d/%s", port, rule.Protocol)] = true
+			}
 		}
 	}
 
