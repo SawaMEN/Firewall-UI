@@ -64,3 +64,33 @@ func TestValidateRejectsUnsafeValues(t *testing.T) {
 		t.Fatal("accepted incomplete TLS configuration")
 	}
 }
+
+
+func TestLoadLegacyConfigDefaultsToStable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	raw := []byte(`{
+  "listenHost": "127.0.0.1",
+  "listenPort": 8088,
+  "externalPort": 0,
+  "secureCookies": false,
+  "statePath": "/tmp/firewall-ui-state.json"
+}`)
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UpdateChannel != "stable" {
+		t.Fatalf("update channel = %q, want stable", cfg.UpdateChannel)
+	}
+}
+
+func TestValidateRejectsUnknownUpdateChannel(t *testing.T) {
+	cfg := Default()
+	cfg.UpdateChannel = "nightly"
+	if err := Validate(cfg); err == nil {
+		t.Fatal("accepted unknown update channel")
+	}
+}
