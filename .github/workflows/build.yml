@@ -10,6 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check shell scripts
+        run: bash -n install.sh deploy/firewall-ui
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.x'
@@ -22,6 +24,8 @@ jobs:
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
+      - name: Check Go formatting
+        run: test -z "$(gofmt -l ./cmd ./internal)"
       - run: go test -race ./...
       - run: go vet ./...
       - name: Build Linux binaries
