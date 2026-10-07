@@ -278,6 +278,11 @@ func advancedPortExpression(rule FirewallAdvancedRule, separator string) string 
 
 func advancedNFTExpression(rule FirewallAdvancedRule) string {
 	parts := []string{}
+	if rule.IPVersion == "ipv4" && rule.SourceCIDR == "" {
+		parts = append(parts, "meta nfproto ipv4")
+	} else if rule.IPVersion == "ipv6" && rule.SourceCIDR == "" {
+		parts = append(parts, "meta nfproto ipv6")
+	}
 	if rule.Interface != "" {
 		parts = append(parts, `iifname "`+rule.Interface+`"`)
 	}
@@ -335,6 +340,9 @@ func advancedIPTablesArgs(rule FirewallAdvancedRule, ipv6 bool) ([]string, bool)
 
 func applyLegacyAdvancedRule(ctx context.Context, backend firewallBackend, rule FirewallAdvancedRule, add bool) error {
 	if backend.name == "ufw" {
+		if rule.IPVersion != "any" && rule.SourceCIDR == "" {
+			return errors.New("UFW requires a source CIDR/IP for an IPv4-only or IPv6-only advanced rule")
+		}
 		args := []string{}
 		if !add {
 			args = append(args, "--force", "delete")
