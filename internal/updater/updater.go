@@ -43,14 +43,14 @@ type Manifest struct {
 }
 
 type Status struct {
-	CurrentVersion string `json:"currentVersion"`
-	CurrentChannel string `json:"currentChannel"`
-	CurrentCommit  string `json:"currentCommit"`
+	CurrentVersion  string `json:"currentVersion"`
+	CurrentChannel  string `json:"currentChannel"`
+	CurrentCommit   string `json:"currentCommit"`
 	SelectedChannel string `json:"selectedChannel"`
-	LatestVersion  string `json:"latestVersion"`
-	LatestCommit   string `json:"latestCommit"`
-	Available      bool   `json:"available"`
-	Restarting     bool   `json:"restarting,omitempty"`
+	LatestVersion   string `json:"latestVersion"`
+	LatestCommit    string `json:"latestCommit"`
+	Available       bool   `json:"available"`
+	Restarting      bool   `json:"restarting,omitempty"`
 }
 
 type Manager struct {
