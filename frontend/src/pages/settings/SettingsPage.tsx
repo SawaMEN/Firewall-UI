@@ -64,6 +64,7 @@ export default function SettingsPage() {
   const { i18n } = useTranslation();
   const ru = (i18n.resolvedLanguage || i18n.language || '').toLowerCase().startsWith('ru');
   const [form] = Form.useForm<RuntimeSettings>();
+  const selectedChannel = Form.useWatch('updateChannel', form) as UpdateChannel | undefined;
   const [current, setCurrent] = useState<RuntimeSettings | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -387,7 +388,7 @@ export default function SettingsPage() {
               />
             )}
 
-            {form.getFieldValue('updateChannel') !== savedChannel ? (
+            {selectedChannel && selectedChannel !== savedChannel ? (
               <Typography.Text type="warning">{text.saveChannelFirst}</Typography.Text>
             ) : null}
           </Space>
