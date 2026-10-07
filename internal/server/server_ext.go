@@ -81,6 +81,8 @@ func (s *Server) handleExtendedAPI(w http.ResponseWriter, r *http.Request, sess 
 		s.deleteAdvancedRule(w, r)
 	case "/api/firewall/rollback/confirm":
 		s.confirmRollback(w, r)
+	case "/api/system/restart":
+		s.restartService(w, r)
 	default:
 		return false
 	}
@@ -488,13 +490,7 @@ func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	restart := oldCfg.ListenHost != nextCfg.ListenHost || oldCfg.ListenPort != nextCfg.ListenPort || oldCfg.PortScanInterval != nextCfg.PortScanInterval
 	s.audit(r, "backup.restore", true, "", nil)
-	reply(w, http.StatusOK, map[string]any{"restored": true, "rollback": pending, "restarting": restart}, nil)
-	if restart && s.Restart != nil {
-		go func() {
-			time.Sleep(600 * time.Millisecond)
-			s.Restart()
-		}()
-	}
+	reply(w, http.StatusOK, map[string]any{"restored": true, "rollback": pending, "restartRequired": restart}, nil)
 }
 
 func (s *Server) advancedRules(w http.ResponseWriter, r *http.Request) {
@@ -564,6 +560,23 @@ func (s *Server) deleteAdvancedRule(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r, "advanced.delete", true, "", map[string]any{"ruleId": req.ID})
 	reply(w, http.StatusOK, map[string]any{"rules": rules, "rollback": pending}, nil)
+}
+
+func (s *Server) restartService(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		reply(w, http.StatusMethodNotAllowed, nil, fmt.Errorf("method not allowed"))
+		return
+	}
+	if s.Restart == nil {
+		reply(w, http.StatusServiceUnavailable, nil, fmt.Errorf("restart is not configured"))
+		return
+	}
+	s.audit(r, "system.restart", true, "", nil)
+	reply(w, http.StatusOK, map[string]bool{"restarting": true}, nil)
+	go func() {
+		time.Sleep(350 * time.Millisecond)
+		s.Restart()
+	}()
 }
 
 func (s *Server) confirmRollback(w http.ResponseWriter, r *http.Request) {
