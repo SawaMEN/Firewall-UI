@@ -3,13 +3,13 @@ set -euo pipefail
 
 SERVICE="firewall-ui"
 INSTALL_DIR="/usr/local/firewall-ui"
-BIN="\${INSTALL_DIR}/firewall-ui"
+BIN="${INSTALL_DIR}/firewall-ui"
 CONFIG="/etc/firewall-ui/config.json"
 ENV_FILE="/etc/firewall-ui/environment"
 REPO="SawaMEN/Firewall-UI"
 
 require_root() {
-  if [[ \${EUID:-$(id -u)} -ne 0 ]]; then
+  if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
     echo "Run as root."
     exit 1
   fi
@@ -24,15 +24,15 @@ arch_name() {
 }
 
 release_url() {
-  echo "https://github.com/\${REPO}/releases/latest/download/firewall-ui-linux-$(arch_name)"
+  echo "https://github.com/${REPO}/releases/latest/download/firewall-ui-linux-$(arch_name)"
 }
 
 service_action() {
-  systemctl "$1" "\${SERVICE}.service"
+  systemctl "$1" "${SERVICE}.service"
 }
 
 show_status() {
-  systemctl --no-pager --full status "\${SERVICE}.service" || true
+  systemctl --no-pager --full status "${SERVICE}.service" || true
   echo
   if [[ -f "$CONFIG" ]]; then
     echo "Configuration:"
@@ -41,7 +41,7 @@ show_status() {
 }
 
 show_logs() {
-  journalctl -u "\${SERVICE}.service" -n 100 -f
+  journalctl -u "${SERVICE}.service" -n 100 -f
 }
 
 update_binary() {
@@ -49,11 +49,11 @@ update_binary() {
   command -v curl >/dev/null 2>&1 || { echo "curl is required"; exit 1; }
   local tmp
   tmp="$(mktemp)"
-  trap 'rm -f "$tmp"' RETURN
   echo "Downloading latest Firewall-UI..."
   curl -fL --retry 3 --connect-timeout 15 "$(release_url)" -o "$tmp"
   install -m 0755 "$tmp" "$BIN"
-  systemctl restart "\${SERVICE}.service"
+  systemctl restart "${SERVICE}.service"
+  rm -f "$tmp"
   echo "Firewall-UI updated."
 }
 
@@ -65,11 +65,11 @@ change_credentials() {
   require_root
   local username password
   read -r -p "Username [admin]: " username
-  username="\${username:-admin}"
+  username="${username:-admin}"
   while true; do
     read -r -s -p "Password (12+ characters): " password
     echo
-    [[ \${#password} -ge 12 ]] && break
+    [[ ${#password} -ge 12 ]] && break
     echo "Password is too short."
   done
   install -d -m 0700 "$(dirname "$ENV_FILE")"
@@ -78,14 +78,14 @@ change_credentials() {
     printf 'FIREWALL_UI_PASSWORD="%s"\n' "$(escape_env_value "$password")"
   } > "$ENV_FILE"
   chmod 0600 "$ENV_FILE"
-  systemctl restart "\${SERVICE}.service"
+  systemctl restart "${SERVICE}.service"
   echo "Credentials updated."
 }
 
 uninstall_service() {
   require_root
-  systemctl disable --now "\${SERVICE}.service" >/dev/null 2>&1 || true
-  rm -f "/etc/systemd/system/\${SERVICE}.service"
+  systemctl disable --now "${SERVICE}.service" >/dev/null 2>&1 || true
+  rm -f "/etc/systemd/system/${SERVICE}.service"
   rm -rf "$INSTALL_DIR"
   rm -f "/usr/local/bin/firewall-ui"
   systemctl daemon-reload
@@ -125,7 +125,7 @@ menu() {
   done
 }
 
-case "\${1:-}" in
+case "${1:-}" in
   start|stop|restart|reload)
     require_root
     service_action "$1"
