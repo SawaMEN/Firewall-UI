@@ -1,0 +1,6 @@
+body { margin: 0; }
+.page-layout { min-height: 100vh; }
+.content-shell { min-width: 0; }
+.content-area { padding: 24px; }
+.login-shell { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; background: var(--xui-surface, #080e1a); }
+@media (max-width: 768px) { .content-area { padding: 12px; } }

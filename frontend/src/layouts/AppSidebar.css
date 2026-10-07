@@ -1,0 +1,1069 @@
+.ant-sidebar {
+  flex: 0 0 var(--sider-rail, 72px);
+  width: var(--sider-rail, 72px);
+  position: relative;
+  z-index: 210;
+}
+.ant-sidebar > .ant-layout-sider {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  align-self: flex-start;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.ant-sidebar > .ant-layout-sider > .ant-layout-sider-children {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+.ant-sidebar:not(.sidebar-pinned) > .ant-layout-sider:not(.ant-layout-sider-collapsed) {
+  box-shadow: 0 0 32px rgba(0, 0, 0, 0.22);
+}
+.sider-nav .ant-menu-item .anticon,
+.sider-nav .ant-menu-submenu-title .anticon,
+.sider-utility .ant-menu-item .anticon {
+  font-size: 16px;
+}
+.sider-brand,
+.drawer-brand {
+  color: var(--ant-color-text);
+}
+.ant-layout-sider-collapsed .sider-brand {
+  padding: 0;
+}
+
+.ant-layout-sider-collapsed .sider-brand .brand-block {
+  width: 100%;
+}
+
+.sider-brand {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 72px;
+  height: 72px;
+  padding: 0 46px;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.brand-block {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  line-height: 1;
+}
+.brand-text,
+.drawer-brand {
+  display: block;
+  font-size: 20px;
+  font-weight: 850;
+  letter-spacing: -0.7px;
+  background: linear-gradient(135deg, var(--ant-color-primary), var(--ant-color-text));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow: 0 6px 22px color-mix(in srgb, var(--ant-color-primary) 18%, transparent);
+}
+.brand-actions {
+  position: absolute;
+  right: 10px;
+  display: flex;
+  align-items: center;
+}
+.sidebar-pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ant-color-text-secondary);
+  cursor: pointer;
+}
+.sidebar-pin:hover,
+.sidebar-pin:focus-visible {
+  background-color: color-mix(in srgb, var(--ant-color-primary) 10%, transparent);
+  color: var(--ant-color-primary);
+  outline: none;
+}
+.sidebar-pin .anticon {
+  font-size: 16px;
+}
+.sider-nav {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  min-width: 0;
+  padding: 0 4px;
+  overscroll-behavior-y: contain;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--ant-color-text) 22%, transparent) transparent;
+}
+.sider-nav::-webkit-scrollbar {
+  width: 6px;
+}
+.sider-nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sider-nav::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ant-color-text) 22%, transparent);
+}
+.sider-nav::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--ant-color-text) 36%, transparent);
+}
+.sider-nav .ant-menu-item,
+.sider-nav .ant-menu-submenu-title,
+.sider-utility .ant-menu-item {
+  height: 44px;
+  line-height: 44px;
+  margin-block: 3px !important;
+  border-radius: 999px !important;
+}
+.sider-nav .ant-menu-item-selected,
+.sider-utility .ant-menu-item-selected,
+.drawer-menu .ant-menu-item-selected {
+  background-color: color-mix(in srgb, var(--ant-color-primary) 20%, transparent) !important;
+  color: var(--ant-color-primary) !important;
+  font-weight: 650;
+}
+.sider-nav .ant-menu-item-selected::after,
+.sider-utility .ant-menu-item-selected::after {
+  display: none;
+}
+.sider-nav .ant-menu-item-active:not(.ant-menu-item-selected),
+.sider-utility .ant-menu-item-active:not(.ant-menu-item-selected),
+.drawer-menu .ant-menu-item-active:not(.ant-menu-item-selected),
+.sider-nav .ant-menu-item:not(.ant-menu-item-selected):not(.ant-menu-item-disabled):hover,
+.sider-utility .ant-menu-item:not(.ant-menu-item-selected):not(.ant-menu-item-disabled):hover,
+.drawer-menu .ant-menu-item:not(.ant-menu-item-selected):not(.ant-menu-item-disabled):hover {
+  background-color: color-mix(in srgb, var(--ant-color-primary) 10%, transparent) !important;
+  color: var(--ant-color-primary) !important;
+}
+.sider-utility {
+  flex: 0 0 auto;
+  padding: 8px 4px;
+  border-top: 1px solid color-mix(in srgb, var(--ant-color-border) 55%, transparent);
+}
+.ant-sidebar > .ant-layout-sider {
+  background: var(--xui-surface-container) !important;
+  border-right: 1px solid color-mix(in srgb, var(--ant-color-border) 70%, transparent);
+  box-shadow: none !important;
+}
+body.dark .ant-sidebar > .ant-layout-sider {
+  background: var(--xui-surface-container-low) !important;
+  border-right-color: var(--xui-outline-variant);
+}
+.drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  min-height: 72px;
+  padding: 14px 54px;
+  border-bottom: 1px solid var(--ant-color-border-secondary);
+}
+.drawer-header .brand-block {
+  width: 100%;
+}
+
+/* Keep the drawer wordmark optically centered vertically in the header. */
+.drawer-header .drawer-brand {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  min-height: 38px;
+  line-height: 1;
+}
+.drawer-header-actions {
+  position: absolute;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.drawer-close {
+  background: transparent;
+  border: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 16px;
+  color: var(--ant-color-text-secondary);
+}
+.drawer-close:hover,
+.drawer-close:focus-visible {
+  background: var(--ant-color-fill-tertiary);
+}
+.drawer-menu .ant-menu-item {
+  height: 48px;
+  line-height: 48px;
+  margin: 0;
+  border-radius: 0;
+}
+.drawer-menu .ant-menu-item .anticon {
+  font-size: 16px;
+}
+.drawer-utility {
+  margin-top: auto;
+  border-top: 1px solid var(--ant-color-border-secondary);
+}
+.drawer-handle {
+  display: none;
+  position: fixed;
+  left: 12px;
+  bottom: 16px;
+  z-index: 1100;
+  width: 42px;
+  height: 42px;
+  border: 1px solid var(--ant-color-border);
+  border-radius: 14px;
+  background: var(--xui-surface-container);
+  color: var(--ant-color-text);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  cursor: pointer;
+}
+@media (max-width: 768px) {
+  .ant-sidebar {
+    position: fixed;
+    inset: 0;
+    width: 0;
+    height: 0;
+    flex: 0 0 0;
+    z-index: 1100;
+    pointer-events: none;
+  }
+
+  .ant-sidebar > .ant-layout-sider,
+  .sider-brand {
+    display: none;
+  }
+
+  .drawer-handle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto;
+  }
+
+  .content-shell {
+    width: 100%;
+    min-width: 0;
+    margin-left: 0 !important;
+  }
+
+  .content-area {
+    width: 100%;
+    min-width: 0;
+    padding: 12px !important;
+    overflow-x: hidden;
+  }
+
+  .page-layout,
+  .telemt-page {
+    width: 100%;
+    min-width: 0;
+    overflow-x: hidden;
+  }
+
+  .telemt-shell {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .ant-card,
+  .ant-card-body,
+  .ant-form,
+  .ant-form-item,
+  .ant-input,
+  .ant-input-affix-wrapper,
+  .ant-select,
+  .ant-picker,
+  .ant-table-wrapper {
+    max-width: 100%;
+  }
+
+  .ant-table-wrapper {
+    overflow-x: auto;
+  }
+
+  .drawer-handle {
+    left: 12px;
+    bottom: 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  .content-area {
+    padding: 10px !important;
+  }
+
+  .ant-card-body {
+    padding: 14px !important;
+  }
+
+  .ant-typography {
+    overflow-wrap: anywhere;
+  }
+}
+
+/* ── Brand mark + cyberpunk wordmark ───────────────────────────────────── */
+.brand-block {
+  gap: 11px;
+}
+
+.brand-mark {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 38px;
+  width: 38px;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+}
+
+.brand-mark-default,
+.brand-mark-cyber {
+  width: 100%;
+  height: 100%;
+}
+
+.brand-mark-default {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 0 7px rgba(0, 246, 255, 0.28)) drop-shadow(0 0 14px rgba(255, 43, 214, 0.1));
+}
+
+.brand-mark-cyber {
+  display: none;
+}
+
+.brand-mark-default svg,
+.brand-mark-cyber svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+/* Original logo — preserved for every non-cyberpunk theme */
+.brand-mark-default-frame {
+  fill: rgba(7, 11, 19, 0.9);
+  stroke: #00f6ff;
+  stroke-width: 2.25;
+  stroke-linejoin: round;
+}
+
+.brand-mark-default-core {
+  fill: none;
+  stroke: rgba(0, 246, 255, 0.58);
+  stroke-width: 1.25;
+  stroke-linecap: round;
+}
+
+.brand-mark-default-x {
+  fill: none;
+  stroke: #e8b52a;
+  stroke-width: 3.2;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 4px rgba(232, 181, 42, 0.42));
+}
+
+.brand-mark-default-node {
+  fill: none;
+  stroke: #00f6ff;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.brand-mark-default-dot {
+  fill: #00f6ff;
+  filter: drop-shadow(0 0 5px rgba(0, 246, 255, 0.8));
+}
+
+.brand-mark-default-dot-pink {
+  fill: #ff2bd6;
+  filter: drop-shadow(0 0 5px rgba(255, 43, 214, 0.78));
+}
+
+/* Cyberpunk-only logo: typographic 3X mark without the square frame. */
+.brand-mark-cyber {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-family: Orbitron, 'Rajdhani', 'Courier New', monospace;
+  font-size: 27px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -0.08em;
+  color: #f4fbff;
+  background: linear-gradient(135deg, #00f6ff 0%, #9f8cff 48%, #ff2bd6 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow: 0 0 12px rgba(0, 246, 255, 0.45);
+}
+
+.brand-text,
+.drawer-brand {
+  display: block;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  color: var(--ant-color-text);
+}
+
+body.theme-cyberpunk .brand-mark {
+  filter: drop-shadow(0 0 7px rgba(0, 246, 255, 0.4)) drop-shadow(0 0 18px rgba(255, 43, 214, 0.14));
+}
+
+body.theme-cyberpunk .brand-mark-default {
+  display: none;
+}
+
+body.theme-cyberpunk .brand-mark-cyber {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+body.theme-cyberpunk .brand-mark-cyber {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 27px;
+  font-weight: 950;
+  letter-spacing: -0.09em;
+  filter: drop-shadow(0 0 5px rgba(0, 246, 255, 0.75))
+    drop-shadow(0 0 11px rgba(255, 43, 214, 0.28));
+}
+
+body.theme-cyberpunk .brand-text,
+body.theme-cyberpunk .drawer-brand {
+  position: relative;
+  font-family: Orbitron, 'Rajdhani', 'Courier New', monospace;
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  background: linear-gradient(90deg, #f4fbff 0%, #00f6ff 38%, #9f8cff 68%, #ff2bd6 100%);
+  background-size: 160% 100%;
+  background-position: 0% 50%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow:
+    0 0 10px rgba(0, 246, 255, 0.34),
+    0 0 24px rgba(255, 43, 214, 0.12);
+  animation: cyber-brand-wordmark 7s ease-in-out infinite alternate;
+}
+
+body.theme-cyberpunk .drawer-brand {
+  font-size: 20px;
+  letter-spacing: 0.11em;
+}
+
+body.theme-cyberpunk .brand-text::after,
+body.theme-cyberpunk .drawer-brand::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -5px;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(0, 246, 255, 0.65),
+    rgba(255, 43, 214, 0.6),
+    transparent
+  );
+  box-shadow:
+    0 0 6px rgba(0, 246, 255, 0.35),
+    0 0 10px rgba(255, 43, 214, 0.2);
+  opacity: 0.8;
+}
+
+@keyframes cyber-brand-wordmark {
+  0% {
+    background-position: 0% 50%;
+    filter: brightness(0.96);
+  }
+  100% {
+    background-position: 100% 50%;
+    filter: brightness(1.08);
+  }
+}
+
+.ant-layout-sider-collapsed .brand-block {
+  gap: 0;
+}
+
+.ant-layout-sider-collapsed .brand-mark {
+  flex-basis: 44px;
+  width: 44px;
+  height: 44px;
+}
+
+.ant-layout-sider-collapsed .brand-text {
+  display: none;
+}
+
+.drawer-header .brand-block {
+  justify-content: center;
+  gap: 11px;
+  width: 100%;
+}
+
+.drawer-header .brand-mark {
+  flex-basis: 38px;
+  width: 38px;
+  height: 38px;
+}
+
+html[data-low-power='true'] .brand-mark,
+html[data-low-power='true'] .brand-text,
+html[data-low-power='true'] .drawer-brand {
+  animation: none !important;
+  filter: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.theme-cyberpunk .brand-text,
+  body.theme-cyberpunk .drawer-brand {
+    animation: none;
+  }
+}
+
+/* Refined 3X-UI wordmark */
+.brand-text {
+  display: inline-flex;
+  align-items: center;
+  font-family: Orbitron, 'Rajdhani', 'Segoe UI', sans-serif;
+  font-size: 20px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0.065em;
+  text-transform: uppercase;
+  background: linear-gradient(90deg, #f4fbff 0%, #00f6ff 34%, #9f8cff 67%, #ff2bd6 100%);
+  background-size: 160% 100%;
+  background-position: 0% 50%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow:
+    0 0 10px rgba(0, 246, 255, 0.34),
+    0 0 24px rgba(255, 43, 214, 0.12);
+  animation: cyber-brand-wordmark 7s ease-in-out infinite alternate;
+}
+
+.brand-text-full {
+  display: inline;
+}
+
+.brand-text-compact {
+  display: none;
+}
+
+.ant-layout-sider-collapsed .brand-text {
+  display: inline-flex;
+  justify-content: center;
+  width: 100%;
+  font-family: Orbitron, 'Rajdhani', 'Courier New', monospace;
+  font-size: 27px;
+  font-weight: 950;
+  line-height: 1;
+  letter-spacing: -0.09em;
+  text-transform: none;
+  background: linear-gradient(135deg, #00f6ff 0%, #9f8cff 48%, #ff2bd6 100%);
+  background-size: auto;
+  background-position: 0 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow:
+    0 0 12px rgba(0, 246, 255, 0.45),
+    0 0 18px rgba(255, 43, 214, 0.14);
+  animation: none;
+}
+
+.ant-layout-sider-collapsed .brand-text-full {
+  display: none;
+}
+
+.ant-layout-sider-collapsed .brand-text-compact {
+  display: inline;
+}
+
+.drawer-brand {
+  font-size: 20px;
+  letter-spacing: 0.11em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-text {
+    animation: none;
+  }
+}
+
+@media (max-width: 460px) {
+  .drawer-brand {
+    font-size: 19px;
+  }
+}
+
+/* Theme-aware brand layout. */
+.sider-brand .sider-brand-content {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 11px;
+  width: fit-content;
+  height: fit-content;
+  max-width: calc(100% - 74px);
+  margin: auto;
+  padding: 0;
+  transform: none;
+}
+.sider-brand .brand-actions {
+  z-index: 2;
+}
+.ant-layout-sider-collapsed .sider-brand .sider-brand-content {
+  width: 100%;
+  max-width: 100%;
+  padding: 0;
+  gap: 0;
+}
+.ant-layout-sider-collapsed .sider-brand .brand-text {
+  display: inline-flex;
+  width: auto;
+}
+
+/* Neon treatment is exclusively enabled in the cyberpunk theme. */
+body.theme-cyberpunk .brand-mark {
+  flex-basis: 44px;
+  width: 44px;
+  height: 44px;
+  filter: drop-shadow(0 0 4px rgba(0, 246, 255, 0.98)) drop-shadow(0 0 10px rgba(0, 246, 255, 0.8))
+    drop-shadow(0 0 20px rgba(255, 43, 214, 0.64));
+}
+body.theme-cyberpunk .brand-mark-default {
+  filter: drop-shadow(0 0 2px #00f6ff) drop-shadow(0 0 7px rgba(0, 246, 255, 0.86));
+}
+body.theme-cyberpunk .brand-mark-default-frame {
+  fill: rgba(3, 8, 16, 0.94);
+  stroke: #00f6ff;
+  stroke-width: 2.6;
+}
+body.theme-cyberpunk .brand-mark-default-core {
+  stroke: rgba(110, 239, 255, 0.95);
+  stroke-width: 1.5;
+  filter: drop-shadow(0 0 4px rgba(0, 246, 255, 0.9));
+}
+body.theme-cyberpunk .brand-mark-default-x {
+  stroke: #ff2bd6;
+  stroke-width: 3.8;
+  filter: drop-shadow(0 0 2px #ff2bd6) drop-shadow(0 0 8px rgba(255, 43, 214, 0.95))
+    drop-shadow(0 0 14px rgba(255, 43, 214, 0.48));
+}
+body.theme-cyberpunk .brand-mark-default-node {
+  stroke: #00f6ff;
+  stroke-width: 2.2;
+  filter: drop-shadow(0 0 4px rgba(0, 246, 255, 0.82));
+}
+body.theme-cyberpunk .brand-mark-default-dot {
+  filter: drop-shadow(0 0 2px #00f6ff) drop-shadow(0 0 8px rgba(0, 246, 255, 0.98));
+}
+body.theme-cyberpunk .brand-mark-default-dot-pink {
+  filter: drop-shadow(0 0 2px #ff2bd6) drop-shadow(0 0 8px rgba(255, 43, 214, 0.98));
+}
+body.theme-cyberpunk .brand-text {
+  font-family: Orbitron, 'Rajdhani', 'Courier New', monospace;
+  font-size: 21px;
+  font-weight: 950;
+  letter-spacing: 0.075em;
+  text-transform: uppercase;
+  transform: skewX(-4deg);
+  background: linear-gradient(
+    90deg,
+    #f8feff 0%,
+    #00f6ff 24%,
+    #64dfff 45%,
+    #a78bfa 69%,
+    #ff2bd6 100%
+  );
+  background-size: 160% 100%;
+  background-position: 0 50%;
+  text-shadow:
+    0 0 4px rgba(244, 251, 255, 0.95),
+    0 0 10px rgba(0, 246, 255, 0.9),
+    0 0 22px rgba(0, 246, 255, 0.55),
+    0 0 34px rgba(255, 43, 214, 0.34);
+}
+body.theme-cyberpunk .brand-text::before,
+body.theme-cyberpunk .brand-text::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+}
+body.theme-cyberpunk .brand-text::before {
+  left: -6px;
+  right: -5px;
+  bottom: -5px;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(0, 246, 255, 0.8) 18%,
+    #00f6ff 40%,
+    #ff2bd6 78%,
+    transparent
+  );
+  box-shadow:
+    0 0 5px rgba(0, 246, 255, 0.9),
+    0 0 12px rgba(255, 43, 214, 0.55);
+  transform: skewX(14deg) rotate(-1deg);
+}
+body.theme-cyberpunk .brand-text::after {
+  left: 12%;
+  right: 2%;
+  top: -5px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 43, 214, 0.75), transparent);
+  box-shadow: 0 0 7px rgba(255, 43, 214, 0.6);
+  transform: rotate(-2deg);
+}
+body.theme-cyberpunk .drawer-brand {
+  font-family: Orbitron, 'Rajdhani', 'Courier New', monospace;
+  font-size: 21px;
+  font-weight: 950;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: transparent;
+  background: linear-gradient(90deg, #f8feff 0%, #00f6ff 28%, #9f8cff 65%, #ff2bd6 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow:
+    0 0 4px rgba(244, 251, 255, 0.95),
+    0 0 11px rgba(0, 246, 255, 0.9),
+    0 0 24px rgba(255, 43, 214, 0.42);
+}
+@media (prefers-reduced-motion: reduce) {
+  body.theme-cyberpunk .brand-text,
+  body.theme-cyberpunk .drawer-brand {
+    animation: none;
+  }
+}
+
+/* Final sidebar wordmark treatment. The desktop sidebar uses one centered wordmark in both states. */
+.sider-brand .sider-brand-content {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  max-width: none;
+  margin: 0;
+  padding: 0 46px;
+  box-sizing: border-box;
+  gap: 0;
+  transform: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.sider-brand .brand-text {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: max-content;
+  max-width: 100%;
+  margin: 0 auto;
+  font-family: 'Arial Black', 'Segoe UI', sans-serif;
+  font-size: 27px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -0.045em;
+  text-transform: none;
+  transform: translateY(-1px);
+  background: none;
+  -webkit-background-clip: initial;
+  background-clip: initial;
+  -webkit-text-fill-color: currentColor;
+  color: var(--ant-color-text);
+  text-shadow: none;
+  animation: none;
+}
+
+.sider-brand .brand-text::before,
+.sider-brand .brand-text::after {
+  display: none;
+}
+
+.sider-brand .brand-text-full {
+  display: inline;
+}
+
+.sider-brand .brand-text-compact {
+  display: none;
+}
+
+.ant-layout-sider-collapsed .sider-brand .brand-text {
+  width: max-content;
+  max-width: 100%;
+  font-size: 27px;
+  letter-spacing: -0.045em;
+}
+
+.ant-layout-sider-collapsed .sider-brand .brand-text-full {
+  display: none;
+}
+
+.ant-layout-sider-collapsed .sider-brand .brand-text-compact {
+  display: inline;
+}
+
+/* Cyberpunk desktop keeps the product name clean and centered; the neon effect
+   comes from the theme itself rather than a separate graffiti treatment. */
+body.theme-cyberpunk .sider-brand .brand-text {
+  width: max-content;
+  max-width: 100%;
+  font-family: Orbitron, 'Rajdhani', 'Segoe UI', sans-serif;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.075em;
+  text-transform: uppercase;
+  transform: translateY(2px);
+  color: #f4fbff;
+  background: linear-gradient(90deg, #f4fbff 0%, #00f6ff 42%, #9f8cff 72%, #ff2bd6 100%);
+  background-size: 100% 100%;
+  background-position: 0 50%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  -webkit-text-stroke: 0;
+  text-shadow: none;
+  filter: none;
+  animation: none;
+}
+
+body.theme-cyberpunk .sider-brand .brand-text-full {
+  display: inline;
+}
+
+body.theme-cyberpunk .sider-brand .brand-text-compact {
+  display: none;
+}
+
+body.theme-cyberpunk .ant-layout-sider-collapsed .sider-brand .brand-text {
+  width: max-content;
+  max-width: 100%;
+  font-size: 23px;
+  letter-spacing: 0.055em;
+  transform: translateY(1px);
+  white-space: nowrap;
+  text-shadow: none;
+  filter: none;
+}
+
+body.theme-cyberpunk .ant-layout-sider-collapsed .sider-brand .brand-text-full {
+  display: none;
+}
+
+body.theme-cyberpunk .ant-layout-sider-collapsed .sider-brand .brand-text-compact {
+  display: inline;
+}
+
+body.theme-cyberpunk .sider-brand .brand-text::before,
+body.theme-cyberpunk .sider-brand .brand-text::after {
+  content: none !important;
+  display: none !important;
+}
+
+@media (max-width: 768px) {
+  .drawer-header {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-height: 72px;
+    padding: 14px 12px;
+  }
+
+  .drawer-header .brand-block {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max-content;
+    max-width: calc(100% - 96px);
+    margin: 0;
+    transform: translate(-50%, -50%);
+  }
+
+  .drawer-header .brand-mark {
+    flex: 0 0 38px;
+  }
+
+  .drawer-header .drawer-brand {
+    white-space: nowrap;
+  }
+
+  .drawer-header-actions {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+}
+
+/* Keep the mobile drawer title centered even with the absolute close button. */
+@media (max-width: 768px) {
+  .drawer-header .brand-block {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 72px;
+    padding: 0 54px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+
+  .drawer-header .drawer-brand {
+    flex: 0 0 auto;
+    text-align: center;
+  }
+}
+
+/* Mobile drawer header: fixed three-column layout keeps 3X-UI centered across the full header. */
+/* Keep the cyberpunk desktop wordmark on the exact center line of the full sidebar. */
+@media (min-width: 769px) {
+  body.theme-cyberpunk .sider-brand .sider-brand-content {
+    inset: 0 auto 0 50%;
+    width: max-content;
+    max-width: calc(100% - 92px);
+    margin: 0;
+    padding: 0;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  body.theme-cyberpunk .sider-brand .brand-text {
+    margin: 0;
+    text-align: center;
+  }
+}
+
+@media (max-width: 768px) {
+  .drawer-header {
+    display: grid;
+    grid-template-columns: 38px minmax(0, 1fr) 38px;
+    align-items: center;
+    min-height: 72px;
+    height: 72px;
+    padding: 12px;
+  }
+
+  .drawer-header-brand-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-start;
+    width: 38px;
+    height: 38px;
+  }
+
+  .drawer-header .drawer-brand {
+    position: static;
+    justify-self: center;
+    min-width: 0;
+    max-width: 100%;
+    margin: 0;
+    transform: none !important;
+    white-space: nowrap;
+    text-align: center;
+  }
+
+  .drawer-header-actions {
+    position: static;
+    justify-self: end;
+    transform: none;
+  }
+}
+
+@media (max-width: 460px) {
+  .drawer-header .drawer-brand {
+    font-size: 19px;
+    letter-spacing: 0.08em;
+  }
+}
+/* Desktop cyberpunk wordmark: lock the text to the exact center of the sidebar in both collapsed and expanded states. */
+@media (min-width: 769px) {
+  body.theme-cyberpunk .sider-brand {
+    position: relative;
+  }
+
+  body.theme-cyberpunk .sider-brand .sider-brand-content {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    right: auto;
+    bottom: auto;
+    width: max-content;
+    max-width: 100%;
+    height: 72px;
+    margin: 0;
+    padding: 0;
+    gap: 0;
+    transform: translate(-50%, -50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+  }
+
+  body.theme-cyberpunk .sider-brand .brand-text {
+    position: relative;
+    width: max-content;
+    max-width: 100%;
+    margin: 0;
+    transform: none;
+    white-space: nowrap;
+    text-align: center;
+  }
+
+  body.theme-cyberpunk .ant-layout-sider-collapsed .sider-brand .brand-text {
+    width: max-content;
+    max-width: 100%;
+    font-size: 23px;
+    letter-spacing: 0.055em;
+    transform: none;
+  }
+}
