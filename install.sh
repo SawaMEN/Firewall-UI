@@ -128,13 +128,19 @@ CONFIG_FILE="$CONFIG_DIR/config.json"
 if [[ ! -f "$CONFIG_FILE" ]]; then
   PANEL_PORT="${FIREWALL_UI_PORT:-8088}"
   PANEL_HOST="${FIREWALL_UI_LISTEN_HOST:-0.0.0.0}"
+  UPDATE_CHANNEL="${FIREWALL_UI_UPDATE_CHANNEL:-stable}"
+  if [[ "$UPDATE_CHANNEL" != "stable" && "$UPDATE_CHANNEL" != "dev" ]]; then
+    echo "FIREWALL_UI_UPDATE_CHANNEL must be stable or dev."
+    exit 1
+  fi
   cat > "$CONFIG_FILE" <<EOF
 {
   "listenHost": "$PANEL_HOST",
   "listenPort": $PANEL_PORT,
   "externalPort": 0,
   "secureCookies": false,
-  "statePath": "$STATE_DIR/state.json"
+  "statePath": "$STATE_DIR/state.json",
+  "updateChannel": "$UPDATE_CHANNEL"
 }
 EOF
   chmod 0600 "$CONFIG_FILE"
