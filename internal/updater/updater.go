@@ -356,7 +356,13 @@ func (m *Manager) downloadAndReplace(ctx context.Context, asset Asset) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close update file: %w", err)
 	}
+	previous := executable + ".previous"
+	_ = os.Remove(previous)
+	if err := os.Rename(executable, previous); err != nil {
+		return fmt.Errorf("backup current executable: %w", err)
+	}
 	if err := os.Rename(tmpName, executable); err != nil {
+		_ = os.Rename(previous, executable)
 		return fmt.Errorf("replace executable: %w", err)
 	}
 	if d, err := os.Open(dir); err == nil {
