@@ -18,13 +18,15 @@ type Config struct {
 	TLSCert       string `json:"tlsCert,omitempty"`
 	TLSKey        string `json:"tlsKey,omitempty"`
 	StatePath     string `json:"statePath"`
+	UpdateChannel string `json:"updateChannel"`
 }
 
 func Default() Config {
 	return Config{
 		ListenHost: "127.0.0.1",
 		ListenPort: 8088,
-		StatePath:  "/var/lib/firewall-ui/state.json",
+		StatePath:     "/var/lib/firewall-ui/state.json",
+		UpdateChannel: "stable",
 	}
 }
 
@@ -39,6 +41,9 @@ func Load(path string) (Config, error) {
 	}
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parse config: %w", err)
+	}
+	if strings.TrimSpace(cfg.UpdateChannel) == "" {
+		cfg.UpdateChannel = "stable"
 	}
 	if err := Validate(cfg); err != nil {
 		return Config{}, err
@@ -104,6 +109,9 @@ func Validate(cfg Config) error {
 	}
 	if strings.TrimSpace(cfg.StatePath) == "" || !filepath.IsAbs(cfg.StatePath) {
 		return errors.New("statePath must be an absolute path")
+	}
+	if cfg.UpdateChannel != "stable" && cfg.UpdateChannel != "dev" {
+		return fmt.Errorf("invalid update channel %q", cfg.UpdateChannel)
 	}
 	return nil
 }
