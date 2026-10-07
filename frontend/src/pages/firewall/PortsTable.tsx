@@ -44,7 +44,7 @@ type FirewallStatus = {
   manualRules: ManualRule[];
 };
 
-const key = (port: number, protocol: string) => \`\${port}/\${protocol}\`;
+const key = (port: number, protocol: string) => `${port}/${protocol}`;
 
 export function PortsTable() {
   const { i18n } = useTranslation();
@@ -188,7 +188,7 @@ export function PortsTable() {
 
       <Table<Port>
         size="small"
-        rowKey={(port) => \`\${port.family}-\${port.protocol}-\${port.socketId}\`}
+        rowKey={(port) => `${port.family}-${port.protocol}-${port.socketId}`}
         dataSource={filtered}
         loading={loading}
         scroll={{ x: 1180 }}
@@ -227,7 +227,7 @@ export function PortsTable() {
               return items.length ? (
                 <Space orientation="vertical" size={2}>
                   {items.map((item) => (
-                    <Typography.Text key={\`\${item.runtime}-\${item.containerId}\`}>
+                    <Typography.Text key={`${item.runtime}-${item.containerId}`}>
                       <Tag>{item.runtime}</Tag>{item.containerName} <Typography.Text type="secondary">{item.containerPort}/{item.protocol}</Typography.Text>
                     </Typography.Text>
                   ))}
