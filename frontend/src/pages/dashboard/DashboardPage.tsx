@@ -120,7 +120,7 @@ export default function DashboardPage() {
               { title: ru ? 'Адрес' : 'Address', dataIndex: 'address' },
               {
                 title: ru ? 'Процесс' : 'Process',
-                render: (_, p) => p.processes.map((x) => x.name || \`PID \${x.pid}\`).join(', ') || '—',
+                render: (_, p) => p.processes.map((x) => x.name || `PID ${x.pid}`).join(', ') || '—',
               },
             ]}
           />
@@ -130,7 +130,7 @@ export default function DashboardPage() {
       <Card className="panel-card" title={ru ? 'Опубликованные порты контейнеров' : 'Published container ports'}>
         <Table<ContainerPort>
           size="small"
-          rowKey={(p) => \`\${p.runtime}-\${p.containerId}-\${p.hostPort}-\${p.protocol}\`}
+          rowKey={(p) => `${p.runtime}-${p.containerId}-${p.hostPort}-${p.protocol}`}
           dataSource={data.containerPorts}
           pagination={{ pageSize: 10, hideOnSinglePage: true }}
           locale={{ emptyText: ru ? 'Docker/Podman порты не найдены' : 'No Docker/Podman ports found' }}
