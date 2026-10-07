@@ -115,6 +115,9 @@ func IPAllowed(remoteAddr string, allowed []string) bool {
 }
 
 func NormalizeCIDRs(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
 	seen := map[string]struct{}{}
 	out := make([]string, 0, len(values))
 	for _, raw := range values {
@@ -132,6 +135,9 @@ func NormalizeCIDRs(values []string) []string {
 		}
 		seen[value] = struct{}{}
 		out = append(out, value)
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }
