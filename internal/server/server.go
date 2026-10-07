@@ -316,7 +316,9 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	cfg.ListenPort = req.ListenPort
 	cfg.ExternalPort = req.ExternalPort
 	cfg.SecureCookies = req.SecureCookies
-	cfg.UpdateChannel = strings.TrimSpace(req.UpdateChannel)
+	if channel := strings.TrimSpace(req.UpdateChannel); channel != "" {
+		cfg.UpdateChannel = channel
+	}
 	if err := appconfig.Validate(cfg); err != nil {
 		reply(w, http.StatusBadRequest, nil, err)
 		return
