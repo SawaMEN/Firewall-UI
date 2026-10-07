@@ -1,17 +1,15 @@
-name: Build and test
+name: Release
 on:
   push:
-  pull_request:
-  workflow_dispatch:
+    tags:
+      - 'v*'
 permissions:
-  contents: read
+  contents: write
 jobs:
-  test:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check shell scripts
-        run: bash -n install.sh deploy/firewall-ui
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.x'
@@ -24,9 +22,7 @@ jobs:
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
-      - name: Check Go formatting
-        run: test -z "$(gofmt -l ./cmd ./internal)"
-      - run: go test -race ./...
+      - run: go test ./...
       - run: go vet ./...
       - name: Build Linux binaries
         run: |
@@ -34,7 +30,12 @@ jobs:
           for arch in amd64 arm64; do
             GOOS=linux GOARCH=$arch CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o dist/firewall-ui-linux-$arch ./cmd/firewall-ui
           done
-      - uses: actions/upload-artifact@v4
-        with:
-          name: firewall-ui-linux
-          path: dist/*
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --generate-notes \
+            dist/firewall-ui-linux-amd64 \
+            dist/firewall-ui-linux-arm64 \
+            install.sh

@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/SawaMEN/Firewall-UI/internal/appconfig"
 	"github.com/SawaMEN/Firewall-UI/internal/firewall"
 	"github.com/SawaMEN/Firewall-UI/internal/service"
 )
@@ -27,10 +28,12 @@ type session struct {
 	csrf    string
 	expires time.Time
 }
+
 type attempt struct {
 	count int
 	until time.Time
 }
+
 type Server struct {
 	SecureCookies bool
 	Firewall      service.FirewallService
@@ -38,14 +41,28 @@ type Server struct {
 	Username      string
 	Port          int
 	Assets        fs.FS
+	ConfigPath    string
+	RuntimeConfig appconfig.Config
+	Restart       func()
 	mu            sync.Mutex
 	sessions      map[string]session
 	attempts      map[string]attempt
 }
 
 func New(user, password string, port int, assets fs.FS) *Server {
-	return &Server{Username: user, Password: password, Port: port, Assets: assets, sessions: map[string]session{}, attempts: map[string]attempt{}}
+	cfg := appconfig.Default()
+	cfg.ListenPort = port
+	return &Server{
+		Username:      user,
+		Password:      password,
+		Port:          port,
+		Assets:        assets,
+		RuntimeConfig: cfg,
+		sessions:      map[string]session{},
+		attempts:      map[string]attempt{},
+	}
 }
+
 func token() string {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
@@ -53,6 +70,7 @@ func token() string {
 	}
 	return hex.EncodeToString(b)
 }
+
 func reply(w http.ResponseWriter, status int, obj any, err error) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -60,8 +78,9 @@ func reply(w http.ResponseWriter, status int, obj any, err error) {
 	if err != nil {
 		message = err.Error()
 	}
-	json.NewEncoder(w).Encode(map[string]any{"success": err == nil, "msg": message, "obj": obj})
+	_ = json.NewEncoder(w).Encode(map[string]any{"success": err == nil, "msg": message, "obj": obj})
 }
+
 func decode(w http.ResponseWriter, r *http.Request, v any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	d := json.NewDecoder(r.Body)
@@ -74,6 +93,7 @@ func decode(w http.ResponseWriter, r *http.Request, v any) error {
 	}
 	return nil
 }
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
@@ -82,65 +102,84 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.static(w, r)
 		return
 	}
+
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
-		reply(w, 405, nil, fmt.Errorf("method not allowed"))
+		reply(w, http.StatusMethodNotAllowed, nil, fmt.Errorf("method not allowed"))
 		return
 	}
-	// Reject browser cross-site login/logout and mutations; proxy headers are never trusted.
+
 	if r.Method == http.MethodPost && r.Header.Get("Origin") != "" {
 		origin, err := url.Parse(r.Header.Get("Origin"))
 		if err != nil || !strings.EqualFold(origin.Host, r.Host) {
-			reply(w, 403, nil, fmt.Errorf("invalid request origin"))
+			reply(w, http.StatusForbidden, nil, fmt.Errorf("invalid request origin"))
 			return
 		}
 	}
 	if r.Method == http.MethodPost && r.Header.Get("Sec-Fetch-Site") == "cross-site" {
-		reply(w, 403, nil, fmt.Errorf("cross-site request"))
+		reply(w, http.StatusForbidden, nil, fmt.Errorf("cross-site request"))
 		return
 	}
+
 	if r.URL.Path == "/api/login" && r.Method == http.MethodPost {
 		s.login(w, r)
 		return
 	}
+
 	cookie, err := r.Cookie("firewall_ui_session")
 	if err != nil {
-		reply(w, 401, nil, fmt.Errorf("authentication required"))
+		reply(w, http.StatusUnauthorized, nil, fmt.Errorf("authentication required"))
 		return
 	}
 	s.mu.Lock()
 	sess, ok := s.sessions[cookie.Value]
 	s.mu.Unlock()
 	if !ok || time.Now().After(sess.expires) {
-		reply(w, 401, nil, fmt.Errorf("session expired"))
+		reply(w, http.StatusUnauthorized, nil, fmt.Errorf("session expired"))
 		return
 	}
 	if r.Method == http.MethodPost && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(sess.csrf)) != 1 {
-		reply(w, 403, nil, fmt.Errorf("invalid CSRF token"))
+		reply(w, http.StatusForbidden, nil, fmt.Errorf("invalid CSRF token"))
 		return
 	}
+
 	if r.URL.Path == "/api/session" && r.Method == http.MethodGet {
-		reply(w, 200, map[string]string{"csrf": sess.csrf, "username": s.Username}, nil)
+		reply(w, http.StatusOK, map[string]string{"csrf": sess.csrf, "username": s.Username}, nil)
 		return
 	}
 	if r.URL.Path == "/api/logout" && r.Method == http.MethodPost {
 		s.mu.Lock()
 		delete(s.sessions, cookie.Value)
 		s.mu.Unlock()
-		http.SetCookie(w, &http.Cookie{Name: cookie.Name, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: s.SecureCookies || r.TLS != nil})
-		reply(w, 200, nil, nil)
+		http.SetCookie(w, &http.Cookie{
+			Name:     cookie.Name,
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			HttpOnly: true,
+			SameSite: http.SameSiteStrictMode,
+			Secure:   s.SecureCookies || r.TLS != nil,
+		})
+		reply(w, http.StatusOK, nil, nil)
 		return
 	}
 	if r.URL.Path == "/api/ports" && r.Method == http.MethodGet {
 		ports, err := service.ReadPorts("/proc")
-		reply(w, 200, ports, err)
+		reply(w, http.StatusOK, ports, err)
 		return
 	}
+	if r.URL.Path == "/api/settings" {
+		s.settings(w, r)
+		return
+	}
+
 	s.manage(w, r)
 }
+
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 	now := time.Now()
+
 	s.mu.Lock()
 	for k, v := range s.attempts {
 		if now.After(v.until) {
@@ -155,7 +194,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	a := s.attempts[ip]
 	if a.count >= 10 || len(s.attempts) > 4096 {
 		s.mu.Unlock()
-		reply(w, 429, nil, fmt.Errorf("too many login attempts"))
+		reply(w, http.StatusTooManyRequests, nil, fmt.Errorf("too many login attempts"))
 		return
 	}
 	if a.count == 0 {
@@ -164,52 +203,169 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	a.count++
 	s.attempts[ip] = a
 	s.mu.Unlock()
+
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
 	if err := decode(w, r, &req); err != nil {
-		reply(w, 400, nil, err)
+		reply(w, http.StatusBadRequest, nil, err)
 		return
 	}
+
 	got, want := sha256.Sum256([]byte(req.Password)), sha256.Sum256([]byte(s.Password))
 	if subtle.ConstantTimeCompare(got[:], want[:]) != 1 || req.Username != s.Username {
-		reply(w, 401, nil, fmt.Errorf("invalid credentials"))
+		reply(w, http.StatusUnauthorized, nil, fmt.Errorf("invalid credentials"))
 		return
 	}
+
 	id, csrf := token(), token()
 	s.mu.Lock()
 	delete(s.attempts, ip)
 	if len(s.sessions) >= 1024 {
 		s.mu.Unlock()
-		reply(w, 429, nil, fmt.Errorf("session limit reached"))
+		reply(w, http.StatusTooManyRequests, nil, fmt.Errorf("session limit reached"))
 		return
 	}
-	s.sessions[id] = session{csrf, now.Add(12 * time.Hour)}
+	s.sessions[id] = session{csrf: csrf, expires: now.Add(12 * time.Hour)}
 	s.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: "firewall_ui_session", Value: id, Path: "/", MaxAge: 43200, HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: s.SecureCookies || r.TLS != nil})
-	reply(w, 200, map[string]string{"csrf": csrf}, nil)
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "firewall_ui_session",
+		Value:    id,
+		Path:     "/",
+		MaxAge:   43200,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		Secure:   s.SecureCookies || r.TLS != nil,
+	})
+	reply(w, http.StatusOK, map[string]string{"csrf": csrf}, nil)
 }
+
+type runtimeSettingsResponse struct {
+	ListenHost    string `json:"listenHost"`
+	ListenPort    int    `json:"listenPort"`
+	ExternalPort  int    `json:"externalPort"`
+	SecureCookies bool   `json:"secureCookies"`
+	TLSEnabled    bool   `json:"tlsEnabled"`
+	Restarting    bool   `json:"restarting,omitempty"`
+}
+
+func runtimeSettingsView(cfg appconfig.Config, restarting bool) runtimeSettingsResponse {
+	return runtimeSettingsResponse{
+		ListenHost:    cfg.ListenHost,
+		ListenPort:    cfg.ListenPort,
+		ExternalPort:  cfg.ExternalPort,
+		SecureCookies: cfg.SecureCookies,
+		TLSEnabled:    cfg.TLSCert != "" && cfg.TLSKey != "",
+		Restarting:    restarting,
+	}
+}
+
+func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		s.mu.Lock()
+		cfg := s.RuntimeConfig
+		s.mu.Unlock()
+		reply(w, http.StatusOK, runtimeSettingsView(cfg, false), nil)
+		return
+	}
+	if r.Method != http.MethodPost {
+		reply(w, http.StatusMethodNotAllowed, nil, fmt.Errorf("method not allowed"))
+		return
+	}
+
+	var req struct {
+		ListenHost    string `json:"listenHost"`
+		ListenPort    int    `json:"listenPort"`
+		ExternalPort  int    `json:"externalPort"`
+		SecureCookies bool   `json:"secureCookies"`
+	}
+	if err := decode(w, r, &req); err != nil {
+		reply(w, http.StatusBadRequest, nil, err)
+		return
+	}
+	if s.ConfigPath == "" {
+		reply(w, http.StatusConflict, nil, fmt.Errorf("runtime configuration file is not configured"))
+		return
+	}
+
+	s.mu.Lock()
+	cfg := s.RuntimeConfig
+	s.mu.Unlock()
+	cfg.ListenHost = strings.TrimSpace(req.ListenHost)
+	cfg.ListenPort = req.ListenPort
+	cfg.ExternalPort = req.ExternalPort
+	cfg.SecureCookies = req.SecureCookies
+	if err := appconfig.Validate(cfg); err != nil {
+		reply(w, http.StatusBadRequest, nil, err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	if cfg.ListenPort != s.Port {
+		if err := s.Firewall.RememberSafetyPort(cfg.ListenPort); err != nil {
+			reply(w, http.StatusOK, nil, err)
+			return
+		}
+		status, statusErr := s.Firewall.GetManagedStatusSafe(ctx, s.Port)
+		if statusErr == nil && status.Supported && status.Enabled {
+			if _, err := s.Firewall.SyncManagedSafe(ctx, cfg.ListenPort); err != nil {
+				reply(w, http.StatusOK, nil, fmt.Errorf("protect new panel port: %w", err))
+				return
+			}
+		}
+	}
+
+	if err := appconfig.Save(s.ConfigPath, cfg); err != nil {
+		reply(w, http.StatusOK, nil, err)
+		return
+	}
+
+	s.mu.Lock()
+	s.RuntimeConfig = cfg
+	s.mu.Unlock()
+	restarting := s.Restart != nil
+	reply(w, http.StatusOK, runtimeSettingsView(cfg, restarting), nil)
+
+	if restarting {
+		go func() {
+			time.Sleep(350 * time.Millisecond)
+			s.Restart()
+		}()
+	}
+}
+
 func (s *Server) manage(w http.ResponseWriter, r *http.Request) {
 	operation := strings.TrimPrefix(r.URL.Path, "/panel/api/server/firewall/")
 	if operation == r.URL.Path {
-		reply(w, 404, nil, fmt.Errorf("not found"))
+		reply(w, http.StatusNotFound, nil, fmt.Errorf("not found"))
 		return
 	}
 	if operation == "status" && r.Method != http.MethodGet || operation != "status" && r.Method != http.MethodPost {
-		reply(w, 405, nil, fmt.Errorf("method not allowed"))
+		reply(w, http.StatusMethodNotAllowed, nil, fmt.Errorf("method not allowed"))
 		return
 	}
-	if operation != "status" && operation != "enabled" && operation != "auto-sync" && operation != "ping" && operation != "sync" && operation != "install-ufw" && operation != "rules/add" && operation != "rules/delete" {
-		reply(w, 404, nil, fmt.Errorf("not found"))
+	if operation != "status" &&
+		operation != "enabled" &&
+		operation != "auto-sync" &&
+		operation != "ping" &&
+		operation != "sync" &&
+		operation != "install-ufw" &&
+		operation != "rules/add" &&
+		operation != "rules/delete" {
+		reply(w, http.StatusNotFound, nil, fmt.Errorf("not found"))
 		return
 	}
+
 	timeout := 30 * time.Second
 	if operation == "install-ufw" {
 		timeout = 5 * time.Minute
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
+
 	var req struct {
 		Enabled  *bool  `json:"enabled"`
 		Port     int    `json:"port"`
@@ -218,28 +374,30 @@ func (s *Server) manage(w http.ResponseWriter, r *http.Request) {
 	}
 	if operation == "enabled" || operation == "auto-sync" || operation == "ping" || strings.HasPrefix(operation, "rules/") {
 		if err := decode(w, r, &req); err != nil {
-			reply(w, 400, nil, err)
+			reply(w, http.StatusBadRequest, nil, err)
 			return
 		}
 		if (operation == "enabled" || operation == "auto-sync" || operation == "ping") && req.Enabled == nil {
-			reply(w, 400, nil, fmt.Errorf("enabled is required"))
+			reply(w, http.StatusBadRequest, nil, fmt.Errorf("enabled is required"))
 			return
 		}
 	}
+
 	if operation != "status" && operation != "install-ufw" {
 		if err := s.Firewall.MigrateManagedBackendIfNeeded(ctx); err != nil {
-			reply(w, 200, nil, err)
+			reply(w, http.StatusOK, nil, err)
 			return
 		}
 		if err := s.Firewall.RememberSafetyPort(s.Port); err != nil {
-			reply(w, 200, nil, err)
+			reply(w, http.StatusOK, nil, err)
 			return
 		}
 		if err := s.Firewall.MarkControlInitialized(); err != nil {
-			reply(w, 200, nil, err)
+			reply(w, http.StatusOK, nil, err)
 			return
 		}
 	}
+
 	var status service.FirewallManagedStatus
 	var err error
 	switch operation {
@@ -270,20 +428,26 @@ func (s *Server) manage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
-		reply(w, 200, nil, err)
+		reply(w, http.StatusOK, nil, err)
 		return
 	}
+
 	ping, err := s.Firewall.ManagedPingEnabled()
 	detected := firewall.Detect(ctx)
-	reply(w, 200, struct {
+	reply(w, http.StatusOK, struct {
 		service.FirewallManagedStatus
 		Ping       bool `json:"pingEnabled"`
 		CanInstall bool `json:"canInstallUfw"`
-	}{status, ping, !detected.Installed && os.Geteuid() == 0}, err)
+	}{
+		FirewallManagedStatus: status,
+		Ping:                  ping,
+		CanInstall:            !detected.Installed && os.Geteuid() == 0,
+	}, err)
 }
+
 func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.WriteHeader(405)
+		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 	name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
@@ -298,7 +462,7 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 		name = "index.html"
 	}
 	if _, err := fs.Stat(s.Assets, name); err != nil {
-		http.Error(w, "Build frontend first: cd frontend && npm ci && npm run build", 503)
+		http.Error(w, "Build frontend first: cd frontend && npm ci && npm run build", http.StatusServiceUnavailable)
 		return
 	}
 	copy := r.Clone(r.Context())

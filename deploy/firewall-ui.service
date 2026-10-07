@@ -7,12 +7,13 @@ Wants=network-online.target
 Type=simple
 User=root
 EnvironmentFile=/etc/firewall-ui/environment
-ExecStart=/usr/local/bin/firewall-ui -listen 127.0.0.1:8088 -state /var/lib/firewall-ui/state.json
-Restart=on-failure
-RestartSec=5
+ExecStart=/usr/local/firewall-ui/firewall-ui -config /etc/firewall-ui/config.json
+Restart=always
+RestartSec=3
 StateDirectory=firewall-ui
 StateDirectoryMode=0700
 UMask=0077
+LimitNOFILE=1048576
 
 [Install]
 WantedBy=multi-user.target
