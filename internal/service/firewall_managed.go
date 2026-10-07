@@ -575,6 +575,19 @@ func applyManagedNftables(ctx context.Context, binary string, rules []FirewallRu
 	script.WriteString("  iifname \"lo\" accept\n")
 	script.WriteString("  ip protocol icmp accept\n")
 	script.WriteString("  ip6 nexthdr ipv6-icmp accept\n")
+	writePortRule := func(rule FirewallRule) {
+		spec := firewallRuleSpec(rule)
+		if spec == "" {
+			return
+		}
+		parts := strings.SplitN(spec, "/", 2)
+		script.WriteString("  " + parts[1] + " dport " + nftPortExpression(rule) + " accept\n")
+	}
+	for _, rule := range rules {
+		if isFirewallSafetyRule(rule) {
+			writePortRule(rule)
+		}
+	}
 	advanced, err := loadAdvancedFirewallRules()
 	if err != nil {
 		return err
@@ -586,12 +599,9 @@ func applyManagedNftables(ctx context.Context, binary string, rules []FirewallRu
 		}
 	}
 	for _, rule := range rules {
-		spec := firewallRuleSpec(rule)
-		if spec == "" {
-			continue
+		if !isFirewallSafetyRule(rule) {
+			writePortRule(rule)
 		}
-		parts := strings.SplitN(spec, "/", 2)
-		script.WriteString("  " + parts[1] + " dport " + nftPortExpression(rule) + " accept\n")
 	}
 	script.WriteString(" }\n}\n")
 	cmd := exec.CommandContext(ctx, binary, "-f", "-")
