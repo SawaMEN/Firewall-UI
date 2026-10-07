@@ -23,8 +23,26 @@ arch_name() {
   esac
 }
 
+update_channel() {
+  if [[ -f "$CONFIG" ]]; then
+    local channel
+    channel="$(sed -n 's/.*"updateChannel":[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG" | head -n 1)"
+    if [[ "$channel" == "dev" ]]; then
+      echo dev
+      return
+    fi
+  fi
+  echo stable
+}
+
 release_url() {
-  echo "https://github.com/${REPO}/releases/latest/download/firewall-ui-linux-$(arch_name)"
+  local channel
+  channel="$(update_channel)"
+  if [[ "$channel" == "dev" ]]; then
+    echo "https://github.com/${REPO}/releases/download/dev/firewall-ui-linux-$(arch_name)"
+  else
+    echo "https://github.com/${REPO}/releases/latest/download/firewall-ui-linux-$(arch_name)"
+  fi
 }
 
 service_action() {
@@ -49,7 +67,16 @@ update_binary() {
   command -v curl >/dev/null 2>&1 || { echo "curl is required"; exit 1; }
   local tmp
   tmp="$(mktemp)"
-  echo "Downloading latest Firewall-UI..."
+  local channel
+  channel="$(update_channel)"
+  if [[ "$channel" == "stable" ]]; then
+    read -r -p "Install the latest stable Firewall-UI release? [y/N]: " answer
+    if [[ ! "$answer" =~ ^[Yy]$ ]]; then
+      rm -f "$tmp"
+      return 0
+    fi
+  fi
+  echo "Downloading latest Firewall-UI ($channel)..."
   curl -fL --retry 3 --connect-timeout 15 "$(release_url)" -o "$tmp"
   install -m 0755 "$tmp" "$BIN"
   systemctl restart "${SERVICE}.service"
