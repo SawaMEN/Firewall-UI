@@ -116,3 +116,39 @@ body {
     gap: 0;
   }
 }
+
+
+.firewall-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 22px;
+  margin-top: 18px;
+}
+
+.advanced-rule-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+
+.dashboard-stat {
+  height: 100%;
+}
+
+.dashboard-stat .ant-statistic-content {
+  font-size: 22px;
+}
+
+@media (max-width: 980px) {
+  .advanced-rule-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .firewall-toggle-grid,
+  .advanced-rule-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,20 +1,30 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Button,
   Card,
+  Divider,
   Form,
+  Input,
   InputNumber,
+  message,
   Popconfirm,
   Select,
   Space,
   Spin,
   Switch,
+  Table,
   Tag,
   Typography,
-  message,
 } from 'antd';
-import { ReloadOutlined, SaveOutlined, SyncOutlined } from '@ant-design/icons';
+import {
+  DownloadOutlined,
+  HistoryOutlined,
+  ReloadOutlined,
+  SaveOutlined,
+  SyncOutlined,
+  UploadOutlined,
+} from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 
 import { HttpUtil } from '@/utils';
@@ -25,113 +35,179 @@ type RuntimeSettings = {
   externalPort: number;
   secureCookies: boolean;
   tlsEnabled: boolean;
-  updateChannel: 'stable' | 'dev';
+  updateChannel: string;
+  allowedCidrs: string[];
+  totpEnabled: boolean;
+  rollbackSeconds: number;
+  portScanInterval: number;
+  restarting?: boolean;
 };
 
-type SaveSettingsResponse = RuntimeSettings & {
-  restarting: boolean;
+type FormSettings = Omit<RuntimeSettings, 'allowedCidrs' | 'totpEnabled' | 'tlsEnabled' | 'restarting'> & {
+  allowedCidrsText: string;
 };
 
 type UpdateStatus = {
   currentVersion: string;
   currentChannel: string;
-  currentCommit: string;
-  selectedChannel: 'stable' | 'dev';
   latestVersion: string;
-  latestCommit: string;
   available: boolean;
   restarting?: boolean;
 };
 
+type TOTPSetup = { secret: string; uri: string };
+type AuditEntry = {
+  time: string;
+  user?: string;
+  remoteIp?: string;
+  action: string;
+  success: boolean;
+  message?: string;
+};
+type HistorySnapshot = { id: string; createdAt: string; reason: string };
+type BackupRestoreResult = {
+  restored: boolean;
+  restartRequired?: boolean;
+  rollback?: { token: string; deadline: string };
+};
+
 export default function SettingsPage() {
   const { i18n } = useTranslation();
-  const ru = (i18n.resolvedLanguage || i18n.language || '').toLowerCase().startsWith('ru');
-  const [form] = Form.useForm<RuntimeSettings>();
+  const ru = i18n.language.startsWith('ru');
+  const [form] = Form.useForm<FormSettings>();
+  const restoreInput = useRef<HTMLInputElement>(null);
   const [current, setCurrent] = useState<RuntimeSettings | null>(null);
-  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [applyingUpdate, setApplyingUpdate] = useState(false);
-  const [error, setError] = useState('');
   const [updateError, setUpdateError] = useState('');
+  const [totpSetup, setTotpSetup] = useState<TOTPSetup | null>(null);
+  const [totpCode, setTotpCode] = useState('');
+  const [securityBusy, setSecurityBusy] = useState(false);
+  const [audit, setAudit] = useState<AuditEntry[]>([]);
+  const [history, setHistory] = useState<HistorySnapshot[]>([]);
+  const [historyBusy, setHistoryBusy] = useState('');
+  const [restartRequired, setRestartRequired] = useState(false);
 
   const text = useMemo(
     () =>
       ru
         ? {
-            webTitle: 'Веб-панель',
-            hint: 'Изменения адреса и порта применяются безопасным перезапуском сервиса. Новый порт заранее добавляется в защитные правила Firewall-UI.',
+            webTitle: 'Веб-панель и безопасность',
+            hint: 'Рекомендуется localhost + reverse proxy/SSH tunnel. CIDR allowlist нельзя сохранить, если он отрежет текущего клиента.',
             listen: 'Доступ к панели',
             local: 'Только localhost',
             ipv4: 'Все IPv4-интерфейсы',
             ipv6: 'Все IPv6-интерфейсы',
             port: 'Порт панели',
             external: 'Внешний порт reverse proxy',
-            externalHint: '0 — не использовать отдельный внешний порт.',
+            externalHint: '0 — отдельного внешнего порта нет.',
             secure: 'Secure cookie',
-            secureHint: 'Включайте при доступе к панели только через HTTPS.',
+            secureHint: 'Включайте при доступе только через HTTPS.',
+            cidrs: 'Разрешённые IP/CIDR',
+            cidrsHint: 'По одному IP или CIDR на строку. Пусто — ограничение отключено.',
+            rollback: 'Rollback timeout, сек.',
+            rollbackHint: 'UI должен подтвердить доступность после опасного изменения, иначе прошлые правила восстановятся.',
+            scan: 'Интервал сканирования портов, сек.',
             tls: 'Встроенный TLS',
             tlsOn: 'Настроен',
             tlsOff: 'Не настроен',
             save: 'Сохранить настройки',
-            saved: 'Настройки сохранены.',
             restarting: 'Настройки сохранены. Firewall-UI перезапускается.',
-            failed: 'Не удалось загрузить настройки панели.',
-            reconnect: 'Если порт изменён при прямом доступе, браузер откроет новый адрес автоматически.',
+            failed: 'Не удалось загрузить настройки.',
+            twoFactor: 'Двухфакторная аутентификация (TOTP)',
+            twoFactorOn: 'TOTP включён',
+            twoFactorOff: 'TOTP выключен',
+            setup2fa: 'Настроить TOTP',
+            enable2fa: 'Подтвердить и включить',
+            disable2fa: 'Отключить TOTP',
+            secret: 'Секрет',
+            uri: 'otpauth URI',
+            code: '6-значный код',
             updates: 'Обновления',
             channel: 'Канал обновлений',
             stable: 'Stable',
             dev: 'Dev',
-            stableHint: 'Стабильные релизы не устанавливаются автоматически. Проверка и установка выполняются кнопкой ниже с подтверждением.',
-            devHint: 'Dev-сборки публикуются из main автоматически и устанавливаются сервером без подтверждений и уведомлений.',
+            stableHint: 'Stable устанавливается вручную после проверки SHA-256.',
+            devHint: 'Dev обновляется автоматически из main.',
             current: 'Текущая версия',
             latest: 'Доступная версия',
+            check: 'Проверить',
+            update: 'Установить',
+            updateConfirm: 'Установить stable-обновление и перезапустить Firewall-UI?',
             noUpdate: 'Установлена актуальная версия.',
-            check: 'Проверить обновление',
-            update: 'Обновить до',
-            updateConfirm: 'Установить стабильное обновление и перезапустить Firewall-UI?',
-            updateNow: 'Обновить',
-            updateApplied: 'Обновление установлено. Firewall-UI перезапускается.',
-            updateFailed: 'Не удалось проверить или установить обновление.',
-            devActive: 'Автообновление Dev активно',
+            backup: 'Backup и история',
+            export: 'Скачать backup',
+            import: 'Восстановить backup',
+            restoreConfirm: 'Восстановить этот снимок правил?',
+            historyEmpty: 'История пока пуста',
+            restart: 'Перезапустить сервис',
+            restartNeeded: 'Backup восстановлен. Для применения сетевых настроек нужен перезапуск.',
+            audit: 'Журнал действий',
+            time: 'Время',
+            action: 'Действие',
+            result: 'Результат',
+            client: 'Клиент',
           }
         : {
-            webTitle: 'Web panel',
-            hint: 'Listen address and port changes are applied with a safe service restart. Firewall-UI protects the new port before restarting.',
+            webTitle: 'Web panel & security',
+            hint: 'Localhost with a reverse proxy/SSH tunnel is recommended. The CIDR allowlist cannot be saved if it would lock out the current client.',
             listen: 'Panel access',
             local: 'Localhost only',
             ipv4: 'All IPv4 interfaces',
             ipv6: 'All IPv6 interfaces',
             port: 'Panel port',
             external: 'Reverse proxy external port',
-            externalHint: 'Use 0 when there is no separate public reverse-proxy port.',
+            externalHint: 'Use 0 when there is no separate public port.',
             secure: 'Secure cookie',
             secureHint: 'Enable when the panel is accessed exclusively over HTTPS.',
+            cidrs: 'Allowed IP/CIDR',
+            cidrsHint: 'One IP or CIDR per line. Empty means unrestricted.',
+            rollback: 'Rollback timeout, sec.',
+            rollbackHint: 'The UI must confirm connectivity after risky changes or previous rules are restored.',
+            scan: 'Port scan interval, sec.',
             tls: 'Built-in TLS',
             tlsOn: 'Configured',
             tlsOff: 'Not configured',
             save: 'Save settings',
-            saved: 'Settings saved.',
             restarting: 'Settings saved. Firewall-UI is restarting.',
-            failed: 'Failed to load panel settings.',
-            reconnect: 'When the direct-access port changes, the browser will open the new address automatically.',
+            failed: 'Failed to load settings.',
+            twoFactor: 'Two-factor authentication (TOTP)',
+            twoFactorOn: 'TOTP enabled',
+            twoFactorOff: 'TOTP disabled',
+            setup2fa: 'Set up TOTP',
+            enable2fa: 'Verify and enable',
+            disable2fa: 'Disable TOTP',
+            secret: 'Secret',
+            uri: 'otpauth URI',
+            code: '6-digit code',
             updates: 'Updates',
             channel: 'Update channel',
             stable: 'Stable',
             dev: 'Dev',
-            stableHint: 'Stable releases are never installed automatically. Check and install them with the button below and an explicit confirmation.',
-            devHint: 'Dev builds are published from main automatically and installed by the server without confirmations or notifications.',
+            stableHint: 'Stable is installed manually after SHA-256 verification.',
+            devHint: 'Dev updates automatically from main.',
             current: 'Current version',
             latest: 'Available version',
-            noUpdate: 'The current version is up to date.',
-            check: 'Check for update',
-            update: 'Update to',
+            check: 'Check',
+            update: 'Install',
             updateConfirm: 'Install the stable update and restart Firewall-UI?',
-            updateNow: 'Update',
-            updateApplied: 'Update installed. Firewall-UI is restarting.',
-            updateFailed: 'Failed to check or install the update.',
-            devActive: 'Dev auto-update is active',
+            noUpdate: 'The current version is up to date.',
+            backup: 'Backup & history',
+            export: 'Download backup',
+            import: 'Restore backup',
+            restoreConfirm: 'Restore this rules snapshot?',
+            historyEmpty: 'No history yet',
+            restart: 'Restart service',
+            restartNeeded: 'Backup restored. A restart is required to apply network settings.',
+            audit: 'Audit log',
+            time: 'Time',
+            action: 'Action',
+            result: 'Result',
+            client: 'Client',
           },
     [ru],
   );
@@ -141,16 +217,20 @@ export default function SettingsPage() {
     setUpdateError('');
     try {
       const result = await HttpUtil.get<UpdateStatus>('/api/update/status');
-      if (result.success && result.obj) {
-        setUpdateStatus(result.obj);
-      } else {
-        setUpdateError(result.msg || text.updateFailed);
-      }
-    } catch {
-      setUpdateError(text.updateFailed);
+      if (result.success && result.obj) setUpdateStatus(result.obj);
+      else setUpdateError(result.msg);
     } finally {
       setCheckingUpdate(false);
     }
+  }
+
+  async function loadActivity() {
+    const [auditResult, historyResult] = await Promise.all([
+      HttpUtil.get<AuditEntry[]>('/api/audit'),
+      HttpUtil.get<HistorySnapshot[]>('/api/history'),
+    ]);
+    if (auditResult.success && auditResult.obj) setAudit(auditResult.obj);
+    if (historyResult.success && historyResult.obj) setHistory(historyResult.obj);
   }
 
   useEffect(() => {
@@ -163,43 +243,53 @@ export default function SettingsPage() {
           return;
         }
         setCurrent(result.obj);
-        form.setFieldsValue(result.obj);
+        form.setFieldsValue({
+          listenHost: result.obj.listenHost,
+          listenPort: result.obj.listenPort,
+          externalPort: result.obj.externalPort,
+          secureCookies: result.obj.secureCookies,
+          updateChannel: result.obj.updateChannel,
+          rollbackSeconds: result.obj.rollbackSeconds,
+          portScanInterval: result.obj.portScanInterval,
+          allowedCidrsText: (result.obj.allowedCidrs || []).join('\n'),
+        });
         void loadUpdateStatus();
+        void loadActivity();
       })
-      .catch(() => {
-        if (!cancelled) setError(text.failed);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+      .catch(() => !cancelled && setError(text.failed))
+      .finally(() => !cancelled && setLoading(false));
+    return () => { cancelled = true; };
   }, [form, text.failed]);
 
-  async function save(values: RuntimeSettings) {
+  async function save(values: FormSettings) {
     setSaving(true);
-    setError('');
     try {
       const old = current;
-      const result = await HttpUtil.post<SaveSettingsResponse>('/api/settings', values, {
-        silentSuccess: true,
+      const allowedCidrs = values.allowedCidrsText
+        .split(/\r?\n|,/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const result = await HttpUtil.post<RuntimeSettings>('/api/settings', {
+        listenHost: values.listenHost,
+        listenPort: values.listenPort,
+        externalPort: values.externalPort,
+        secureCookies: values.secureCookies,
+        updateChannel: values.updateChannel,
+        allowedCidrs,
+        rollbackSeconds: values.rollbackSeconds,
+        portScanInterval: values.portScanInterval,
       });
       if (!result.success || !result.obj) {
         setError(result.msg || text.failed);
         return;
       }
       setCurrent(result.obj);
-      form.setFieldsValue(result.obj);
       if (result.obj.restarting) {
         void message.success(text.restarting);
-        const directPort = old?.listenPort;
-        const browserPort = Number(
-          window.location.port || (window.location.protocol === 'https:' ? 443 : 80),
-        );
-        const shouldRedirect = directPort === browserPort && values.listenPort !== directPort;
+        const browserPort = Number(window.location.port || (window.location.protocol === 'https:' ? 443 : 80));
+        const direct = old?.listenPort === browserPort;
         window.setTimeout(() => {
-          if (shouldRedirect) {
+          if (direct && old?.listenPort !== values.listenPort) {
             const target = new URL(window.location.href);
             target.port = String(values.listenPort);
             window.location.assign(target.toString());
@@ -208,51 +298,104 @@ export default function SettingsPage() {
           }
         }, 2200);
       } else {
-        void message.success(text.saved);
-        void loadUpdateStatus();
+        void message.success(ru ? 'Настройки сохранены' : 'Settings saved');
       }
-    } catch {
-      setError(text.failed);
     } finally {
       setSaving(false);
     }
   }
 
+  async function setupTOTP() {
+    setSecurityBusy(true);
+    try {
+      const result = await HttpUtil.post<TOTPSetup>('/api/security/totp/setup', {});
+      if (result.success && result.obj) setTotpSetup(result.obj);
+    } finally { setSecurityBusy(false); }
+  }
+
+  async function confirmTOTP() {
+    setSecurityBusy(true);
+    try {
+      const result = await HttpUtil.post<{ enabled: boolean }>('/api/security/totp/confirm', { code: totpCode });
+      if (result.success && result.obj?.enabled) {
+        setCurrent((old) => old ? { ...old, totpEnabled: true } : old);
+        setTotpSetup(null);
+        setTotpCode('');
+      }
+    } finally { setSecurityBusy(false); }
+  }
+
+  async function disableTOTP() {
+    setSecurityBusy(true);
+    try {
+      const result = await HttpUtil.post<{ enabled: boolean }>('/api/security/totp/disable', { code: totpCode });
+      if (result.success) {
+        setCurrent((old) => old ? { ...old, totpEnabled: false } : old);
+        setTotpCode('');
+      }
+    } finally { setSecurityBusy(false); }
+  }
+
   async function applyStableUpdate() {
     setApplyingUpdate(true);
-    setUpdateError('');
     try {
-      const result = await HttpUtil.post<UpdateStatus>('/api/update/apply', {}, {
-        silentSuccess: true,
-      });
-      if (!result.success || !result.obj) {
-        setUpdateError(result.msg || text.updateFailed);
-        return;
+      const result = await HttpUtil.post<UpdateStatus>('/api/update/apply', {});
+      if (result.success && result.obj) {
+        setUpdateStatus(result.obj);
+        if (result.obj.restarting) window.setTimeout(() => window.location.reload(), 2600);
       }
-      setUpdateStatus(result.obj);
-      if (result.obj.restarting) {
-        void message.success(text.updateApplied);
-        window.setTimeout(() => window.location.reload(), 2600);
+    } finally { setApplyingUpdate(false); }
+  }
+
+  async function downloadBackup() {
+    const result = await HttpUtil.get<Record<string, unknown>>('/api/backup');
+    if (!result.success || !result.obj) return;
+    const blob = new Blob([JSON.stringify(result.obj, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'firewall-ui-backup-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json';
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function restoreBackupFile(file: File) {
+    try {
+      const parsed = JSON.parse(await file.text()) as Record<string, unknown>;
+      const result = await HttpUtil.post<BackupRestoreResult>('/api/backup/restore', parsed);
+      if (result.success && result.obj) {
+        setRestartRequired(Boolean(result.obj.restartRequired));
+        void loadActivity();
+        void message.success(ru ? 'Backup восстановлен' : 'Backup restored');
       }
     } catch {
-      setUpdateError(text.updateFailed);
+      void message.error(ru ? 'Некорректный backup JSON' : 'Invalid backup JSON');
     } finally {
-      setApplyingUpdate(false);
+      if (restoreInput.current) restoreInput.current.value = '';
     }
   }
 
-  if (loading) {
-    return (
-      <div className="panel-card panel-loading">
-        <Spin />
-      </div>
-    );
+  async function restoreHistory(id: string) {
+    setHistoryBusy(id);
+    try {
+      const result = await HttpUtil.post('/api/history/restore', { id });
+      if (result.success) {
+        void loadActivity();
+        void message.success(ru ? 'Снимок восстановлен' : 'Snapshot restored');
+      }
+    } finally { setHistoryBusy(''); }
   }
 
-  const persistedChannel = current?.updateChannel || 'stable';
+  async function restart() {
+    const result = await HttpUtil.post<{ restarting: boolean }>('/api/system/restart', {});
+    if (result.success) window.setTimeout(() => window.location.reload(), 2200);
+  }
+
+  if (loading) return <div className="panel-card panel-loading"><Spin /></div>;
+  const channel = current?.updateChannel || 'stable';
 
   return (
-    <Form<RuntimeSettings>
+    <Form<FormSettings>
       form={form}
       layout="vertical"
       onFinish={(values) => void save(values)}
@@ -262,126 +405,174 @@ export default function SettingsPage() {
         externalPort: 0,
         secureCookies: false,
         updateChannel: 'stable',
+        rollbackSeconds: 45,
+        portScanInterval: 2,
+        allowedCidrsText: '',
       }}
     >
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         {error ? <Alert type="error" showIcon title={error} /> : null}
 
         <Card className="panel-card" title={text.webTitle}>
-          <Alert
-            type="info"
-            showIcon
-            title={text.hint}
-            description={text.reconnect}
-            style={{ marginBottom: 20 }}
-          />
+          <Alert type="info" showIcon title={text.hint} style={{ marginBottom: 20 }} />
           <div className="settings-grid">
-            <Form.Item name="listenHost" label={text.listen} rules={[{ required: true }]}>
-              <Select
-                options={[
-                  { value: '127.0.0.1', label: text.local },
-                  { value: '0.0.0.0', label: text.ipv4 },
-                  { value: '::', label: text.ipv6 },
-                ]}
-              />
+            <Form.Item name="listenHost" label={text.listen}>
+              <Select options={[
+                { value: '127.0.0.1', label: text.local },
+                { value: '0.0.0.0', label: text.ipv4 },
+                { value: '::', label: text.ipv6 },
+              ]} />
             </Form.Item>
-            <Form.Item
-              name="listenPort"
-              label={text.port}
-              rules={[{ required: true, type: 'number', min: 1, max: 65535 }]}
-            >
+            <Form.Item name="listenPort" label={text.port}>
               <InputNumber min={1} max={65535} style={{ width: '100%' }} />
             </Form.Item>
-            <Form.Item
-              name="externalPort"
-              label={text.external}
-              extra={text.externalHint}
-              rules={[{ required: true, type: 'number', min: 0, max: 65535 }]}
-            >
+            <Form.Item name="externalPort" label={text.external} extra={text.externalHint}>
               <InputNumber min={0} max={65535} style={{ width: '100%' }} />
             </Form.Item>
-            <Form.Item
-              name="secureCookies"
-              label={text.secure}
-              valuePropName="checked"
-              extra={text.secureHint}
-            >
+            <Form.Item name="secureCookies" label={text.secure} valuePropName="checked" extra={text.secureHint}>
               <Switch />
             </Form.Item>
+            <Form.Item name="rollbackSeconds" label={text.rollback} extra={text.rollbackHint}>
+              <InputNumber min={15} max={300} style={{ width: '100%' }} />
+            </Form.Item>
+            <Form.Item name="portScanInterval" label={text.scan}>
+              <InputNumber min={1} max={30} style={{ width: '100%' }} />
+            </Form.Item>
           </div>
-
-          <div className="settings-status-row">
-            <Typography.Text type="secondary">{text.tls}</Typography.Text>
-            <Typography.Text strong>{current?.tlsEnabled ? text.tlsOn : text.tlsOff}</Typography.Text>
-          </div>
-        </Card>
-
-        <Card className="panel-card" title={text.updates}>
-          <Form.Item name="updateChannel" label={text.channel} style={{ marginBottom: 12 }}>
-            <Select
-              style={{ maxWidth: 320 }}
-              options={[
-                { value: 'stable', label: text.stable },
-                { value: 'dev', label: text.dev },
-              ]}
-            />
+          <Form.Item name="allowedCidrsText" label={text.cidrs} extra={text.cidrsHint}>
+            <Input.TextArea rows={4} placeholder={'192.0.2.10\n10.0.0.0/8\n2001:db8::/32'} />
           </Form.Item>
+          <Space>
+            <Typography.Text type="secondary">{text.tls}:</Typography.Text>
+            <Tag color={current?.tlsEnabled ? 'success' : undefined}>{current?.tlsEnabled ? text.tlsOn : text.tlsOff}</Tag>
+          </Space>
 
-          <Alert
-            type={persistedChannel === 'dev' ? 'warning' : 'info'}
-            showIcon
-            title={persistedChannel === 'dev' ? text.devActive : text.stable}
-            description={persistedChannel === 'dev' ? text.devHint : text.stableHint}
-            style={{ marginBottom: 18 }}
-          />
-
-          {updateError ? (
-            <Alert type="error" showIcon title={updateError} style={{ marginBottom: 18 }} />
-          ) : null}
-
+          <Divider />
+          <Typography.Title level={5}>{text.twoFactor}</Typography.Title>
           <Space direction="vertical" size="small" style={{ width: '100%' }}>
-            <Space wrap>
-              <Typography.Text type="secondary">{text.current}:</Typography.Text>
-              <Tag>{updateStatus?.currentVersion || '—'}</Tag>
-              {updateStatus?.currentChannel ? <Tag>{updateStatus.currentChannel}</Tag> : null}
-            </Space>
-            <Space wrap>
-              <Typography.Text type="secondary">{text.latest}:</Typography.Text>
-              <Tag color={updateStatus?.available ? 'processing' : undefined}>
-                {updateStatus?.latestVersion || '—'}
-              </Tag>
-            </Space>
-
-            {persistedChannel === 'stable' ? (
-              <Space wrap style={{ marginTop: 8 }}>
-                <Button
-                  icon={<ReloadOutlined />}
-                  loading={checkingUpdate}
-                  onClick={() => void loadUpdateStatus()}
-                >
-                  {text.check}
-                </Button>
-                {updateStatus?.available ? (
-                  <Popconfirm
-                    title={text.updateConfirm}
-                    okText={text.updateNow}
-                    cancelText={ru ? 'Отмена' : 'Cancel'}
-                    onConfirm={() => void applyStableUpdate()}
-                  >
-                    <Button
-                      type="primary"
-                      icon={<SyncOutlined />}
-                      loading={applyingUpdate}
-                    >
-                      {text.update} {updateStatus.latestVersion}
-                    </Button>
+            <Tag color={current?.totpEnabled ? 'success' : undefined}>
+              {current?.totpEnabled ? text.twoFactorOn : text.twoFactorOff}
+            </Tag>
+            {!current?.totpEnabled && !totpSetup ? (
+              <Button loading={securityBusy} onClick={() => void setupTOTP()}>{text.setup2fa}</Button>
+            ) : null}
+            {totpSetup ? (
+              <Card size="small">
+                <Space direction="vertical" style={{ width: '100%' }}>
+                  <Typography.Text strong>{text.secret}</Typography.Text>
+                  <Typography.Text code copyable>{totpSetup.secret}</Typography.Text>
+                  <Typography.Text strong>{text.uri}</Typography.Text>
+                  <Typography.Text code copyable>{totpSetup.uri}</Typography.Text>
+                </Space>
+              </Card>
+            ) : null}
+            {(totpSetup || current?.totpEnabled) ? (
+              <Space wrap>
+                <Input
+                  value={totpCode}
+                  onChange={(event) => setTotpCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                  inputMode="numeric"
+                  maxLength={6}
+                  placeholder={text.code}
+                  style={{ width: 180 }}
+                />
+                {totpSetup ? (
+                  <Button type="primary" disabled={totpCode.length !== 6} loading={securityBusy} onClick={() => void confirmTOTP()}>
+                    {text.enable2fa}
+                  </Button>
+                ) : (
+                  <Popconfirm title={text.disable2fa} onConfirm={() => void disableTOTP()}>
+                    <Button danger disabled={totpCode.length !== 6} loading={securityBusy}>{text.disable2fa}</Button>
                   </Popconfirm>
-                ) : updateStatus ? (
-                  <Typography.Text type="secondary">{text.noUpdate}</Typography.Text>
-                ) : null}
+                )}
               </Space>
             ) : null}
           </Space>
+        </Card>
+
+        <Card className="panel-card" title={text.updates}>
+          <Form.Item name="updateChannel" label={text.channel}>
+            <Select style={{ maxWidth: 320 }} options={[
+              { value: 'stable', label: text.stable },
+              { value: 'dev', label: text.dev },
+            ]} />
+          </Form.Item>
+          <Alert type={channel === 'dev' ? 'warning' : 'info'} showIcon title={channel === 'dev' ? text.dev : text.stable} description={channel === 'dev' ? text.devHint : text.stableHint} style={{ marginBottom: 16 }} />
+          {updateError ? <Alert type="error" showIcon title={updateError} style={{ marginBottom: 16 }} /> : null}
+          <Space wrap>
+            <Typography.Text>{text.current}: <Tag>{updateStatus?.currentVersion || '—'}</Tag></Typography.Text>
+            <Typography.Text>{text.latest}: <Tag color={updateStatus?.available ? 'processing' : undefined}>{updateStatus?.latestVersion || '—'}</Tag></Typography.Text>
+            <Button icon={<ReloadOutlined />} loading={checkingUpdate} onClick={() => void loadUpdateStatus()}>{text.check}</Button>
+            {channel === 'stable' && updateStatus?.available ? (
+              <Popconfirm title={text.updateConfirm} onConfirm={() => void applyStableUpdate()}>
+                <Button type="primary" icon={<SyncOutlined />} loading={applyingUpdate}>{text.update}</Button>
+              </Popconfirm>
+            ) : updateStatus && !updateStatus.available ? <Typography.Text type="secondary">{text.noUpdate}</Typography.Text> : null}
+          </Space>
+        </Card>
+
+        <Card className="panel-card" title={text.backup}>
+          {restartRequired ? (
+            <Alert
+              type="warning"
+              showIcon
+              title={text.restartNeeded}
+              action={<Button onClick={() => void restart()}>{text.restart}</Button>}
+              style={{ marginBottom: 16 }}
+            />
+          ) : null}
+          <Space wrap style={{ marginBottom: 16 }}>
+            <Button icon={<DownloadOutlined />} onClick={() => void downloadBackup()}>{text.export}</Button>
+            <Button icon={<UploadOutlined />} onClick={() => restoreInput.current?.click()}>{text.import}</Button>
+            <input
+              ref={restoreInput}
+              type="file"
+              accept="application/json,.json"
+              hidden
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void restoreBackupFile(file);
+              }}
+            />
+            <Button icon={<HistoryOutlined />} onClick={() => void loadActivity()}>{ru ? 'Обновить историю' : 'Refresh history'}</Button>
+          </Space>
+          <Table<HistorySnapshot>
+            size="small"
+            rowKey="id"
+            dataSource={history}
+            pagination={{ pageSize: 8, hideOnSinglePage: true }}
+            locale={{ emptyText: text.historyEmpty }}
+            columns={[
+              { title: text.time, dataIndex: 'createdAt', width: 190, render: (value: string) => new Date(value).toLocaleString() },
+              { title: text.action, dataIndex: 'reason' },
+              {
+                title: '',
+                width: 120,
+                render: (_, row) => (
+                  <Popconfirm title={text.restoreConfirm} onConfirm={() => void restoreHistory(row.id)}>
+                    <Button size="small" loading={historyBusy === row.id}>{ru ? 'Восстановить' : 'Restore'}</Button>
+                  </Popconfirm>
+                ),
+              },
+            ]}
+          />
+        </Card>
+
+        <Card className="panel-card" title={text.audit}>
+          <Table<AuditEntry>
+            size="small"
+            rowKey={(row) => `${row.time}-${row.action}-${row.remoteIp || ''}`}
+            dataSource={audit}
+            pagination={{ pageSize: 12, showSizeChanger: true }}
+            scroll={{ x: 760 }}
+            columns={[
+              { title: text.time, dataIndex: 'time', width: 190, render: (value: string) => new Date(value).toLocaleString() },
+              { title: text.action, dataIndex: 'action' },
+              { title: text.client, dataIndex: 'remoteIp', width: 150, render: (value?: string) => value || '—' },
+              { title: text.result, dataIndex: 'success', width: 110, render: (value: boolean) => <Tag color={value ? 'success' : 'error'}>{value ? 'OK' : 'ERROR'}</Tag> },
+              { title: ru ? 'Сообщение' : 'Message', dataIndex: 'message', ellipsis: true, render: (value?: string) => value || '—' },
+            ]}
+          />
         </Card>
 
         <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={saving}>

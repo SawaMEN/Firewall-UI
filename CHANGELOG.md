@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.1.0
+
+Security, policy and operations release.
+
+- Confirmed firewall transactions with automatic rollback when the UI cannot confirm connectivity.
+- Advanced allow/deny policies with CIDR/IP sources, TCP/UDP port ranges, IPv4/IPv6 selection, interfaces and priority.
+- TOTP two-factor authentication and panel IP/CIDR allowlists.
+- Stricter login rate limiting with Retry-After responses.
+- Safer installer defaults: localhost-only panel binding unless explicitly exposed.
+- Dashboard for firewall health, public listeners, potentially exposed ports and containers.
+- Cached host socket monitoring with SSE live updates instead of per-request /proc scans.
+- Docker and Podman published-port discovery with container/image mapping.
+- Inline allow/remove firewall actions directly from the ports/processes view.
+- Persistent JSONL audit log and restorable firewall history snapshots.
+- Full firewall/runtime backup export and restore.
+- UFW deletion by Firewall-UI ownership comments instead of ambiguous rule specs.
+- SHA-256 verified CLI updates, retained previous binary and `firewall-ui rollback`.
+- Production dependency audit in CI and split frontend vendor bundles.
+- Regression tests for TOTP/CIDR, rollback, container port parsing, UFW ownership and advanced policies.
+
 ## 1.0.0
 
 First stable standalone Firewall-UI release.

@@ -97,13 +97,40 @@ func applyManagedIPTablesBinarySafe(ctx context.Context, binary, icmpProto strin
 			return err
 		}
 	}
-	for _, rule := range rules {
+	appendPortRule := func(rule FirewallRule) error {
 		args, ok := managedIPTablesPortRuleArgs(rule)
+		if !ok {
+			return nil
+		}
+		_, err := runFirewallCommand(ctx, binary, args...)
+		return err
+	}
+	for _, rule := range rules {
+		if isFirewallSafetyRule(rule) {
+			if err := appendPortRule(rule); err != nil {
+				return err
+			}
+		}
+	}
+	advanced, err := loadAdvancedFirewallRules()
+	if err != nil {
+		return err
+	}
+	ipv6 := icmpProto == "ipv6-icmp"
+	for _, rule := range advanced {
+		args, ok := advancedIPTablesArgs(rule, ipv6)
 		if !ok {
 			continue
 		}
 		if _, err := runFirewallCommand(ctx, binary, args...); err != nil {
 			return err
+		}
+	}
+	for _, rule := range rules {
+		if !isFirewallSafetyRule(rule) {
+			if err := appendPortRule(rule); err != nil {
+				return err
+			}
 		}
 	}
 	if _, err := runFirewallCommand(ctx, binary,

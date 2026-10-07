@@ -8,25 +8,34 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/SawaMEN/Firewall-UI/internal/security"
 )
 
 type Config struct {
-	ListenHost    string `json:"listenHost"`
-	ListenPort    int    `json:"listenPort"`
-	ExternalPort  int    `json:"externalPort"`
-	SecureCookies bool   `json:"secureCookies"`
-	TLSCert       string `json:"tlsCert,omitempty"`
-	TLSKey        string `json:"tlsKey,omitempty"`
-	StatePath     string `json:"statePath"`
-	UpdateChannel string `json:"updateChannel"`
+	ListenHost       string   `json:"listenHost"`
+	ListenPort       int      `json:"listenPort"`
+	ExternalPort     int      `json:"externalPort"`
+	SecureCookies    bool     `json:"secureCookies"`
+	TLSCert          string   `json:"tlsCert,omitempty"`
+	TLSKey           string   `json:"tlsKey,omitempty"`
+	StatePath        string   `json:"statePath"`
+	UpdateChannel    string   `json:"updateChannel"`
+	AllowedCIDRs     []string `json:"allowedCidrs,omitempty"`
+	TOTPEnabled      bool     `json:"totpEnabled,omitempty"`
+	TOTPSecret       string   `json:"totpSecret,omitempty"`
+	RollbackSeconds  int      `json:"rollbackSeconds"`
+	PortScanInterval int      `json:"portScanInterval"`
 }
 
 func Default() Config {
 	return Config{
-		ListenHost:    "127.0.0.1",
-		ListenPort:    8088,
-		StatePath:     "/var/lib/firewall-ui/state.json",
-		UpdateChannel: "stable",
+		ListenHost:       "127.0.0.1",
+		ListenPort:       8088,
+		StatePath:        "/var/lib/firewall-ui/state.json",
+		UpdateChannel:    "stable",
+		RollbackSeconds:  45,
+		PortScanInterval: 2,
 	}
 }
 
@@ -42,6 +51,14 @@ func Load(path string) (Config, error) {
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parse config: %w", err)
 	}
+	// Older configurations predate these fields; preserve backwards compatibility.
+	if cfg.RollbackSeconds == 0 {
+		cfg.RollbackSeconds = 45
+	}
+	if cfg.PortScanInterval == 0 {
+		cfg.PortScanInterval = 2
+	}
+	cfg.AllowedCIDRs = security.NormalizeCIDRs(cfg.AllowedCIDRs)
 	if err := Validate(cfg); err != nil {
 		return Config{}, err
 	}
@@ -49,6 +66,7 @@ func Load(path string) (Config, error) {
 }
 
 func Save(path string, cfg Config) error {
+	cfg.AllowedCIDRs = security.NormalizeCIDRs(cfg.AllowedCIDRs)
 	if err := Validate(cfg); err != nil {
 		return err
 	}
@@ -109,6 +127,18 @@ func Validate(cfg Config) error {
 	}
 	if cfg.UpdateChannel != "stable" && cfg.UpdateChannel != "dev" {
 		return errors.New("updateChannel must be stable or dev")
+	}
+	if err := security.ValidateCIDRs(cfg.AllowedCIDRs); err != nil {
+		return err
+	}
+	if cfg.TOTPEnabled && strings.TrimSpace(cfg.TOTPSecret) == "" {
+		return errors.New("totpSecret is required when TOTP is enabled")
+	}
+	if cfg.RollbackSeconds < 15 || cfg.RollbackSeconds > 300 {
+		return errors.New("rollbackSeconds must be between 15 and 300")
+	}
+	if cfg.PortScanInterval < 1 || cfg.PortScanInterval > 30 {
+		return errors.New("portScanInterval must be between 1 and 30 seconds")
 	}
 	return nil
 }

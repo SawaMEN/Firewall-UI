@@ -127,7 +127,7 @@ install -m 0644 "$TMP_SERVICE" "$SERVICE_FILE"
 CONFIG_FILE="$CONFIG_DIR/config.json"
 if [[ ! -f "$CONFIG_FILE" ]]; then
   PANEL_PORT="${FIREWALL_UI_PORT:-8088}"
-  PANEL_HOST="${FIREWALL_UI_LISTEN_HOST:-0.0.0.0}"
+  PANEL_HOST="${FIREWALL_UI_LISTEN_HOST:-127.0.0.1}"
   UPDATE_CHANNEL="${FIREWALL_UI_UPDATE_CHANNEL:-stable}"
   if [[ "$UPDATE_CHANNEL" != "stable" && "$UPDATE_CHANNEL" != "dev" ]]; then
     echo "FIREWALL_UI_UPDATE_CHANNEL must be stable or dev."
@@ -140,7 +140,9 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
   "externalPort": 0,
   "secureCookies": false,
   "statePath": "$STATE_DIR/state.json",
-  "updateChannel": "$UPDATE_CHANNEL"
+  "updateChannel": "$UPDATE_CHANNEL",
+  "rollbackSeconds": 45,
+  "portScanInterval": 2
 }
 EOF
   chmod 0600 "$CONFIG_FILE"
@@ -176,6 +178,10 @@ if [[ ! -f "$ENV_FILE" ]]; then
     printf 'FIREWALL_UI_PASSWORD="%s"\n' "$(escape_env_value "$PASSWORD")"
   } > "$ENV_FILE"
   chmod 0600 "$ENV_FILE"
+fi
+
+if [[ "$PANEL_HOST" == "0.0.0.0" || "$PANEL_HOST" == "::" ]]; then
+  echo "WARNING: Firewall-UI will listen on all interfaces over HTTP unless you configure TLS/reverse proxy."
 fi
 
 systemctl daemon-reload

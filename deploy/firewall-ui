@@ -35,13 +35,24 @@ update_channel() {
   echo stable
 }
 
-release_url() {
+manifest_url() {
   local channel
   channel="$(update_channel)"
   if [[ "$channel" == "dev" ]]; then
-    echo "https://github.com/${REPO}/releases/download/dev/firewall-ui-linux-$(arch_name)"
+    echo "https://github.com/${REPO}/releases/download/dev/update.json"
   else
-    echo "https://github.com/${REPO}/releases/latest/download/firewall-ui-linux-$(arch_name)"
+    echo "https://github.com/${REPO}/releases/latest/download/update.json"
+  fi
+}
+
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "$1" | awk '{print $NF}'
+  else
+    echo "sha256sum or openssl is required for verified updates" >&2
+    return 1
   fi
 }
 
@@ -65,23 +76,72 @@ show_logs() {
 update_binary() {
   require_root
   command -v curl >/dev/null 2>&1 || { echo "curl is required"; exit 1; }
-  local tmp
+  local tmp manifest arch channel block url expected actual
   tmp="$(mktemp)"
-  local channel
+  manifest="$(mktemp)"
+  trap 'rm -f "$tmp" "$manifest"' RETURN
+  arch="$(arch_name)"
   channel="$(update_channel)"
   if [[ "$channel" == "stable" ]]; then
     read -r -p "Install the latest stable Firewall-UI release? [y/N]: " answer
     if [[ ! "$answer" =~ ^[Yy]$ ]]; then
-      rm -f "$tmp"
       return 0
     fi
   fi
+
+  echo "Fetching signed-by-release checksum metadata ($channel)..."
+  curl -fL --retry 3 --connect-timeout 15 "$(manifest_url)" -o "$manifest"
+  block="$(sed -n "/\"$arch\"[[:space:]]*:/,/^[[:space:]]*}/p" "$manifest")"
+  url="$(printf '%s\n' "$block" | sed -n 's/.*"url":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+  expected="$(printf '%s\n' "$block" | sed -n 's/.*"sha256":[[:space:]]*"\([0-9A-Fa-f]*\)".*/\1/p' | head -n 1)"
+  if [[ ! "$url" =~ ^https://github.com/${REPO}/ ]] || [[ ! "$expected" =~ ^[0-9A-Fa-f]{64}$ ]]; then
+    echo "Invalid update manifest." >&2
+    return 1
+  fi
+
   echo "Downloading latest Firewall-UI ($channel)..."
-  curl -fL --retry 3 --connect-timeout 15 "$(release_url)" -o "$tmp"
+  curl -fL --retry 3 --connect-timeout 15 "$url" -o "$tmp"
+  actual="$(sha256_file "$tmp")"
+  if [[ "${actual,,}" != "${expected,,}" ]]; then
+    echo "Update SHA-256 mismatch." >&2
+    return 1
+  fi
+
+  cp -p "$BIN" "${BIN}.previous"
   install -m 0755 "$tmp" "$BIN"
-  systemctl restart "${SERVICE}.service"
-  rm -f "$tmp"
-  echo "Firewall-UI updated."
+  if ! systemctl restart "${SERVICE}.service"; then
+    echo "Updated service failed to restart; restoring previous binary." >&2
+    install -m 0755 "${BIN}.previous" "$BIN"
+    systemctl restart "${SERVICE}.service" || true
+    return 1
+  fi
+  rm -f "$tmp" "$manifest"
+  trap - RETURN
+  echo "Firewall-UI updated and SHA-256 verified."
+}
+
+rollback_binary() {
+  require_root
+  local previous="${BIN}.previous"
+  if [[ ! -x "$previous" ]]; then
+    echo "No previous Firewall-UI binary is available."
+    return 1
+  fi
+  systemctl stop "${SERVICE}.service"
+  local current="${BIN}.failed-$(date +%Y%m%d%H%M%S)"
+  mv "$BIN" "$current"
+  mv "$previous" "$BIN"
+  chmod 0755 "$BIN"
+  if systemctl start "${SERVICE}.service"; then
+    echo "Firewall-UI rolled back to the previous binary."
+    rm -f "$current"
+  else
+    mv "$BIN" "$previous"
+    mv "$current" "$BIN"
+    systemctl start "${SERVICE}.service" || true
+    echo "Rollback failed; restored the current binary." >&2
+    return 1
+  fi
 }
 
 escape_env_value() {
@@ -134,7 +194,8 @@ menu() {
     echo "5) Logs"
     echo "6) Update"
     echo "7) Change username/password"
-    echo "8) Uninstall"
+    echo "8) Roll back previous binary"
+    echo "9) Uninstall"
     echo "0) Exit"
     read -r -p "Select: " choice
     case "$choice" in
@@ -145,7 +206,8 @@ menu() {
       5) show_logs ;;
       6) update_binary ;;
       7) change_credentials ;;
-      8) uninstall_service; exit 0 ;;
+      8) rollback_binary ;;
+      9) uninstall_service; exit 0 ;;
       0) exit 0 ;;
       *) echo "Unknown option." ;;
     esac
@@ -169,6 +231,9 @@ case "${1:-}" in
   credentials|password)
     change_credentials
     ;;
+  rollback)
+    rollback_binary
+    ;;
   uninstall)
     uninstall_service
     ;;
@@ -176,7 +241,7 @@ case "${1:-}" in
     menu
     ;;
   *)
-    echo "Usage: firewall-ui [start|stop|restart|status|logs|update|credentials|uninstall]"
+    echo "Usage: firewall-ui [start|stop|restart|status|logs|update|rollback|credentials|uninstall]"
     exit 2
     ;;
 esac

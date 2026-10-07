@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Button,
+  Card,
   Divider,
   Input,
   InputNumber,
@@ -13,26 +14,20 @@ import {
   Tag,
   Typography,
 } from 'antd';
+import { PlusOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
-
 import { HttpUtil } from '@/utils';
 
 type FirewallRule = {
   port?: number;
   portRange?: string;
-  protocol: 'tcp' | 'udp' | string;
+  protocol: string;
   source: string;
   label: string;
   owned: boolean;
   exists: boolean;
 };
-
-type FirewallManualRule = {
-  port: number;
-  protocol: 'tcp' | 'udp' | string;
-  label?: string;
-};
-
+type FirewallManualRule = { port: number; protocol: string; label?: string };
 type FirewallStatus = {
   supported: boolean;
   backend: string;
@@ -44,417 +39,345 @@ type FirewallStatus = {
   manualRules: FirewallManualRule[];
   message?: string;
 };
+type AdvancedRule = {
+  id: string;
+  action: 'allow' | 'deny';
+  protocol: 'tcp' | 'udp' | 'any';
+  portStart?: number;
+  portEnd?: number;
+  sourceCidr?: string;
+  interface?: string;
+  ipVersion?: 'any' | 'ipv4' | 'ipv6';
+  label?: string;
+  priority: number;
+};
+type AdvancedResponse = { rules: AdvancedRule[] };
 
-function rulePort(rule: FirewallRule) {
+function portLabel(rule: FirewallRule) {
   return rule.portRange || String(rule.port || '');
 }
 
-function rulePortStart(rule: FirewallRule) {
-  if (rule.port) return rule.port;
-  const value = Number.parseInt((rule.portRange || '').split(/[-:]/, 1)[0] || '', 10);
-  return Number.isFinite(value) ? value : 0;
-}
-
-function useFirewallText() {
-  const { i18n } = useTranslation();
-  const ru = (i18n.resolvedLanguage || i18n.language || '').toLowerCase().startsWith('ru');
-
-  return useMemo(
-    () =>
-      ru
-        ? {
-            loading: 'Получение состояния файрволла…',
-            loadError:
-              'Не удалось получить состояние файрволла. Обновите страницу и проверьте журнал сервера.',
-            unsupported:
-              'Firewall-UI не может безопасно управлять обнаруженным файрволлом. Проверьте его конфигурацию и сообщение выше.',
-            noFirewall: 'Поддерживаемый файрволл не найден.',
-            installUfw: 'Установить UFW',
-            installUfwHint:
-              'UFW будет установлен через пакетный менеджер системы, но не будет включён автоматически. После установки включите его переключателем выше, когда будете готовы.',
-            enabled: 'Файрволл включён',
-            disabled: 'Файрволл выключен',
-            auto: 'Автоматически открывать и закрывать порты сервисов',
-            autoHint:
-              'Каждые 5 секунд правила синхронизируются со слушающими TCP/UDP-портами сервера. Локальные порты 127.0.0.1 и ::1 не открываются.',
-            ping: 'Разрешить ping (ICMP)',
-            pingHint:
-              'Отвечать на входящие ICMP Echo Request по IPv4 и IPv6. Служебный ICMP остаётся доступен. Настройка применяется, когда файрволл включён.',
-            safety:
-              'Порт панели, настроенный внешний порт панели и SSH защищаются автоматически, чтобы не потерять доступ к серверу.',
-            sync: 'Синхронизировать сейчас',
-            rules: 'Активные и ожидаемые правила',
-            manual: 'Ручные правила',
-            add: 'Добавить',
-            port: 'Порт',
-            protocol: 'Протокол',
-            label: 'Описание',
-            labelPlaceholder: 'Например: DNS, мониторинг, игровой сервер',
-            source: 'Назначение',
-            state: 'Состояние',
-            open: 'Открыт',
-            missing: 'Не применён',
-            managed: 'Firewall-UI',
-            external: 'Существующее',
-            remove: 'Удалить',
-            removeConfirm: 'Удалить это ручное правило?',
-            noManual: 'Ручных правил нет',
-            panel: 'Веб-панель',
-            subscription: 'Подписки',
-            session: 'Текущее подключение к панели',
-            ssh: 'SSH',
-            inbound: 'Inbound',
-            manualSource: 'Ручное правило',
-          }
-        : {
-            loading: 'Loading firewall status…',
-            loadError: 'Failed to load firewall status. Refresh the page and check the server log.',
-            unsupported:
-              'Firewall-UI cannot safely manage the detected firewall. Check its configuration and the message above.',
-            noFirewall: 'No supported firewall was found.',
-            installUfw: 'Install UFW',
-            installUfwHint:
-              'UFW will be installed with the system package manager, but it will not be enabled automatically. Enable it with the switch above when you are ready.',
-            enabled: 'Firewall enabled',
-            disabled: 'Firewall disabled',
-            auto: 'Automatically open and close service ports',
-            autoHint:
-              'Rules follow listening TCP/UDP server ports every 5 seconds. Loopback ports are excluded.',
-            ping: 'Allow ping (ICMP)',
-            pingHint:
-              'Respond to incoming ICMP Echo Requests over IPv4 and IPv6. Control ICMP remains available. This setting applies while the firewall is enabled.',
-            safety:
-              'Panel, configured external panel port, and SSH are protected automatically to prevent lockout.',
-            sync: 'Sync now',
-            rules: 'Active and expected rules',
-            manual: 'Manual rules',
-            add: 'Add',
-            port: 'Port',
-            protocol: 'Protocol',
-            label: 'Description',
-            labelPlaceholder: 'For example: DNS, monitoring, game server',
-            source: 'Purpose',
-            state: 'State',
-            open: 'Open',
-            missing: 'Not applied',
-            managed: 'Firewall-UI',
-            external: 'Existing',
-            remove: 'Delete',
-            removeConfirm: 'Delete this manual rule?',
-            noManual: 'No manual rules',
-            panel: 'Web panel',
-            subscription: 'Subscriptions',
-            session: 'Current panel connection',
-            ssh: 'SSH',
-            inbound: 'Inbound',
-            manualSource: 'Manual rule',
-          },
-    [ru],
-  );
-}
-
 export function FirewallManager() {
-  const text = useFirewallText();
+  const { i18n } = useTranslation();
+  const ru = i18n.language.startsWith('ru');
   const [status, setStatus] = useState<FirewallStatus | null>(null);
+  const [advanced, setAdvanced] = useState<AdvancedRule[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState(false);
   const [action, setAction] = useState('');
-  const [port, setPort] = useState<number | null>(null);
-  const [protocol, setProtocol] = useState('both');
-  const [label, setLabel] = useState('');
+  const [basicPort, setBasicPort] = useState<number | null>(null);
+  const [basicProtocol, setBasicProtocol] = useState('both');
+  const [basicLabel, setBasicLabel] = useState('');
+  const [draft, setDraft] = useState<Partial<AdvancedRule>>({
+    action: 'allow',
+    protocol: 'tcp',
+    ipVersion: 'any',
+    priority: 100,
+  });
 
-  useEffect(() => {
-    let cancelled = false;
+  const text = useMemo(() => ru ? {
+    load: 'Получение состояния файрволла…',
+    failed: 'Не удалось получить состояние файрволла.',
+    noFirewall: 'Поддерживаемый файрволл не найден.',
+    install: 'Установить UFW',
+    enabled: 'Файрволл включён',
+    disabled: 'Файрволл выключен',
+    auto: 'Автоматически открывать порты слушающих сервисов',
+    ping: 'Разрешить ping',
+    sync: 'Синхронизировать',
+    safety: 'Порт панели и SSH защищаются автоматически. Опасные изменения откатываются, если UI не подтвердит доступность.',
+    activeRules: 'Активные и ожидаемые правила',
+    manual: 'Простые ручные правила',
+    advanced: 'Расширенные правила',
+    advancedHint: 'CIDR, allow/deny, диапазоны портов, IPv4/IPv6, интерфейс и приоритет. Firewalld не поддерживает поле интерфейса в этом режиме.',
+    add: 'Добавить',
+    remove: 'Удалить',
+    port: 'Порт',
+    protocol: 'Протокол',
+    label: 'Описание',
+    source: 'Источник',
+    state: 'Состояние',
+    sourceCidr: 'Source CIDR / IP',
+    iface: 'Интерфейс',
+    action: 'Действие',
+    range: 'Диапазон',
+    family: 'IP',
+    priority: 'Приоритет',
+    allow: 'Разрешить',
+    deny: 'Запретить',
+  } : {
+    load: 'Loading firewall status…',
+    failed: 'Failed to load firewall status.',
+    noFirewall: 'No supported firewall was found.',
+    install: 'Install UFW',
+    enabled: 'Firewall enabled',
+    disabled: 'Firewall disabled',
+    auto: 'Automatically open listening service ports',
+    ping: 'Allow ping',
+    sync: 'Sync now',
+    safety: 'Panel and SSH ports are protected automatically. Risky changes roll back if the UI cannot confirm connectivity.',
+    activeRules: 'Active and expected rules',
+    manual: 'Simple manual rules',
+    advanced: 'Advanced rules',
+    advancedHint: 'CIDR, allow/deny, port ranges, IPv4/IPv6, interface and priority. Firewalld does not support the interface field in this mode.',
+    add: 'Add',
+    remove: 'Delete',
+    port: 'Port',
+    protocol: 'Protocol',
+    label: 'Description',
+    source: 'Source',
+    state: 'State',
+    sourceCidr: 'Source CIDR / IP',
+    iface: 'Interface',
+    action: 'Action',
+    range: 'Range',
+    family: 'IP',
+    priority: 'Priority',
+    allow: 'Allow',
+    deny: 'Deny',
+  }, [ru]);
 
-    void (async () => {
-      try {
-        const msg = await HttpUtil.get<FirewallStatus>('/panel/api/server/firewall/status');
-        if (cancelled) return;
-        if (msg.success && msg.obj) {
-          setStatus(msg.obj);
-          setLoadError(false);
-        } else {
-          setLoadError(true);
-        }
-      } catch {
-        if (!cancelled) setLoadError(true);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
+  async function load() {
+    setLoading(true);
+    try {
+      const [statusResult, advancedResult] = await Promise.all([
+        HttpUtil.get<FirewallStatus>('/panel/api/server/firewall/status'),
+        HttpUtil.get<AdvancedRule[]>('/api/firewall/advanced'),
+      ]);
+      if (statusResult.success && statusResult.obj) setStatus(statusResult.obj);
+      if (advancedResult.success && advancedResult.obj) setAdvanced(advancedResult.obj);
+    } finally {
+      setLoading(false);
+    }
+  }
 
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  useEffect(() => { void load(); }, []);
 
-  async function post(path: string, data?: Record<string, unknown>, key = path) {
+  async function mutate(path: string, data: Record<string, unknown>, key: string) {
     setAction(key);
     try {
-      const msg = await HttpUtil.post<FirewallStatus>(path, data, { silentSuccess: true });
-      if (msg.success && msg.obj) {
-        setStatus(msg.obj);
-        return true;
-      }
-      return false;
+      const result = await HttpUtil.post<FirewallStatus>(path, data, { silentSuccess: true });
+      if (result.success && result.obj) setStatus(result.obj);
+      return result.success;
     } finally {
       setAction('');
     }
   }
 
-  const sourceLabel = (rule: FirewallRule) => {
-    const source =
-      rule.source === 'service'
-        ? rule.label || 'Service'
-        : rule.source === 'panel'
-        ? text.panel
-        : rule.source === 'subscription'
-          ? text.subscription
-          : rule.source === 'session'
-            ? text.session
-            : rule.source === 'ssh'
-              ? text.ssh
-              : rule.source === 'manual'
-                ? text.manualSource
-                : text.inbound;
-    return rule.label && rule.source === 'inbound' ? `${source}: ${rule.label}` : source;
-  };
-
-  const ruleColumns = [
-    {
-      title: text.port,
-      key: 'port',
-      width: 130,
-      sorter: (a: FirewallRule, b: FirewallRule) => rulePortStart(a) - rulePortStart(b),
-      render: (_: unknown, rule: FirewallRule) => rulePort(rule),
-    },
-    {
-      title: text.protocol,
-      dataIndex: 'protocol',
-      width: 100,
-      render: (value: string) => <Tag>{value.toUpperCase()}</Tag>,
-    },
-    {
-      title: text.source,
-      key: 'source',
-      render: (_: unknown, rule: FirewallRule) => sourceLabel(rule),
-    },
-    {
-      title: text.state,
-      key: 'state',
-      width: 190,
-      render: (_: unknown, rule: FirewallRule) => (
-        <Space size={4} wrap>
-          <Tag color={rule.exists ? 'success' : 'warning'}>
-            {rule.exists ? text.open : text.missing}
-          </Tag>
-          {rule.exists && <Tag>{rule.owned ? text.managed : text.external}</Tag>}
-        </Space>
-      ),
-    },
-  ];
-
-  const manualColumns = [
-    { title: text.port, dataIndex: 'port', width: 100 },
-    {
-      title: text.protocol,
-      dataIndex: 'protocol',
-      width: 110,
-      render: (value: string) => <Tag>{value.toUpperCase()}</Tag>,
-    },
-    {
-      title: text.label,
-      dataIndex: 'label',
-      ellipsis: true,
-      render: (value?: string) => value || '—',
-    },
-    {
-      title: '',
-      key: 'delete',
-      align: 'right' as const,
-      render: (_: unknown, rule: FirewallManualRule) => (
-        <Popconfirm
-          title={text.removeConfirm}
-          onConfirm={() =>
-            void post(
-              '/panel/api/server/firewall/rules/delete',
-              { port: rule.port, protocol: rule.protocol },
-              `delete-${rule.port}-${rule.protocol}`,
-            )
-          }
-        >
-          <Button danger size="small" loading={action === `delete-${rule.port}-${rule.protocol}`}>
-            {text.remove}
-          </Button>
-        </Popconfirm>
-      ),
-    },
-  ];
-
-  const supported = status?.supported ?? false;
-
-  if (!status) {
-    if (loadError) {
-      return <Alert type="error" showIcon title={text.loadError} />;
+  async function addAdvanced() {
+    setAction('advanced-add');
+    try {
+      const result = await HttpUtil.post<AdvancedResponse>('/api/firewall/advanced', {
+        action: draft.action || 'allow',
+        protocol: draft.protocol || 'tcp',
+        portStart: draft.portStart || 0,
+        portEnd: draft.portEnd || draft.portStart || 0,
+        sourceCidr: draft.sourceCidr || '',
+        interface: draft.interface || '',
+        ipVersion: draft.ipVersion || 'any',
+        label: draft.label || '',
+        priority: draft.priority ?? 100,
+      });
+      if (result.success && result.obj) {
+        setAdvanced(result.obj.rules);
+        setDraft({ action: 'allow', protocol: 'tcp', ipVersion: 'any', priority: 100 });
+      }
+    } finally {
+      setAction('');
     }
-    return <Typography.Text type="secondary">{text.loading}</Typography.Text>;
   }
 
-  if (!supported) {
-    const canInstallUfw = Boolean(status.canInstallUfw);
+  async function deleteAdvanced(id: string) {
+    setAction(`advanced-${id}`);
+    try {
+      const result = await HttpUtil.post<AdvancedResponse>('/api/firewall/advanced/delete', { id });
+      if (result.success && result.obj) setAdvanced(result.obj.rules);
+    } finally {
+      setAction('');
+    }
+  }
+
+  if (!status) {
+    return loading ? <Typography.Text type="secondary">{text.load}</Typography.Text> : <Alert type="error" showIcon title={text.failed} />;
+  }
+
+  if (!status.supported) {
     return (
       <Alert
         type="warning"
         showIcon
-        title={canInstallUfw ? text.noFirewall : status.message || text.unsupported}
-        description={
-          canInstallUfw ? (
-            <Space direction="vertical" size="small">
-              <Typography.Text>{text.installUfwHint}</Typography.Text>
-              <Button
-                type="primary"
-                loading={action === 'install-ufw'}
-                onClick={() =>
-                  void post('/panel/api/server/firewall/install-ufw', undefined, 'install-ufw')
-                }
-              >
-                {text.installUfw}
-              </Button>
-            </Space>
-          ) : (
-            text.unsupported
-          )
-        }
+        title={status.canInstallUfw ? text.noFirewall : status.message || text.failed}
+        description={status.canInstallUfw ? (
+          <Button type="primary" loading={action === 'install'} onClick={() => void mutate('/panel/api/server/firewall/install-ufw', {}, 'install')}>
+            {text.install}
+          </Button>
+        ) : null}
       />
     );
   }
 
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      <Space size="large" wrap>
-        <Space>
-          <Switch
-            checked={Boolean(status.enabled)}
-            loading={action === 'enabled'}
-            onChange={(checked) =>
-              void post('/panel/api/server/firewall/enabled', { enabled: checked }, 'enabled')
-            }
-          />
-          <Typography.Text strong>{status.enabled ? text.enabled : text.disabled}</Typography.Text>
+      <Card className="panel-card">
+        <Space size="large" wrap>
+          <Space>
+            <Switch
+              checked={status.enabled}
+              loading={action === 'enabled'}
+              onChange={(enabled) => void mutate('/panel/api/server/firewall/enabled', { enabled }, 'enabled')}
+            />
+            <Typography.Text strong>{status.enabled ? text.enabled : text.disabled}</Typography.Text>
+          </Space>
+          <Tag>{status.backend}</Tag>
+          <Button loading={action === 'sync'} onClick={() => void mutate('/panel/api/server/firewall/sync', {}, 'sync')}>{text.sync}</Button>
         </Space>
-        <Tag>{status.backend}</Tag>
-        <Button
-          loading={action === 'sync' || loading}
-          onClick={() => void post('/panel/api/server/firewall/sync', undefined, 'sync')}
-        >
-          {text.sync}
-        </Button>
-      </Space>
+        <Alert type="info" showIcon title={text.safety} style={{ marginTop: 16 }} />
+        <div className="firewall-toggle-grid">
+          <Space align="start">
+            <Switch
+              checked={status.autoSync}
+              loading={action === 'auto'}
+              onChange={(enabled) => void mutate('/panel/api/server/firewall/auto-sync', { enabled }, 'auto')}
+            />
+            <Typography.Text>{text.auto}</Typography.Text>
+          </Space>
+          <Space align="start">
+            <Switch
+              checked={status.pingEnabled}
+              disabled={!status.enabled}
+              loading={action === 'ping'}
+              onChange={(enabled) => void mutate('/panel/api/server/firewall/ping', { enabled }, 'ping')}
+            />
+            <Typography.Text>{text.ping}</Typography.Text>
+          </Space>
+        </div>
+      </Card>
 
-      <Alert type="info" showIcon title={text.safety} />
-
-      <div>
-        <Space align="start">
-          <Switch
-            checked={Boolean(status.autoSync)}
-            loading={action === 'auto'}
-            onChange={(checked) =>
-              void post('/panel/api/server/firewall/auto-sync', { enabled: checked }, 'auto')
-            }
-          />
-          <div>
-            <Typography.Text strong>{text.auto}</Typography.Text>
-            <br />
-            <Typography.Text type="secondary">{text.autoHint}</Typography.Text>
-          </div>
-        </Space>
-      </div>
-
-      <div>
-        <Space align="start">
-          <Switch
-            checked={Boolean(status.pingEnabled)}
-            disabled={!status.enabled}
-            loading={action === 'ping'}
-            onChange={(checked) =>
-              void post('/panel/api/server/firewall/ping', { enabled: checked }, 'ping')
-            }
-          />
-          <div>
-            <Typography.Text strong>{text.ping}</Typography.Text>
-            <br />
-            <Typography.Text type="secondary">{text.pingHint}</Typography.Text>
-          </div>
-        </Space>
-      </div>
-
-      <Divider titlePlacement="start">{text.rules}</Divider>
-      <Table<FirewallRule>
-        size="small"
-        rowKey={(rule) => `${rulePort(rule)}-${rule.protocol}-${rule.source}`}
-        columns={ruleColumns}
-        dataSource={status.rules || []}
-        pagination={false}
-        scroll={{ x: 620 }}
-      />
-
-      <Divider titlePlacement="start">{text.manual}</Divider>
-      <Space wrap>
-        <InputNumber
-          min={1}
-          max={65535}
-          value={port}
-          placeholder={text.port}
-          onChange={(value) => setPort(value)}
-          style={{ width: 140 }}
-        />
-        <Select
-          value={protocol}
-          onChange={setProtocol}
-          style={{ width: 130 }}
-          options={[
-            { value: 'both', label: 'TCP + UDP' },
-            { value: 'tcp', label: 'TCP' },
-            { value: 'udp', label: 'UDP' },
+      <Card className="panel-card" title={text.activeRules}>
+        <Table<FirewallRule>
+          size="small"
+          rowKey={(rule) => `${portLabel(rule)}-${rule.protocol}-${rule.source}`}
+          dataSource={status.rules || []}
+          pagination={false}
+          scroll={{ x: 700 }}
+          columns={[
+            { title: text.port, render: (_, rule) => portLabel(rule), width: 130 },
+            { title: text.protocol, dataIndex: 'protocol', width: 100, render: (value: string) => <Tag>{value.toUpperCase()}</Tag> },
+            { title: text.source, render: (_, rule) => rule.label || rule.source },
+            {
+              title: text.state,
+              width: 180,
+              render: (_, rule) => (
+                <Space>
+                  <Tag color={rule.exists ? 'success' : 'warning'}>{rule.exists ? 'OPEN' : 'MISSING'}</Tag>
+                  {rule.exists ? <Tag>{rule.owned ? 'Firewall-UI' : 'External'}</Tag> : null}
+                </Space>
+              ),
+            },
           ]}
         />
-        <Input
-          value={label}
-          maxLength={120}
-          placeholder={text.labelPlaceholder}
-          onChange={(event) => setLabel(event.target.value)}
-          style={{ width: 290 }}
+      </Card>
+
+      <Card className="panel-card" title={text.manual}>
+        <Space wrap style={{ marginBottom: 14 }}>
+          <InputNumber min={1} max={65535} value={basicPort} placeholder={text.port} onChange={setBasicPort} />
+          <Select
+            value={basicProtocol}
+            onChange={setBasicProtocol}
+            style={{ width: 135 }}
+            options={[{ value: 'both', label: 'TCP + UDP' }, { value: 'tcp', label: 'TCP' }, { value: 'udp', label: 'UDP' }]}
+          />
+          <Input value={basicLabel} placeholder={text.label} maxLength={120} onChange={(event) => setBasicLabel(event.target.value)} style={{ width: 280 }} />
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            disabled={!basicPort}
+            loading={action === 'basic-add'}
+            onClick={() => {
+              if (!basicPort) return;
+              void mutate('/panel/api/server/firewall/rules/add', { port: basicPort, protocol: basicProtocol, label: basicLabel }, 'basic-add').then((ok) => {
+                if (ok) { setBasicPort(null); setBasicLabel(''); }
+              });
+            }}
+          >{text.add}</Button>
+        </Space>
+        <Table<FirewallManualRule>
+          size="small"
+          pagination={false}
+          rowKey={(rule) => `${rule.port}-${rule.protocol}`}
+          dataSource={status.manualRules || []}
+          columns={[
+            { title: text.port, dataIndex: 'port', width: 100 },
+            { title: text.protocol, dataIndex: 'protocol', width: 110, render: (v: string) => <Tag>{v.toUpperCase()}</Tag> },
+            { title: text.label, dataIndex: 'label', render: (v?: string) => v || '—' },
+            {
+              title: '',
+              width: 100,
+              render: (_, rule) => (
+                <Popconfirm title={ru ? 'Удалить правило?' : 'Delete rule?'} onConfirm={() => void mutate('/panel/api/server/firewall/rules/delete', { port: rule.port, protocol: rule.protocol }, `basic-${rule.port}-${rule.protocol}`)}>
+                  <Button danger size="small">{text.remove}</Button>
+                </Popconfirm>
+              ),
+            },
+          ]}
         />
-        <Button
-          type="primary"
-          disabled={!port}
-          loading={action === 'add'}
-          onClick={() => {
-            if (!port) return;
-            void post(
-              '/panel/api/server/firewall/rules/add',
-              { port, protocol, label },
-              'add',
-            ).then((success) => {
-              if (success) {
-                setPort(null);
-                setLabel('');
-              }
-            });
-          }}
-        >
-          {text.add}
-        </Button>
-      </Space>
-      <Table<FirewallManualRule>
-        size="small"
-        rowKey={(rule) => `${rule.port}-${rule.protocol}`}
-        columns={manualColumns}
-        dataSource={status.manualRules || []}
-        pagination={false}
-        locale={{ emptyText: text.noManual }}
-      />
-      {loading ? <Typography.Text type="secondary">{text.loading}</Typography.Text> : null}
+      </Card>
+
+      <Card className="panel-card" title={text.advanced}>
+        <Alert type="info" showIcon title={text.advancedHint} style={{ marginBottom: 16 }} />
+        <div className="advanced-rule-grid">
+          <Select
+            value={draft.action}
+            onChange={(value) => setDraft((old) => ({ ...old, action: value }))}
+            options={[{ value: 'allow', label: text.allow }, { value: 'deny', label: text.deny }]}
+          />
+          <Select
+            value={draft.protocol}
+            onChange={(value) => setDraft((old) => ({ ...old, protocol: value }))}
+            options={[{ value: 'tcp', label: 'TCP' }, { value: 'udp', label: 'UDP' }, { value: 'any', label: 'ANY' }]}
+          />
+          <InputNumber min={1} max={65535} value={draft.portStart} placeholder={ru ? 'Порт от' : 'Port from'} onChange={(value) => setDraft((old) => ({ ...old, portStart: value || undefined }))} />
+          <InputNumber min={1} max={65535} value={draft.portEnd} placeholder={ru ? 'Порт до' : 'Port to'} onChange={(value) => setDraft((old) => ({ ...old, portEnd: value || undefined }))} />
+          <Input value={draft.sourceCidr} placeholder={text.sourceCidr} onChange={(event) => setDraft((old) => ({ ...old, sourceCidr: event.target.value }))} />
+          <Input value={draft.interface} placeholder={text.iface} onChange={(event) => setDraft((old) => ({ ...old, interface: event.target.value }))} />
+          <Select
+            value={draft.ipVersion}
+            onChange={(value) => setDraft((old) => ({ ...old, ipVersion: value }))}
+            options={[{ value: 'any', label: 'IPv4 + IPv6' }, { value: 'ipv4', label: 'IPv4' }, { value: 'ipv6', label: 'IPv6' }]}
+          />
+          <InputNumber min={-1000} max={1000} value={draft.priority} placeholder={text.priority} onChange={(value) => setDraft((old) => ({ ...old, priority: value ?? 100 }))} />
+          <Input value={draft.label} placeholder={text.label} onChange={(event) => setDraft((old) => ({ ...old, label: event.target.value }))} />
+          <Button type="primary" icon={<PlusOutlined />} loading={action === 'advanced-add'} onClick={() => void addAdvanced()}>{text.add}</Button>
+        </div>
+
+        <Divider />
+        <Table<AdvancedRule>
+          size="small"
+          rowKey="id"
+          dataSource={advanced}
+          pagination={false}
+          scroll={{ x: 1000 }}
+          columns={[
+            { title: text.action, dataIndex: 'action', width: 100, render: (value: string) => <Tag color={value === 'deny' ? 'error' : 'success'}>{value.toUpperCase()}</Tag> },
+            { title: text.protocol, dataIndex: 'protocol', width: 100, render: (value: string) => <Tag>{value.toUpperCase()}</Tag> },
+            { title: text.range, render: (_, rule) => rule.portStart ? (rule.portEnd && rule.portEnd !== rule.portStart ? `${rule.portStart}-${rule.portEnd}` : rule.portStart) : 'ANY', width: 120 },
+            { title: text.sourceCidr, dataIndex: 'sourceCidr', render: (value?: string) => value || 'ANY' },
+            { title: text.iface, dataIndex: 'interface', render: (value?: string) => value || 'ANY', width: 120 },
+            { title: text.family, dataIndex: 'ipVersion', width: 100 },
+            { title: text.priority, dataIndex: 'priority', width: 90 },
+            { title: text.label, dataIndex: 'label', ellipsis: true },
+            {
+              title: '',
+              width: 100,
+              fixed: 'right',
+              render: (_, rule) => (
+                <Popconfirm title={ru ? 'Удалить расширенное правило?' : 'Delete advanced rule?'} onConfirm={() => void deleteAdvanced(rule.id)}>
+                  <Button danger size="small" loading={action === `advanced-${rule.id}`}>{text.remove}</Button>
+                </Popconfirm>
+              ),
+            },
+          ]}
+        />
+      </Card>
     </Space>
   );
 }

@@ -59,17 +59,20 @@ func TestSessionAndCSRF(t *testing.T) {
 }
 func TestLoginRateLimit(t *testing.T) {
 	s := New("admin", "long-test-password", 8088, fstest.MapFS{})
-	for i := 0; i < 11; i++ {
+	for i := 0; i < 6; i++ {
 		r := httptest.NewRequest("POST", "/api/login", bytes.NewBufferString(`{"username":"admin","password":"wrong"}`))
 		r.RemoteAddr = "127.0.0.1:12345"
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, r)
 		expected := 401
-		if i == 10 {
+		if i == 5 {
 			expected = 429
 		}
 		if w.Code != expected {
 			t.Fatalf("attempt %d: got %d", i, w.Code)
+		}
+		if expected == 429 && w.Header().Get("Retry-After") == "" {
+			t.Fatal("rate limit response has no Retry-After header")
 		}
 	}
 }
