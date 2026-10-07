@@ -575,6 +575,16 @@ func applyManagedNftables(ctx context.Context, binary string, rules []FirewallRu
 	script.WriteString("  iifname \"lo\" accept\n")
 	script.WriteString("  ip protocol icmp accept\n")
 	script.WriteString("  ip6 nexthdr ipv6-icmp accept\n")
+	advanced, err := loadAdvancedFirewallRules()
+	if err != nil {
+		return err
+	}
+	for _, rule := range advanced {
+		expression := strings.TrimSpace(advancedNFTExpression(rule))
+		if expression != "" {
+			script.WriteString("  " + expression + "\n")
+		}
+	}
 	for _, rule := range rules {
 		spec := firewallRuleSpec(rule)
 		if spec == "" {
