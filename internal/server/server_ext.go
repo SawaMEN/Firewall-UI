@@ -178,24 +178,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	risky := []service.Port{}
-	listening, public := 0, 0
-	for _, port := range snapshot.Ports {
-		if !port.Listening {
-			continue
-		}
-		listening++
-		isPublic := port.Address == "0.0.0.0" || port.Address == "::"
-		if isPublic {
-			public++
-		}
-		if isPublic && !covered[fmt.Sprintf("%d/%s", port.Port, port.Protocol)] {
-			risky = append(risky, port)
-			if len(risky) >= 30 {
-				break
-			}
-		}
-	}
+	listening, public, risky := summarizePorts(snapshot.Ports, covered)
 	reply(w, http.StatusOK, dashboardResponse{
 		Backend:         status.Backend,
 		FirewallEnabled: status.Enabled,
@@ -210,6 +193,29 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		ContainerPorts:  snapshot.Containers,
 		LastPortScan:    snapshot.UpdatedAt,
 	}, nil)
+}
+
+func summarizePorts(ports []service.Port, covered map[string]bool) (int, int, []service.Port) {
+	risky := []service.Port{}
+	listening, public := 0, 0
+	for _, port := range ports {
+		if !port.Listening {
+			continue
+		}
+		listening++
+		isPublic := port.Address == "0.0.0.0" || port.Address == "::"
+		if isPublic {
+			public++
+		}
+		if isPublic && len(risky) < 30 && !covered[fmt.Sprintf("%d/%s", port.Port, port.Protocol)] {
+			risky = append(risky, port)
+		}
+	}
+	return listening, public, risky
+}
+
+func runtimeRestartRequired(old, next appconfig.Config) bool {
+	return old.TLSCert != next.TLSCert || old.TLSKey != next.TLSKey || old.ListenHost != next.ListenHost || old.ListenPort != next.ListenPort || old.ExternalPort != next.ExternalPort || old.SecureCookies != next.SecureCookies || old.PortScanInterval != next.PortScanInterval
 }
 
 func uniqueContainers(ports []service.ContainerPort) int {
@@ -490,7 +496,7 @@ func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, nil, err)
 		return
 	}
-	restart := oldCfg.ListenHost != nextCfg.ListenHost || oldCfg.ListenPort != nextCfg.ListenPort || oldCfg.PortScanInterval != nextCfg.PortScanInterval
+	restart := runtimeRestartRequired(oldCfg, nextCfg)
 	s.audit(r, "backup.restore", true, "", nil)
 	reply(w, http.StatusOK, map[string]any{"restored": true, "rollback": pending, "restartRequired": restart}, nil)
 }

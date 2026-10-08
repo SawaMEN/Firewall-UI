@@ -8,4 +8,5 @@ test:
 	go vet ./...
 	bash -n install.sh deploy/firewall-ui
 	bash tests/installer.sh
+	bash tests/manager.sh
 	cd frontend && npm run typecheck

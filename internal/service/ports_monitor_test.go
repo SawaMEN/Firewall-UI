@@ -3,7 +3,9 @@ package service
 import (
 	"bytes"
 	"encoding/json"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestPortSnapshotArraysAndIsolation(t *testing.T) {
@@ -30,5 +32,36 @@ func TestPortSnapshotArraysAndIsolation(t *testing.T) {
 	clone.Ports[0].Processes[0].Name = "changed"
 	if snapshot.Ports[0].Processes[0].Name != "worker" {
 		t.Fatal("snapshot aliases process list")
+	}
+}
+
+func TestPortMonitorKeepsLatestSample(t *testing.T) {
+	m := NewPortMonitor("/proc", time.Second)
+	m.snapshot = PortSnapshot{Ports: []Port{{Port: 80}}, UpdatedAt: time.Now()}
+	ch, cancel := m.Subscribe()
+	defer cancel()
+	m.publish(PortSnapshot{Ports: []Port{{Port: 443}}, UpdatedAt: time.Now()}, [32]byte{1})
+	if sample := <-ch; len(sample.Ports) != 1 || sample.Ports[0].Port != 443 {
+		t.Fatalf("slow subscriber received stale sample: %+v", sample)
+	}
+}
+
+func TestPortMonitorConcurrentSubscriptionAndClose(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		m := NewPortMonitor("/proc", time.Second)
+		m.snapshot = PortSnapshot{UpdatedAt: time.Now()}
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, cancel := m.Subscribe()
+			cancel()
+		}()
+		go func() {
+			defer wg.Done()
+			m.publish(PortSnapshot{UpdatedAt: time.Now()}, [32]byte{1})
+			m.closeSubscribers()
+		}()
+		wg.Wait()
 	}
 }

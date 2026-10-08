@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.3
+
+- Validate configuration before CLI updates/rollback and atomically replace executables.
+- Verify sustained service activity after restart and restore the current version if startup fails.
+- Preserve previous versions on failed updates; swap versions on a successful rollback.
+- Restrict self-update assets to this repository's releases and the current CPU architecture.
+- Fix live port subscription shutdown races and deliver the latest snapshot to slow clients.
+- Count all listening/public ports even when the risk preview reaches its 30-row limit.
+- Detect TLS, external-port and cookie changes when restoring runtime backups.
+- Run installer and CLI regression checks before publishing releases.
+
 ## 1.1.2
 
 - Remove the retained mobile drawer backdrop after closing navigation.

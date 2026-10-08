@@ -419,7 +419,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	s.RuntimeConfig = cfg
 	s.mu.Unlock()
 	channelChanged := oldCfg.UpdateChannel != cfg.UpdateChannel
-	requiresRestart := oldCfg.TLSCert != cfg.TLSCert || oldCfg.TLSKey != cfg.TLSKey || oldCfg.ListenHost != cfg.ListenHost || oldCfg.ListenPort != cfg.ListenPort || oldCfg.ExternalPort != cfg.ExternalPort || oldCfg.SecureCookies != cfg.SecureCookies || oldCfg.PortScanInterval != cfg.PortScanInterval
+	requiresRestart := runtimeRestartRequired(oldCfg, cfg)
 	restarting := requiresRestart && s.Restart != nil
 	if channelChanged && !restarting && s.Updater != nil {
 		s.Updater.Trigger()

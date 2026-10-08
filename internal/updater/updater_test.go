@@ -1,6 +1,7 @@
 package updater
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/SawaMEN/Firewall-UI/internal/buildinfo"
@@ -59,7 +60,7 @@ func TestStatusForChannels(t *testing.T) {
 
 func TestValidateAsset(t *testing.T) {
 	valid := Asset{
-		URL:    "https://github.com/SawaMEN/Firewall-UI/releases/download/dev/firewall-ui-linux-amd64",
+		URL:    "https://github.com/SawaMEN/Firewall-UI/releases/download/dev/firewall-ui-linux-" + runtime.GOARCH,
 		SHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 	}
 	if err := validateAsset(valid); err != nil {
@@ -69,5 +70,18 @@ func TestValidateAsset(t *testing.T) {
 	invalid.URL = "http://example.com/firewall-ui"
 	if err := validateAsset(invalid); err == nil {
 		t.Fatal("accepted insecure update URL")
+	}
+	for _, url := range []string{
+		"https://github.com/another/repository/releases/download/dev/firewall-ui-linux-" + runtime.GOARCH,
+		valid.URL + "?download=1",
+		valid.URL + "#asset",
+		"https://user@github.com/SawaMEN/Firewall-UI/releases/download/dev/firewall-ui-linux-" + runtime.GOARCH,
+		"https://github.com/SawaMEN/Firewall-UI/blob/main/firewall-ui-linux-" + runtime.GOARCH,
+		valid.URL + "/../other",
+	} {
+		invalid.URL = url
+		if err := validateAsset(invalid); err == nil {
+			t.Fatalf("accepted unexpected asset: %s", url)
+		}
 	}
 }

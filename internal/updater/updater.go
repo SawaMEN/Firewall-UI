@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -28,6 +29,8 @@ const (
 	maxManifestSize   = 1 << 20
 	maxBinarySize     = 128 << 20
 )
+
+var releaseAssetPath = regexp.MustCompile(`^/SawaMEN/Firewall-UI/releases/download/[A-Za-z0-9._-]+/firewall-ui-linux-` + runtime.GOARCH + `$`)
 
 type Asset struct {
 	URL    string `json:"url"`
@@ -145,8 +148,8 @@ func (m *Manager) fetchManifest(ctx context.Context, channel string) (Manifest, 
 
 func validateAsset(asset Asset) error {
 	parsed, err := url.Parse(strings.TrimSpace(asset.URL))
-	if err != nil || parsed.Scheme != "https" || parsed.Host != "github.com" {
-		return errors.New("update asset URL must use https://github.com")
+	if err != nil || parsed.Scheme != "https" || parsed.Host != "github.com" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.RawPath != "" || !releaseAssetPath.MatchString(parsed.Path) {
+		return errors.New("update asset must be a Firewall-UI release for this architecture")
 	}
 	checksum := strings.ToLower(strings.TrimSpace(asset.SHA256))
 	if len(checksum) != sha256.Size*2 {

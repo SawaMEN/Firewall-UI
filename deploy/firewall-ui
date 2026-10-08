@@ -73,75 +73,94 @@ show_logs() {
   journalctl -u "${SERVICE}.service" -n 100 -f
 }
 
-update_binary() {
+wait_for_service() {
+  local attempt stable=0
+  for attempt in {1..20}; do
+    if systemctl is-active --quiet "${SERVICE}.service"; then
+      stable=$((stable+1))
+      if ((stable >= 3)); then return 0; fi
+    else
+      stable=0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+# Run in a subshell so failure cleanup also works under set -e and cannot
+# leave RETURN traps referring to expired local variables.
+replace_binary() (
+  set -Eeuo pipefail
+  local candidate="$1" stage replaced=0 succeeded=0 was_active=0
+  [[ -x "$BIN" ]] || { echo "Installed binary not found: $BIN" >&2; exit 1; }
+  "$candidate" -config "$CONFIG" -check-config
+  stage="$(mktemp -d "${INSTALL_DIR}/.replace-XXXXXX")"
+  cleanup_replace() {
+    local result=$?
+    trap - EXIT
+    if ((replaced && !succeeded)); then
+      echo 'Service failed after replacement; restoring the current binary.' >&2
+      systemctl stop "${SERVICE}.service" || true
+      # Rename a staged copy rather than writing into a running executable.
+      if mv -f "$stage/current" "$BIN"; then
+        if ((was_active)); then
+          systemctl restart "${SERVICE}.service" || true
+        fi
+      else
+        echo "Could not restore the binary; recovery copy: $stage/current" >&2
+        return "$result"
+      fi
+    fi
+    rm -rf -- "$stage"
+    return "$result"
+  }
+  trap cleanup_replace EXIT
+  cp -p "$BIN" "$stage/current"
+  install -m 0755 "$candidate" "$stage/candidate"
+  systemctl is-active --quiet "${SERVICE}.service" && was_active=1
+  mv -f "$stage/candidate" "$BIN"
+  replaced=1
+  systemctl restart "${SERVICE}.service"
+  wait_for_service
+  # Do not overwrite the known previous version unless the new one starts.
+  mv -f "$stage/current" "${BIN}.previous"
+  succeeded=1
+)
+
+update_binary() (
+  set -Eeuo pipefail
   require_root
-  command -v curl >/dev/null 2>&1 || { echo "curl is required"; exit 1; }
-  local tmp manifest arch channel block url expected actual
-  tmp="$(mktemp)"
-  manifest="$(mktemp)"
-  trap 'rm -f "$tmp" "$manifest"' RETURN
+  command -v curl >/dev/null 2>&1 || { echo 'curl is required' >&2; exit 1; }
+  local stage manifest arch channel block url expected actual answer
   arch="$(arch_name)"
   channel="$(update_channel)"
-  if [[ "$channel" == "stable" ]]; then
-    read -r -p "Install the latest stable Firewall-UI release? [y/N]: " answer
-    if [[ ! "$answer" =~ ^[Yy]$ ]]; then
-      return 0
-    fi
+  if [[ "$channel" == stable && "${FIREWALL_UI_NONINTERACTIVE:-0}" != 1 ]]; then
+    read -r -p 'Install the latest stable Firewall-UI release? [y/N]: ' answer
+    [[ "$answer" =~ ^[Yy]$ ]] || exit 0
   fi
-
-  echo "Fetching signed-by-release checksum metadata ($channel)..."
+  stage="$(mktemp -d)"
+  trap 'rm -rf -- "$stage"' EXIT
+  manifest="$stage/update.json"
+  echo "Fetching release checksum metadata ($channel)..."
   curl -fL --retry 3 --connect-timeout 15 "$(manifest_url)" -o "$manifest"
   block="$(sed -n "/\"$arch\"[[:space:]]*:/,/^[[:space:]]*}/p" "$manifest")"
-  url="$(printf '%s\n' "$block" | sed -n 's/.*"url":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+  url="$(printf '%s\n' "$block" | sed -n 's/.*"url":[[:space:]]*"\([^" ]*\)".*/\1/p' | head -n 1)"
   expected="$(printf '%s\n' "$block" | sed -n 's/.*"sha256":[[:space:]]*"\([0-9A-Fa-f]*\)".*/\1/p' | head -n 1)"
-  if [[ ! "$url" =~ ^https://github.com/${REPO}/ ]] || [[ ! "$expected" =~ ^[0-9A-Fa-f]{64}$ ]]; then
-    echo "Invalid update manifest." >&2
-    return 1
-  fi
-
-  echo "Downloading latest Firewall-UI ($channel)..."
-  curl -fL --retry 3 --connect-timeout 15 "$url" -o "$tmp"
-  actual="$(sha256_file "$tmp")"
-  if [[ "${actual,,}" != "${expected,,}" ]]; then
-    echo "Update SHA-256 mismatch." >&2
-    return 1
-  fi
-
-  cp -p "$BIN" "${BIN}.previous"
-  install -m 0755 "$tmp" "$BIN"
-  if ! systemctl restart "${SERVICE}.service"; then
-    echo "Updated service failed to restart; restoring previous binary." >&2
-    install -m 0755 "${BIN}.previous" "$BIN"
-    systemctl restart "${SERVICE}.service" || true
-    return 1
-  fi
-  rm -f "$tmp" "$manifest"
-  trap - RETURN
-  echo "Firewall-UI updated and SHA-256 verified."
-}
+  [[ "$url" =~ ^https://github.com/${REPO}/releases/download/[A-Za-z0-9._-]+/firewall-ui-linux-${arch}$ && "$expected" =~ ^[0-9A-Fa-f]{64}$ ]] || { echo 'Invalid update manifest.' >&2; exit 1; }
+  curl -fL --retry 3 --connect-timeout 15 "$url" -o "$stage/binary"
+  actual="$(sha256_file "$stage/binary")"
+  [[ "${actual,,}" == "${expected,,}" ]] || { echo 'Update SHA-256 mismatch.' >&2; exit 1; }
+  chmod 0755 "$stage/binary"
+  replace_binary "$stage/binary"
+  echo 'Firewall-UI updated, SHA-256 verified and service running.'
+)
 
 rollback_binary() {
   require_root
   local previous="${BIN}.previous"
-  if [[ ! -x "$previous" ]]; then
-    echo "No previous Firewall-UI binary is available."
-    return 1
-  fi
-  systemctl stop "${SERVICE}.service"
-  local current="${BIN}.failed-$(date +%Y%m%d%H%M%S)"
-  mv "$BIN" "$current"
-  mv "$previous" "$BIN"
-  chmod 0755 "$BIN"
-  if systemctl start "${SERVICE}.service"; then
-    echo "Firewall-UI rolled back to the previous binary."
-    rm -f "$current"
-  else
-    mv "$BIN" "$previous"
-    mv "$current" "$BIN"
-    systemctl start "${SERVICE}.service" || true
-    echo "Rollback failed; restored the current binary." >&2
-    return 1
-  fi
+  [[ -x "$previous" ]] || { echo 'No previous Firewall-UI binary is available.' >&2; return 1; }
+  replace_binary "$previous"
+  echo 'Firewall-UI rolled back. The replaced version is retained as .previous.'
 }
 
 escape_env_value() {
@@ -214,6 +233,7 @@ menu() {
   done
 }
 
+main() {
 case "${1:-}" in
   start|stop|restart|reload)
     require_root
@@ -245,3 +265,6 @@ case "${1:-}" in
     exit 2
     ;;
 esac
+
+}
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi

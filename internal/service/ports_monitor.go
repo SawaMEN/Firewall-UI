@@ -66,10 +66,10 @@ func (m *PortMonitor) Subscribe() (<-chan PortSnapshot, func()) {
 	m.mu.Lock()
 	m.subscribers[ch] = struct{}{}
 	current := clonePortSnapshot(m.snapshot)
-	m.mu.Unlock()
 	if !current.UpdatedAt.IsZero() {
 		ch <- current
 	}
+	m.mu.Unlock()
 	cancel := func() {
 		m.mu.Lock()
 		if _, ok := m.subscribers[ch]; ok {
@@ -94,12 +94,22 @@ func (m *PortMonitor) refresh(ctx context.Context) {
 	}{ports, containers})
 	fingerprint := sha256.Sum256(hashPayload)
 
+	m.publish(next, fingerprint)
+}
+
+func (m *PortMonitor) publish(next PortSnapshot, fingerprint [32]byte) {
 	m.mu.Lock()
 	changed := fingerprint != m.fingerprint
 	m.snapshot = next
 	m.fingerprint = fingerprint
 	if changed {
 		for ch := range m.subscribers {
+			// Keep the newest sample even when a client is slower than the scan.
+			// All sends and closes share this lock.
+			select {
+			case <-ch:
+			default:
+			}
 			select {
 			case ch <- clonePortSnapshot(next):
 			default:
