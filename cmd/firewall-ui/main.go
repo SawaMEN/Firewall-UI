@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"io/fs"
 	"log"
 	"net"
@@ -34,7 +35,13 @@ func main() {
 	certFlag := flag.String("tls-cert", "", "TLS certificate path (overrides config)")
 	keyFlag := flag.String("tls-key", "", "TLS key path (overrides config)")
 	secureFlag := flag.Bool("secure-cookies", false, "Require HTTPS cookies behind a reverse proxy (overrides config)")
+	checkConfig := flag.Bool("check-config", false, "Validate panel configuration and exit")
+	showVersion := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println(buildinfo.Current().Version)
+		return
+	}
 
 	cfg, err := appconfig.Load(*configPath)
 	if err != nil {
@@ -77,6 +84,10 @@ func main() {
 		log.Fatal(err)
 	}
 
+	if *checkConfig {
+		fmt.Println("Configuration is valid")
+		return
+	}
 	password := os.Getenv("FIREWALL_UI_PASSWORD")
 	if len(password) < 12 {
 		log.Fatal("FIREWALL_UI_PASSWORD must contain at least 12 characters")

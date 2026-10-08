@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { ConfigProvider, Layout, Space, Typography } from 'antd';
+import { lazy, Suspense, useMemo, useState } from 'react';
+import { ConfigProvider, Layout, Space, Spin, Typography } from 'antd';
 import {
   DashboardOutlined,
   DatabaseOutlined,
@@ -10,10 +10,10 @@ import { useTranslation } from 'react-i18next';
 
 import AppSidebar, { type PageKey } from '@/layouts/AppSidebar';
 import { useTheme } from '@/hooks/useTheme';
-import DashboardPage from '@/pages/dashboard/DashboardPage';
-import SettingsPage from '@/pages/settings/SettingsPage';
-import { FirewallManager } from './FirewallManager';
-import { PortsTable } from './PortsTable';
+const DashboardPage = lazy(() => import('@/pages/dashboard/DashboardPage'));
+const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage'));
+const FirewallManager = lazy(() => import('./FirewallManager').then(module => ({ default: module.FirewallManager })));
+const PortsTable = lazy(() => import('./PortsTable').then(module => ({ default: module.PortsTable })));
 
 export default function FirewallPage() {
   const { i18n } = useTranslation();
@@ -74,10 +74,12 @@ export default function FirewallPage() {
                 </div>
               </div>
               <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+                <Suspense fallback={<Spin />} >
                 {page === 'overview' ? <DashboardPage /> : null}
                 {page === 'firewall' ? <FirewallManager /> : null}
                 {page === 'ports' ? <PortsTable /> : null}
                 {page === 'settings' ? <SettingsPage /> : null}
+                </Suspense>
               </Space>
             </div>
           </Layout.Content>

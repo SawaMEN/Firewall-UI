@@ -6,4 +6,6 @@ build: frontend
 test:
 	go test -race ./...
 	go vet ./...
+	bash -n install.sh deploy/firewall-ui
+	bash tests/installer.sh
 	cd frontend && npm run typecheck

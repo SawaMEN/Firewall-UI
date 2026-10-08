@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, Input, Select, Space, Switch, Table, Tag, Typography } from 'antd';
+import { Alert, Button, Card, Grid, Input, Select, Space, Switch, Table, Tag, Typography } from 'antd';
 import { PlusOutlined, ReloadOutlined, StopOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 
@@ -47,6 +47,7 @@ type FirewallStatus = {
 const key = (port: number, protocol: string) => `${port}/${protocol}`;
 
 export function PortsTable() {
+  const screens = Grid.useBreakpoint();
   const { i18n } = useTranslation();
   const ru = i18n.language.startsWith('ru');
   const [snapshot, setSnapshot] = useState<Snapshot>({ ports: [], containers: [], updatedAt: '' });
@@ -238,7 +239,7 @@ export function PortsTable() {
           {
             title: ru ? 'Файрволл' : 'Firewall',
             width: 190,
-            fixed: 'right',
+            fixed: screens.md ? 'right' : undefined,
             render: (_, port) => {
               if (port.loopback || !port.listening) return <Tag>{ru ? 'Локальный' : 'Local'}</Tag>;
               const k = key(port.port, port.protocol);

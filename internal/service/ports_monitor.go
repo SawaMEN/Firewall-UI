@@ -120,10 +120,10 @@ func (m *PortMonitor) closeSubscribers() {
 
 func clonePortSnapshot(in PortSnapshot) PortSnapshot {
 	out := in
-	out.Ports = append([]Port(nil), in.Ports...)
+	out.Ports = append([]Port{}, in.Ports...)
 	for i := range out.Ports {
-		out.Ports[i].Processes = append([]Process(nil), in.Ports[i].Processes...)
+		out.Ports[i].Processes = append([]Process{}, in.Ports[i].Processes...)
 	}
-	out.Containers = append([]ContainerPort(nil), in.Containers...)
+	out.Containers = append([]ContainerPort{}, in.Containers...)
 	return out
 }

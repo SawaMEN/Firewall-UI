@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.1
+
+- Fix redirect loops when serving the web panel root and SPA pages.
+- Keep empty socket/process/container arrays serializable so the live ports page cannot crash.
+- Make mobile tables scroll without a pinned action column and keep the menu accessible.
+- Verify release binaries during first installation and preserve configuration on repeated installs.
+- Restart existing services after installation and roll back binaries/CLI/unit on failure.
+- Detect active firewall backends and install UFW only when none is installed.
+- Add editable PEM certificate/key settings and validate TLS before saving.
+- Add noninteractive installer setup, read-only system checks and CLI configuration validation.
+- Load interface sections on demand and remove circular JavaScript chunk dependencies.
+
+
 ## 1.1.0
 
 Security, policy and operations release.

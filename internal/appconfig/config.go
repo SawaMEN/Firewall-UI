@@ -1,6 +1,7 @@
 package appconfig
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -121,6 +122,14 @@ func Validate(cfg Config) error {
 	}
 	if (strings.TrimSpace(cfg.TLSCert) == "") != (strings.TrimSpace(cfg.TLSKey) == "") {
 		return errors.New("both TLS certificate and key are required")
+	}
+	if cfg.TLSCert != "" {
+		if !filepath.IsAbs(cfg.TLSCert) || !filepath.IsAbs(cfg.TLSKey) {
+			return errors.New("TLS paths must be absolute")
+		}
+		if _, err := tls.LoadX509KeyPair(cfg.TLSCert, cfg.TLSKey); err != nil {
+			return fmt.Errorf("invalid TLS certificate/key: %w", err)
+		}
 	}
 	if strings.TrimSpace(cfg.StatePath) == "" || !filepath.IsAbs(cfg.StatePath) {
 		return errors.New("statePath must be an absolute path")

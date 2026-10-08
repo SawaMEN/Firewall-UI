@@ -124,12 +124,9 @@ export default function AppSidebar({ page, onPageChange }: Props) {
         width={286}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        closable={false}
+        title="Firewall-UI"
         styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column' } }}
       >
-        <div className="drawer-header">
-          <span className="drawer-brand">Firewall-UI</span>
-        </div>
         <Menu
           className="drawer-menu"
           selectedKeys={[page]}

@@ -11,17 +11,7 @@ export default defineConfig({
   build: {
     outDir: '../internal/webassets/dist',
     emptyOutDir: true,
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (!id.includes('node_modules')) return undefined;
-          if (id.includes('/antd/') || id.includes('@ant-design')) return 'antd';
-          if (id.includes('/react/') || id.includes('/react-dom/')) return 'react';
-          if (id.includes('i18next')) return 'i18n';
-          return 'vendor';
-        },
-      },
-    },
+
   },
   server: {
     proxy: {

@@ -32,7 +32,9 @@
 bash <(curl -Ls https://raw.githubusercontent.com/SawaMEN/Firewall-UI/main/install.sh)
 ```
 
-Установщик проверяет Linux/systemd/архитектуру, наличие firewall backend, при необходимости ставит UFW, устанавливает бинарник, systemd unit и CLI.
+Установщик проверяет Linux/systemd/архитектуру и обнаруживает активный firewall backend. Если поддерживаемого файрволла нет, устанавливает UFW через системный пакетный менеджер. Готовый бинарник проверяется по SHA-256 из release manifest до установки. При повторном запуске конфигурация и учётная запись сохраняются, а работающая служба перезапускается. При ошибке запуска восстанавливаются предыдущий бинарник, CLI и systemd unit.
+
+Проверка системы без установки: `bash install.sh --check`. Для автоматической установки задайте `FIREWALL_UI_NONINTERACTIVE=1`: если пароль не задан, установщик сгенерирует его и покажет один раз. Значение `FIREWALL_UI_UPDATE_CHANNEL=stable` или `dev` выбирает источник первой установки; при повторном запуске используется сохранённый канал. Локальный бинарник можно передать через `FIREWALL_UI_BINARY`, а его ожидаемую сумму — через `FIREWALL_UI_SHA256`.
 
 **По умолчанию панель слушает только `127.0.0.1:8088`.** Для удалённого доступа используйте SSH tunnel или reverse proxy с HTTPS. Публичный HTTP bind нужно включить явно:
 
@@ -84,6 +86,7 @@ firewall-ui uninstall
 - порт панели;
 - внешний порт reverse proxy;
 - Secure Cookie;
+- абсолютные пути к HTTPS-сертификату и приватному ключу PEM (пара проверяется перед сохранением);
 - IP/CIDR allowlist;
 - TOTP 2FA;
 - rollback timeout;
@@ -92,6 +95,14 @@ firewall-ui uninstall
 CIDR allowlist нельзя сохранить, если он исключает IP текущего подключения.
 
 TOTP setup возвращает стандартный `otpauth://` URI и secret для любого совместимого authenticator.
+
+Смена сертификата, ключа или порта перезапускает установленную systemd-службу. При прямом доступе браузер переходит на новый порт и протокол; при reverse proxy внешний адрес сохраняется.
+
+Проверка файла конфигурации без запуска службы:
+
+```bash
+/usr/local/firewall-ui/firewall-ui -config /etc/firewall-ui/config.json -check-config
+```
 
 ## Firewall rollback
 

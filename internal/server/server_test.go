@@ -86,3 +86,19 @@ func TestCrossSiteLogin(t *testing.T) {
 		t.Fatal("cross-site login accepted")
 	}
 }
+
+func TestRootAndSPAAssets(t *testing.T) {
+	s := New("admin", "test-password", 8088, fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("panel page")}, "assets/app.js": &fstest.MapFile{Data: []byte("script")}})
+	for _, path := range []string{"/", "/settings", "/index.html", "/assets/app.js"} {
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != 200 || w.Header().Get("Location") != "" {
+			t.Fatalf("%s redirects or fails: %d", path, w.Code)
+		}
+	}
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, httptest.NewRequest("GET", "/assets/missing.js", nil))
+	if w.Code != 404 {
+		t.Fatal("missing asset became HTML")
+	}
+}

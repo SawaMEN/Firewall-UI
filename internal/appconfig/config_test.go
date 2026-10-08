@@ -1,6 +1,10 @@
 package appconfig
 
 import (
+	"crypto/x509"
+	"encoding/pem"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -70,5 +74,32 @@ func TestValidateRejectsUnsafeValues(t *testing.T) {
 	cfg.TLSCert = "/tmp/cert.pem"
 	if err := Validate(cfg); err == nil {
 		t.Fatal("accepted incomplete TLS configuration")
+	}
+}
+
+func TestTLSFilesAreValidated(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer server.Close()
+	cert := server.TLS.Certificates[0]
+	key, err := x509.MarshalPKCS8PrivateKey(cert.PrivateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	cfg := Default()
+	cfg.TLSCert = filepath.Join(dir, "cert.pem")
+	cfg.TLSKey = filepath.Join(dir, "key.pem")
+	os.WriteFile(cfg.TLSCert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]}), 0600)
+	os.WriteFile(cfg.TLSKey, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key}), 0600)
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("valid TLS pair rejected: %v", err)
+	}
+	os.WriteFile(cfg.TLSKey, []byte("invalid key"), 0600)
+	if err := Validate(cfg); err == nil {
+		t.Fatal("invalid TLS key accepted")
+	}
+	cfg.TLSCert = "relative.pem"
+	if err := Validate(cfg); err == nil {
+		t.Fatal("relative TLS path accepted")
 	}
 }

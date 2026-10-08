@@ -297,6 +297,8 @@ type runtimeSettingsResponse struct {
 	ListenPort       int      `json:"listenPort"`
 	ExternalPort     int      `json:"externalPort"`
 	SecureCookies    bool     `json:"secureCookies"`
+	TLSCert          string   `json:"tlsCert"`
+	TLSKey           string   `json:"tlsKey"`
 	TLSEnabled       bool     `json:"tlsEnabled"`
 	UpdateChannel    string   `json:"updateChannel"`
 	AllowedCIDRs     []string `json:"allowedCidrs"`
@@ -312,6 +314,8 @@ func runtimeSettingsView(cfg appconfig.Config, restarting bool) runtimeSettingsR
 		ListenPort:       cfg.ListenPort,
 		ExternalPort:     cfg.ExternalPort,
 		SecureCookies:    cfg.SecureCookies,
+		TLSCert:          cfg.TLSCert,
+		TLSKey:           cfg.TLSKey,
 		TLSEnabled:       cfg.TLSCert != "" && cfg.TLSKey != "",
 		UpdateChannel:    cfg.UpdateChannel,
 		AllowedCIDRs:     append([]string(nil), cfg.AllowedCIDRs...),
@@ -336,6 +340,8 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
+		TLSCert          *string  `json:"tlsCert"`
+		TLSKey           *string  `json:"tlsKey"`
 		ListenHost       string   `json:"listenHost"`
 		ListenPort       int      `json:"listenPort"`
 		ExternalPort     int      `json:"externalPort"`
@@ -358,6 +364,12 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	cfg := s.RuntimeConfig
 	s.mu.Unlock()
 	oldCfg := cfg
+	if req.TLSCert != nil {
+		cfg.TLSCert = strings.TrimSpace(*req.TLSCert)
+	}
+	if req.TLSKey != nil {
+		cfg.TLSKey = strings.TrimSpace(*req.TLSKey)
+	}
 	cfg.ListenHost = strings.TrimSpace(req.ListenHost)
 	cfg.ListenPort = req.ListenPort
 	cfg.ExternalPort = req.ExternalPort
@@ -407,7 +419,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	s.RuntimeConfig = cfg
 	s.mu.Unlock()
 	channelChanged := oldCfg.UpdateChannel != cfg.UpdateChannel
-	requiresRestart := oldCfg.ListenHost != cfg.ListenHost || oldCfg.ListenPort != cfg.ListenPort || oldCfg.ExternalPort != cfg.ExternalPort || oldCfg.SecureCookies != cfg.SecureCookies || oldCfg.PortScanInterval != cfg.PortScanInterval
+	requiresRestart := oldCfg.TLSCert != cfg.TLSCert || oldCfg.TLSKey != cfg.TLSKey || oldCfg.ListenHost != cfg.ListenHost || oldCfg.ListenPort != cfg.ListenPort || oldCfg.ExternalPort != cfg.ExternalPort || oldCfg.SecureCookies != cfg.SecureCookies || oldCfg.PortScanInterval != cfg.PortScanInterval
 	restarting := requiresRestart && s.Restart != nil
 	if channelChanged && !restarting && s.Updater != nil {
 		s.Updater.Trigger()
@@ -617,5 +629,8 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 	}
 	copy := r.Clone(r.Context())
 	copy.URL.Path = "/" + name
+	if name == "index.html" {
+		copy.URL.Path = "/"
+	}
 	http.FileServer(http.FS(s.Assets)).ServeHTTP(w, copy)
 }

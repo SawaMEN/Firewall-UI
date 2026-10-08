@@ -35,6 +35,8 @@ type RuntimeSettings = {
   externalPort: number;
   secureCookies: boolean;
   tlsEnabled: boolean;
+  tlsCert: string;
+  tlsKey: string;
   updateChannel: string;
   allowedCidrs: string[];
   totpEnabled: boolean;
@@ -274,6 +276,8 @@ export default function SettingsPage() {
         listenPort: values.listenPort,
         externalPort: values.externalPort,
         secureCookies: values.secureCookies,
+        tlsCert: values.tlsCert || '',
+        tlsKey: values.tlsKey || '',
         updateChannel: values.updateChannel,
         allowedCidrs,
         rollbackSeconds: values.rollbackSeconds,
@@ -289,9 +293,10 @@ export default function SettingsPage() {
         const browserPort = Number(window.location.port || (window.location.protocol === 'https:' ? 443 : 80));
         const direct = old?.listenPort === browserPort;
         window.setTimeout(() => {
-          if (direct && old?.listenPort !== values.listenPort) {
+          if (direct && (old?.listenPort !== values.listenPort || old?.tlsEnabled !== Boolean(values.tlsCert))) {
             const target = new URL(window.location.href);
             target.port = String(values.listenPort);
+            target.protocol = values.tlsCert ? 'https:' : 'http:';
             window.location.assign(target.toString());
           } else {
             window.location.reload();
@@ -442,6 +447,14 @@ export default function SettingsPage() {
           <Form.Item name="allowedCidrsText" label={text.cidrs} extra={text.cidrsHint}>
             <Input.TextArea rows={4} placeholder={'192.0.2.10\n10.0.0.0/8\n2001:db8::/32'} />
           </Form.Item>
+          <div className="settings-grid">
+            <Form.Item name="tlsCert" label={ru ? 'HTTPS: файл сертификата PEM' : 'HTTPS: PEM certificate path'} extra={ru ? 'Абсолютный путь на сервере. Оба поля пустые — HTTP.' : 'Absolute server path. Leave both fields empty for HTTP.'}>
+              <Input placeholder="/etc/letsencrypt/live/example.com/fullchain.pem" />
+            </Form.Item>
+            <Form.Item name="tlsKey" label={ru ? 'HTTPS: файл приватного ключа PEM' : 'HTTPS: PEM private key path'}>
+              <Input placeholder="/etc/letsencrypt/live/example.com/privkey.pem" />
+            </Form.Item>
+          </div>
           <Space>
             <Typography.Text type="secondary">{text.tls}:</Typography.Text>
             <Tag color={current?.tlsEnabled ? 'success' : undefined}>{current?.tlsEnabled ? text.tlsOn : text.tlsOff}</Tag>

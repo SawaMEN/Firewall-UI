@@ -94,8 +94,22 @@ body {
 }
 
 @media (max-width: 768px) {
+  .page-layout > .ant-sidebar {
+    display: none;
+  }
+
+  .ant-btn.drawer-handle {
+    position: fixed;
+    top: auto;
+    left: 12px;
+    bottom: 16px;
+    width: 42px;
+    height: 42px;
+    display: inline-flex;
+  }
+
   .content-area {
-    padding: 16px 12px 76px;
+    padding: 16px 12px 76px !important;
   }
 
   .page-header {
