@@ -103,7 +103,8 @@ func Save(path string, cfg Config) error {
 	if err := os.Rename(name, path); err != nil {
 		return fmt.Errorf("replace config: %w", err)
 	}
-	return os.Chmod(path, 0600)
+	// The renamed temporary file already has mode 0600.
+	return nil
 }
 
 func Validate(cfg Config) error {

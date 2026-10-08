@@ -3,10 +3,13 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -236,6 +239,9 @@ func (s *Server) setupTOTP(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusInternalServerError, nil, err)
 		return
 	}
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+
 	s.mu.Lock()
 	cfg := s.RuntimeConfig
 	if cfg.TOTPEnabled {
@@ -271,6 +277,9 @@ func (s *Server) confirmTOTP(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusBadRequest, nil, err)
 		return
 	}
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+
 	s.mu.Lock()
 	cfg := s.RuntimeConfig
 	s.mu.Unlock()
@@ -302,6 +311,9 @@ func (s *Server) disableTOTP(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusBadRequest, nil, err)
 		return
 	}
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+
 	s.mu.Lock()
 	cfg := s.RuntimeConfig
 	s.mu.Unlock()
@@ -460,6 +472,9 @@ func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusBadRequest, nil, fmt.Errorf("unsupported backup version"))
 		return
 	}
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+
 	before, err := s.Firewall.ExportBackup()
 	if err != nil {
 		reply(w, http.StatusOK, nil, err)
@@ -617,6 +632,7 @@ func (s *Server) beginRollbackWithConfig(before service.FirewallBackup, oldCfg a
 	}
 	s.mu.Lock()
 	seconds := s.RuntimeConfig.RollbackSeconds
+	expectedRuntime := runtimeBackupFromConfig(s.RuntimeConfig)
 	s.mu.Unlock()
 	if seconds == 0 {
 		seconds = 45
@@ -628,12 +644,8 @@ func (s *Server) beginRollbackWithConfig(before service.FirewallBackup, oldCfg a
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
 		restoreErr := s.Firewall.RestoreBackup(ctx, snapshot, s.Port)
-		if oldCfg.ListenPort != 0 && s.ConfigPath != "" {
-			if cfgErr := appconfig.Save(s.ConfigPath, oldCfg); cfgErr == nil {
-				s.mu.Lock()
-				s.RuntimeConfig = oldCfg
-				s.mu.Unlock()
-			}
+		if oldCfg.ListenPort != 0 {
+			restoreErr = errors.Join(restoreErr, s.restoreRuntimeAfterRollback(oldCfg, expectedRuntime))
 		}
 		message := ""
 		if restoreErr != nil {
@@ -650,6 +662,27 @@ func (s *Server) beginRollbackWithConfig(before service.FirewallBackup, oldCfg a
 		}
 	})
 	return pending, err
+}
+
+// Authentication is excluded from runtime backups. Restore only those fields,
+// and only if no later runtime edit has superseded the backup transaction.
+func (s *Server) restoreRuntimeAfterRollback(old appconfig.Config, expected runtimeBackup) error {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	s.mu.Lock()
+	current := s.RuntimeConfig
+	s.mu.Unlock()
+	if !reflect.DeepEqual(runtimeBackupFromConfig(current), expected) {
+		return fmt.Errorf("runtime rollback skipped: newer settings were saved")
+	}
+	next := applyRuntimeBackup(current, runtimeBackupFromConfig(old))
+	if err := appconfig.Save(s.ConfigPath, next); err != nil {
+		return fmt.Errorf("restore runtime configuration: %w", err)
+	}
+	s.mu.Lock()
+	s.RuntimeConfig = next
+	s.mu.Unlock()
+	return nil
 }
 
 func (s *Server) audit(r *http.Request, action string, success bool, message string, metadata map[string]any) {
@@ -671,7 +704,13 @@ func decodeJSONLimit(w http.ResponseWriter, r *http.Request, target any, limit i
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
-	return decoder.Decode(target)
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("request must contain one JSON object")
+	}
+	return nil
 }
 
 func defaultDataPaths(statePath string) (auditPath, historyPath string) {

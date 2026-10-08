@@ -55,6 +55,7 @@ type Server struct {
 	Audit         *audit.Logger
 	History       *history.Store
 	Rollbacks     *rollback.Manager
+	configMu      sync.Mutex // Serializes config read-modify-save operations.
 	mu            sync.Mutex
 	sessions      map[string]session
 	attempts      map[string]attempt
@@ -359,6 +360,9 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusConflict, nil, fmt.Errorf("runtime configuration file is not configured"))
 		return
 	}
+
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
 
 	s.mu.Lock()
 	cfg := s.RuntimeConfig

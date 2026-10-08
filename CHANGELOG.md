@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.4
+
+- Serialize runtime settings, TOTP setup/confirmation/disable and backup configuration writes.
+- Preserve current two-factor authentication settings when runtime backups roll back.
+- Avoid overwriting newer runtime edits during an expired backup transaction.
+- Report runtime rollback save failures in the audit result and keep memory unchanged on failed writes.
+- Reject trailing JSON/data in backup imports.
+- Remove a redundant post-commit chmod that could report a failed save after the file was replaced.
+
 ## 1.1.3
 
 - Validate configuration before CLI updates/rollback and atomically replace executables.
