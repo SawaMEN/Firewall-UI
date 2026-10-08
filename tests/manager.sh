@@ -8,6 +8,7 @@ cat > "$FIXTURE/runner" <<'SCRIPT'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 source "$TASK_ROOT/deploy/firewall-ui"
+require_root() { :; } # All paths and service commands below are isolated mocks.
 INSTALL_DIR="$FIXTURE/install"; BIN="$INSTALL_DIR/firewall-ui"; CONFIG="$FIXTURE/config"
 export TMPDIR="$FIXTURE/downloads"
 curl() {
