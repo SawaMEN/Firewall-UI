@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.2
+
+- Remove the retained mobile drawer backdrop after closing navigation.
+
 ## 1.1.1
 
 - Fix redirect loops when serving the web panel root and SPA pages.
