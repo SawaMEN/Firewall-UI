@@ -4,6 +4,11 @@ body {
   background: var(--xui-surface, #f5f6f8);
 }
 
+/* The drawer stays mounted when closed; blur only its visible mask. */
+.ant-drawer {
+  backdrop-filter: none;
+}
+
 .page-layout {
   min-height: 100vh;
   background: var(--xui-surface, transparent);
