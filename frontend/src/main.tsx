@@ -18,8 +18,7 @@ import { initReactI18next, useTranslation } from 'react-i18next';
 import { ThemeProvider, useTheme } from '@/hooks/useTheme';
 import FirewallPage from '@/pages/firewall/FirewallPage';
 import { request, setCSRF } from '@/utils';
-import './styles/material-ui.css';
-import './styles/page-shell.css';
+import './styles/theme.css';
 import './styles/app.css';
 
 void i18n.use(initReactI18next).init({

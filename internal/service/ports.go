@@ -31,6 +31,8 @@ type Port struct {
 	Inode     string    `json:"-"`
 }
 
+var socketStates = map[string]string{"01": "ESTABLISHED", "02": "SYN_SENT", "03": "SYN_RECV", "04": "FIN_WAIT1", "05": "FIN_WAIT2", "06": "TIME_WAIT", "07": "UNCONNECTED", "08": "CLOSE_WAIT", "09": "LAST_ACK", "0A": "LISTEN", "0B": "CLOSING", "0C": "NEW_SYN_RECV"}
+
 // ReadPorts reads every local TCP/UDP socket in the service's network namespace,
 // and maps socket inodes to every owning process, including shared descriptors.
 func ReadPorts(root string) ([]Port, error) {
@@ -61,6 +63,15 @@ func ReadPorts(root string) ([]Port, error) {
 			return nil, err
 		}
 	}
+	if len(ports) == 0 {
+		return ports, nil
+	}
+	wanted := make(map[string]bool, len(ports))
+	for _, port := range ports {
+		if port.Inode != "0" {
+			wanted[port.Inode] = true
+		}
+	}
 	owners := map[string][]Process{}
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -76,9 +87,7 @@ func ReadPorts(root string) ([]Port, error) {
 		if err != nil {
 			continue
 		}
-		name, _ := os.ReadFile(filepath.Join(dir, "comm"))
-		exe, _ := os.Readlink(filepath.Join(dir, "exe"))
-		process := Process{pid, strings.TrimSpace(string(name)), exe}
+		var process *Process
 		seen := map[string]bool{}
 		for _, fd := range fds {
 			target, err := os.Readlink(filepath.Join(dir, "fd", fd.Name()))
@@ -89,8 +98,13 @@ func ReadPorts(root string) ([]Port, error) {
 				continue
 			}
 			inode := strings.TrimSuffix(strings.TrimPrefix(target, "socket:["), "]")
-			if !seen[inode] {
-				owners[inode] = append(owners[inode], process)
+			if wanted[inode] && !seen[inode] {
+				if process == nil {
+					name, _ := os.ReadFile(filepath.Join(dir, "comm"))
+					exe, _ := os.Readlink(filepath.Join(dir, "exe"))
+					process = &Process{pid, strings.TrimSpace(string(name)), exe}
+				}
+				owners[inode] = append(owners[inode], *process)
 				seen[inode] = true
 			}
 		}
@@ -145,7 +159,6 @@ func parseSocket(line, table string) (Port, error) {
 	if len(raw) == 16 {
 		family = "IPv6"
 	}
-	states := map[string]string{"01": "ESTABLISHED", "02": "SYN_SENT", "03": "SYN_RECV", "04": "FIN_WAIT1", "05": "FIN_WAIT2", "06": "TIME_WAIT", "07": "UNCONNECTED", "08": "CLOSE_WAIT", "09": "LAST_ACK", "0A": "LISTEN", "0B": "CLOSING", "0C": "NEW_SYN_RECV"}
 	listening := protocol == "tcp" && fields[3] == "0A" || protocol == "udp" && fields[3] == "07"
-	return Port{fields[1] + "-" + fields[2] + "-" + fields[9], int(port), protocol, ip.String(), family, states[fields[3]], listening, ip.IsLoopback(), []Process{}, fields[9]}, nil
+	return Port{fields[1] + "-" + fields[2] + "-" + fields[9], int(port), protocol, ip.String(), family, socketStates[fields[3]], listening, ip.IsLoopback(), []Process{}, fields[9]}, nil
 }

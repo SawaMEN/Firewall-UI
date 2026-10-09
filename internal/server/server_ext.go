@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -57,7 +58,7 @@ type dashboardResponse struct {
 	LastPortScan    time.Time               `json:"lastPortScan"`
 }
 
-func (s *Server) handleExtendedAPI(w http.ResponseWriter, r *http.Request, sess session) bool {
+func (s *Server) handleExtendedAPI(w http.ResponseWriter, r *http.Request) bool {
 	switch r.URL.Path {
 	case "/api/ports/stream":
 		s.streamPorts(w, r)
@@ -88,8 +89,31 @@ func (s *Server) handleExtendedAPI(w http.ResponseWriter, r *http.Request, sess 
 	default:
 		return false
 	}
-	_ = sess
 	return true
+}
+
+// Fingerprint only the data visible to this stream, not scan timestamps or
+// transient connections excluded from the default active-port view.
+func activePortSnapshot(snapshot service.PortSnapshot) service.PortSnapshot {
+	ports := make([]service.Port, 0, len(snapshot.Ports))
+	for _, port := range snapshot.Ports {
+		if port.Listening && len(port.Processes) > 0 {
+			ports = append(ports, port)
+		}
+	}
+	snapshot.Ports = ports
+	return snapshot
+}
+
+func portStreamState(snapshot service.PortSnapshot, activeOnly bool) (service.PortSnapshot, [32]byte) {
+	if activeOnly {
+		snapshot = activePortSnapshot(snapshot)
+	}
+	data, _ := json.Marshal(struct {
+		Ports      []service.Port
+		Containers []service.ContainerPort
+	}{snapshot.Ports, snapshot.Containers})
+	return snapshot, sha256.Sum256(data)
 }
 
 func (s *Server) streamPorts(w http.ResponseWriter, r *http.Request) {
@@ -121,6 +145,9 @@ func (s *Server) streamPorts(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 		return ok && time.Now().Before(session.expires)
 	}
+	activeOnly := r.URL.Query().Get("active") == "1"
+	var lastState [32]byte
+	var sent bool
 	keepAlive := time.NewTicker(20 * time.Second)
 	defer keepAlive.Stop()
 	for {
@@ -134,7 +161,12 @@ func (s *Server) streamPorts(w http.ResponseWriter, r *http.Request) {
 			if !validSession() {
 				return
 			}
-			raw, _ := json.Marshal(snapshot)
+			current, state := portStreamState(snapshot, activeOnly)
+			if sent && state == lastState {
+				continue
+			}
+			sent, lastState = true, state
+			raw, _ := json.Marshal(current)
 			_, _ = fmt.Fprintf(w, "event: ports\ndata: %s\n\n", raw)
 			flusher.Flush()
 		case <-keepAlive.C:

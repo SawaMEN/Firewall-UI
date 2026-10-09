@@ -1,7 +1,9 @@
 import {
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -31,6 +33,7 @@ import {
 import { useTranslation } from 'react-i18next';
 
 import { HttpUtil } from '@/utils';
+import { usePageVisibility } from '@/hooks/usePageVisibility';
 
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -107,6 +110,8 @@ function MobilePortList({
 
 export function PortsTable() {
   const screens = Grid.useBreakpoint();
+  const visible = usePageVisibility();
+  const loadId = useRef(0);
   const [mobilePage, setMobilePage] = useState(1);
   const { i18n } = useTranslation();
   const ru = i18n.language.startsWith('ru');
@@ -128,13 +133,15 @@ export function PortsTable() {
   const [live, setLive] = useState(true);
 
   const load = useCallback(async () => {
+    const id = ++loadId.current;
     setLoading(true);
     try {
       const [portsResult, firewallResult, advancedResult] = await Promise.all([
-        HttpUtil.get<Snapshot>('/api/ports'),
+        HttpUtil.get<Snapshot>(`/api/ports${diagnostics ? '' : '?active=1'}`),
         HttpUtil.get<FirewallStatus>('/panel/api/server/firewall/status'),
         HttpUtil.get<AdvancedRule[]>('/api/firewall/advanced'),
       ]);
+      if (id !== loadId.current) return;
       if (portsResult.success && portsResult.obj) {
         setSnapshot(portsResult.obj);
         setError('');
@@ -146,21 +153,28 @@ export function PortsTable() {
       if (advancedResult.success && advancedResult.obj)
         setAdvanced(advancedResult.obj);
     } catch {
+      if (id !== loadId.current) return;
       setError(
         ru ? 'Не удалось получить список портов' : 'Failed to read ports',
       );
     } finally {
-      setLoading(false);
+      if (id === loadId.current) setLoading(false);
     }
-  }, [ru]);
+  }, [ru, diagnostics]);
 
   useEffect(() => {
+    if (!visible) return;
     void load();
-  }, [load]);
+    return () => {
+      loadId.current++;
+    };
+  }, [load, visible]);
 
   useEffect(() => {
-    if (!live) return;
-    const source = new EventSource('/api/ports/stream');
+    if (!live || !visible) return;
+    const source = new EventSource(
+      `/api/ports/stream${diagnostics ? '' : '?active=1'}`,
+    );
     const handler = (event: MessageEvent<string>) => {
       try {
         setSnapshot(JSON.parse(event.data) as Snapshot);
@@ -173,7 +187,7 @@ export function PortsTable() {
       // EventSource reconnects itself; manual refresh remains available.
     };
     return () => source.close();
-  }, [live]);
+  }, [live, visible, diagnostics]);
 
   const ruleMap = useMemo(() => {
     const map = new Map<string, FirewallRule>();
@@ -199,7 +213,6 @@ export function PortsTable() {
       const result = await HttpUtil.post<{ rules: AdvancedRule[] }>(
         '/api/firewall/port',
         { port: port.port, protocol: port.protocol, closed },
-        { silentSuccess: true },
       );
       if (result.success && result.obj) {
         setAdvanced(result.obj.rules);
@@ -243,31 +256,42 @@ export function PortsTable() {
     return [...map.values()];
   }, [snapshot.ports, diagnostics]);
 
-  const query = search.trim().toLowerCase();
-  const filtered = grouped.filter((port) => {
-    if (listening && !port.listening) return false;
-    if (protocol !== 'all' && port.protocol !== protocol) return false;
-    const containers = containerMap.get(key(port.port, port.protocol)) || [];
-    const haystack = [
-      port.port,
-      port.address,
-      port.state,
-      port.family,
-      ...port.processes.flatMap((process) => [
-        process.pid,
-        process.name,
-        process.executable || '',
-      ]),
-      ...containers.flatMap((item) => [
-        item.containerName,
-        item.image,
-        item.runtime,
-      ]),
-    ]
-      .join(' ')
-      .toLowerCase();
-    return !query || haystack.includes(query);
-  });
+  const query = useDeferredValue(search.trim().toLowerCase());
+  const searchIndex = useMemo(
+    () =>
+      grouped.map((port) => ({
+        port,
+        text: [
+          port.port,
+          port.address,
+          port.state,
+          port.family,
+          ...port.processes.flatMap((owner) => [
+            owner.pid,
+            owner.name,
+            owner.executable || '',
+          ]),
+          ...(containerMap.get(key(port.port, port.protocol)) || []).flatMap(
+            (item) => [item.containerName, item.image, item.runtime],
+          ),
+        ]
+          .join(' ')
+          .toLowerCase(),
+      })),
+    [grouped, containerMap],
+  );
+  const filtered = useMemo(
+    () =>
+      searchIndex
+        .filter(
+          ({ port, text }) =>
+            (!listening || port.listening) &&
+            (protocol === 'all' || port.protocol === protocol) &&
+            (!query || text.includes(query)),
+        )
+        .map(({ port }) => port),
+    [searchIndex, listening, protocol, query],
+  );
 
   const processGroups = useMemo(
     () => groupPortsByProcess(filtered),

@@ -302,7 +302,7 @@ export default function SettingsPage() {
     setCredentialsBusy(true);
     setCredentialError('');
     try {
-      const result = await HttpUtil.post('/api/security/credentials', credentials, { silentSuccess: true });
+      const result = await HttpUtil.post('/api/security/credentials', credentials);
       if (result.success) {
         setCredentials({ username: '', password: '', currentPassword: '' });
         void message.success(ru ? 'Логин и пароль изменены. Войдите заново.' : 'Credentials changed. Please sign in again.');

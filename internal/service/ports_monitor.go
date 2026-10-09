@@ -18,11 +18,13 @@ type PortMonitor struct {
 	root     string
 	interval time.Duration
 
-	mu          sync.RWMutex
-	snapshot    PortSnapshot
-	fingerprint [32]byte
-	subscribers map[chan PortSnapshot]struct{}
-	startOnce   sync.Once
+	mu                 sync.RWMutex
+	snapshot           PortSnapshot
+	fingerprint        [32]byte
+	subscribers        map[chan PortSnapshot]struct{}
+	startOnce          sync.Once
+	containerScanAfter time.Time
+	cachedContainers   []ContainerPort
 }
 
 func NewPortMonitor(root string, interval time.Duration) *PortMonitor {
@@ -86,7 +88,13 @@ func (m *PortMonitor) refresh(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	containers := ReadContainerPorts(ctx)
+	now := time.Now()
+	if !now.Before(m.containerScanAfter) {
+		m.cachedContainers = ReadContainerPorts(ctx)
+		// Container CLI calls are more expensive than reading socket tables.
+		m.containerScanAfter = now.Add(max(30*time.Second, m.interval))
+	}
+	containers := m.cachedContainers
 	next := PortSnapshot{Ports: ports, Containers: containers, UpdatedAt: time.Now().UTC()}
 	hashPayload, _ := json.Marshal(struct {
 		Ports      []Port

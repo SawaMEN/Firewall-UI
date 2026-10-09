@@ -184,15 +184,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path == "/api/ports" && r.Method == http.MethodGet {
+		var snapshot service.PortSnapshot
+		var err error
 		if s.PortMonitor != nil {
-			reply(w, http.StatusOK, s.PortMonitor.Snapshot(), nil)
-			return
+			snapshot = s.PortMonitor.Snapshot()
+		} else {
+			snapshot.Ports, err = service.ReadPorts("/proc")
+			snapshot.Containers = []service.ContainerPort{}
+			snapshot.UpdatedAt = time.Now().UTC()
 		}
-		ports, err := service.ReadPorts("/proc")
-		reply(w, http.StatusOK, service.PortSnapshot{Ports: ports, UpdatedAt: time.Now().UTC()}, err)
+		if r.URL.Query().Get("active") == "1" {
+			snapshot = activePortSnapshot(snapshot)
+		}
+		reply(w, http.StatusOK, snapshot, err)
 		return
 	}
-	if s.handleExtendedAPI(w, r, sess) {
+	if s.handleExtendedAPI(w, r) {
 		return
 	}
 	if r.URL.Path == "/api/settings" {

@@ -58,11 +58,16 @@ export async function request<T>(
 }
 
 export const HttpUtil = {
-  get: <T,>(path: string) => request<T>(path),
+  get: async <T,>(path: string): Promise<Response<T>> => {
+    try {
+      return await request<T>(path);
+    } catch {
+      return { success: false, msg: 'Не удалось связаться с сервером' };
+    }
+  },
   post: async <T,>(
     path: string,
     data?: Record<string, unknown>,
-    _options?: unknown,
   ): Promise<Response<T>> => {
     try {
       return await request<T>(path, data || {});

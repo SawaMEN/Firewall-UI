@@ -53,9 +53,11 @@ export default function AppSidebar({ page, onPageChange }: Props) {
         value={mode}
         onChange={(value) => setThemeMode(value as ThemeMode)}
         style={{ width: '100%' }}
-        options={['light', 'dark', 'ultra-dark', 'colorful', 'blue-gray', 'cyberpunk'].map(
-          (value) => ({ value, label: value }),
-        )}
+        options={[
+          { value: 'light', label: ru ? 'Светлая' : 'Light' },
+          { value: 'dark', label: ru ? 'Тёмная' : 'Dark' },
+          { value: 'cyberpunk', label: ru ? 'Киберпанк' : 'Cyberpunk' },
+        ]}
       />
       <Select
         aria-label="Language"

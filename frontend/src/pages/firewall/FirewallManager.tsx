@@ -155,7 +155,7 @@ export function FirewallManager() {
   async function mutate(path: string, data: Record<string, unknown>, key: string) {
     setAction(key);
     try {
-      const result = await HttpUtil.post<FirewallStatus>(path, data, { silentSuccess: true });
+      const result = await HttpUtil.post<FirewallStatus>(path, data);
       if (result.success && result.obj) setStatus(result.obj);
       return result.success;
     } finally {

@@ -19,8 +19,6 @@ const (
 	managedIPTablesChain    = "FIREWALL-UI"
 )
 
-var firewallSyncTrigger = make(chan struct{}, 1)
-
 type FirewallManualRuleView struct {
 	Port     int    `json:"port"`
 	Protocol string `json:"protocol"`
@@ -35,13 +33,6 @@ type FirewallManagedStatus struct {
 	Rules       []FirewallRule           `json:"rules"`
 	ManualRules []FirewallManualRuleView `json:"manualRules"`
 	Message     string                   `json:"message,omitempty"`
-}
-
-func TriggerFirewallSync() {
-	select {
-	case firewallSyncTrigger <- struct{}{}:
-	default:
-	}
 }
 
 func normalizeFirewallLabel(label string) string {
@@ -234,12 +225,6 @@ func nftablesSafeForManagedFirewall(ctx context.Context, binary string) (bool, e
 	return true, nil
 }
 
-func (s *FirewallService) GetManagedStatus(ctx context.Context, safetyPort int) (FirewallManagedStatus, error) {
-	firewallMu.Lock()
-	defer firewallMu.Unlock()
-	return s.managedStatusLocked(ctx, safetyPort)
-}
-
 func (s *FirewallService) managedStatusLocked(ctx context.Context, safetyPort int) (FirewallManagedStatus, error) {
 	auto, err := firewallAutoSync()
 	if err != nil {
@@ -312,139 +297,6 @@ func (s *FirewallService) managedStatusLocked(ctx context.Context, safetyPort in
 	}
 	status.Rules = desired
 	return status, nil
-}
-
-func (s *FirewallService) SetManagedEnabled(ctx context.Context, enabled bool, safetyPort int) (FirewallManagedStatus, error) {
-	firewallMu.Lock()
-	defer firewallMu.Unlock()
-	backend, err := detectManagedFirewallBackend(ctx)
-	if err != nil {
-		return FirewallManagedStatus{}, err
-	}
-	if enabled {
-		if err := s.syncManagedLocked(ctx, backend, safetyPort); err != nil {
-			return FirewallManagedStatus{}, err
-		}
-		if backend.name == "ufw" || backend.name == "firewalld" {
-			if err := setFirewallBackendEnabled(ctx, backend, true); err != nil {
-				return FirewallManagedStatus{}, err
-			}
-			if err := s.syncManagedLocked(ctx, backend, safetyPort); err != nil {
-				return FirewallManagedStatus{}, err
-			}
-		}
-	} else {
-		if err := disableManagedBackend(ctx, backend); err != nil {
-			return FirewallManagedStatus{}, err
-		}
-	}
-	return s.managedStatusLocked(ctx, safetyPort)
-}
-
-func (s *FirewallService) SetManagedAutoSyncPreference(ctx context.Context, enabled bool, safetyPort int) (FirewallManagedStatus, error) {
-	firewallMu.Lock()
-	defer firewallMu.Unlock()
-	settings := &SettingService{}
-	if err := settings.setBool(firewallAutoSyncKey, enabled); err != nil {
-		return FirewallManagedStatus{}, err
-	}
-	if enabled {
-		backend, err := detectManagedFirewallBackend(ctx)
-		if err != nil {
-			return FirewallManagedStatus{}, err
-		}
-		on, _ := backend.enabled(ctx)
-		if on {
-			if err := s.syncManagedLocked(ctx, backend, safetyPort); err != nil {
-				return FirewallManagedStatus{}, err
-			}
-		}
-	}
-	return s.managedStatusLocked(ctx, safetyPort)
-}
-
-func (s *FirewallService) SyncManaged(ctx context.Context, safetyPort int) (FirewallManagedStatus, error) {
-	firewallMu.Lock()
-	defer firewallMu.Unlock()
-	backend, err := detectManagedFirewallBackend(ctx)
-	if err != nil {
-		return FirewallManagedStatus{}, err
-	}
-	if err := s.syncManagedLocked(ctx, backend, safetyPort); err != nil {
-		return FirewallManagedStatus{}, err
-	}
-	return s.managedStatusLocked(ctx, safetyPort)
-}
-
-func (s *FirewallService) AddManagedManualRule(ctx context.Context, port int, protocol, label string, safetyPort int) (FirewallManagedStatus, error) {
-	return s.changeManagedManualRule(ctx, port, protocol, label, safetyPort, true)
-}
-
-func (s *FirewallService) DeleteManagedManualRule(ctx context.Context, port int, protocol string, safetyPort int) (FirewallManagedStatus, error) {
-	return s.changeManagedManualRule(ctx, port, protocol, "", safetyPort, false)
-}
-
-func (s *FirewallService) changeManagedManualRule(ctx context.Context, port int, protocol, label string, safetyPort int, add bool) (FirewallManagedStatus, error) {
-	firewallMu.Lock()
-	defer firewallMu.Unlock()
-	if port < 1 || port > 65535 {
-		return FirewallManagedStatus{}, fmt.Errorf("invalid port %d", port)
-	}
-	protocols, err := normalizeFirewallProtocols(protocol)
-	if err != nil {
-		return FirewallManagedStatus{}, err
-	}
-	manual, err := loadManualFirewallRules()
-	if err != nil {
-		return FirewallManagedStatus{}, err
-	}
-	labels, err := loadFirewallManualLabels()
-	if err != nil {
-		return FirewallManagedStatus{}, err
-	}
-	set := make(map[string]FirewallManualRule, len(manual)+2)
-	for _, rule := range manual {
-		set[firewallRuleKey(rule.Port, rule.Protocol)] = rule
-	}
-	label = normalizeFirewallLabel(label)
-	for _, proto := range protocols {
-		key := firewallRuleKey(port, proto)
-		if add {
-			set[key] = FirewallManualRule{Port: port, Protocol: proto}
-			if label != "" {
-				labels[key] = label
-			} else {
-				delete(labels, key)
-			}
-		} else {
-			delete(set, key)
-			delete(labels, key)
-		}
-	}
-	manual = manual[:0]
-	for _, rule := range set {
-		manual = append(manual, rule)
-	}
-	sort.Slice(manual, func(i, j int) bool {
-		return manual[i].Port < manual[j].Port || (manual[i].Port == manual[j].Port && manual[i].Protocol < manual[j].Protocol)
-	})
-	if err := saveFirewallJSON(firewallManualRulesKey, manual); err != nil {
-		return FirewallManagedStatus{}, err
-	}
-	if err := saveFirewallManualLabels(labels); err != nil {
-		return FirewallManagedStatus{}, err
-	}
-	backend, err := detectManagedFirewallBackend(ctx)
-	if err != nil {
-		return FirewallManagedStatus{}, err
-	}
-	on, _ := backend.enabled(ctx)
-	if on {
-		if err := s.syncManagedLocked(ctx, backend, safetyPort); err != nil {
-			return FirewallManagedStatus{}, err
-		}
-	}
-	return s.managedStatusLocked(ctx, safetyPort)
 }
 
 func (s *FirewallService) syncManagedLocked(ctx context.Context, backend firewallBackend, safetyPort int) error {

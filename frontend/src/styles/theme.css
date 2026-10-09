@@ -1,0 +1,82 @@
+/* Three static palettes; no remote fonts, blur layers or continuous effects. */
+:root {
+  --xui-surface: #10141c;
+  --xui-surface-container: #181e29;
+  --xui-surface-container-low: #151b25;
+  --xui-outline-variant: #303c4e;
+}
+:root[data-theme='light'] {
+  --xui-surface: #f5f6fa;
+  --xui-surface-container: #ffffff;
+  --xui-surface-container-low: #f8faff;
+  --xui-outline-variant: #dce2ec;
+}
+:root[data-theme='cyberpunk'] {
+  --xui-surface: #090b12;
+  --xui-surface-container: #101522;
+  --xui-surface-container-low: #0c111d;
+  --xui-outline-variant: #284358;
+}
+html,
+body,
+#root {
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+}
+html {
+  scrollbar-gutter: stable;
+}
+* {
+  box-sizing: border-box;
+}
+.ant-card {
+  background: var(--xui-surface-container);
+}
+.ant-card-head {
+  border-bottom-color: var(--xui-outline-variant);
+}
+.ant-btn {
+  font-weight: 500;
+  box-shadow: none;
+}
+.ant-table-wrapper {
+  border: 1px solid var(--xui-outline-variant);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.ant-table-thead > tr > th {
+  font-weight: 600;
+}
+.ant-table-tbody > tr > td {
+  vertical-align: middle;
+}
+.ant-tag {
+  border-radius: 6px;
+}
+.ant-modal .ant-modal-content,
+.ant-drawer .ant-drawer-content {
+  background: var(--xui-surface-container);
+}
+.ant-dropdown-menu,
+.ant-select-dropdown,
+.ant-popover-inner {
+  border: 1px solid var(--xui-outline-variant);
+}
+.ant-dropdown .ant-dropdown-menu {
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+:root[data-theme='cyberpunk'] .page-header-icon {
+  color: #37d8e9;
+  border: 1px solid #284358;
+  background: #12212c;
+}
+:root[data-theme='cyberpunk'] .panel-card {
+  border-color: #284358;
+}
+:root[data-theme='cyberpunk'] .brand-text {
+  color: #37d8e9;
+}

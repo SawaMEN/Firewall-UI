@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from 'react';
-import { ConfigProvider, Layout, Space, Spin, Typography } from 'antd';
+import { Layout, Space, Spin, Typography } from 'antd';
 import {
   DashboardOutlined,
   DatabaseOutlined,
@@ -9,17 +9,23 @@ import {
 import { useTranslation } from 'react-i18next';
 
 import AppSidebar, { type PageKey } from '@/layouts/AppSidebar';
-import { useTheme } from '@/hooks/useTheme';
 const DashboardPage = lazy(() => import('@/pages/dashboard/DashboardPage'));
 const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage'));
-const FirewallManager = lazy(() => import('./FirewallManager').then(module => ({ default: module.FirewallManager })));
-const PortsTable = lazy(() => import('./PortsTable').then(module => ({ default: module.PortsTable })));
+const FirewallManager = lazy(() =>
+  import('./FirewallManager').then((module) => ({
+    default: module.FirewallManager,
+  })),
+);
+const PortsTable = lazy(() =>
+  import('./PortsTable').then((module) => ({ default: module.PortsTable })),
+);
 
 export default function FirewallPage() {
   const { i18n } = useTranslation();
-  const { antdThemeConfig } = useTheme();
   const [page, setPage] = useState<PageKey>('overview');
-  const ru = (i18n.resolvedLanguage || i18n.language || '').toLowerCase().startsWith('ru');
+  const ru = (i18n.resolvedLanguage || i18n.language || '')
+    .toLowerCase()
+    .startsWith('ru');
 
   const meta = useMemo(
     () => ({
@@ -58,33 +64,37 @@ export default function FirewallPage() {
   const selected = meta[page];
 
   return (
-    <ConfigProvider theme={antdThemeConfig}>
-      <Layout className="page-layout">
-        <AppSidebar page={page} onPageChange={setPage} />
-        <Layout className="content-shell">
-          <Layout.Content id="content-layout" className="content-area">
-            <div className="page-content">
-              <div className="page-header">
-                <div className="page-header-icon">{selected.icon}</div>
-                <div>
-                  <Typography.Title level={2} style={{ margin: 0 }}>
-                    {selected.title}
-                  </Typography.Title>
-                  <Typography.Text type="secondary">{selected.subtitle}</Typography.Text>
-                </div>
+    <Layout className="page-layout">
+      <AppSidebar page={page} onPageChange={setPage} />
+      <Layout className="content-shell">
+        <Layout.Content id="content-layout" className="content-area">
+          <div className="page-content">
+            <div className="page-header">
+              <div className="page-header-icon">{selected.icon}</div>
+              <div>
+                <Typography.Title level={2} style={{ margin: 0 }}>
+                  {selected.title}
+                </Typography.Title>
+                <Typography.Text type="secondary">
+                  {selected.subtitle}
+                </Typography.Text>
               </div>
-              <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
-                <Suspense fallback={<Spin />} >
+            </div>
+            <Space
+              orientation="vertical"
+              size="middle"
+              style={{ width: '100%' }}
+            >
+              <Suspense fallback={<Spin />}>
                 {page === 'overview' ? <DashboardPage /> : null}
                 {page === 'firewall' ? <FirewallManager /> : null}
                 {page === 'ports' ? <PortsTable /> : null}
                 {page === 'settings' ? <SettingsPage /> : null}
-                </Suspense>
-              </Space>
-            </div>
-          </Layout.Content>
-        </Layout>
+              </Suspense>
+            </Space>
+          </div>
+        </Layout.Content>
       </Layout>
-    </ConfigProvider>
+    </Layout>
   );
 }

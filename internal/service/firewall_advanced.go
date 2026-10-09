@@ -95,39 +95,6 @@ func (s *FirewallService) DeleteAdvancedRuleSafe(ctx context.Context, id string,
 	return next, nil
 }
 
-func (s *FirewallService) ReplaceAdvancedRulesSafe(ctx context.Context, rules []FirewallAdvancedRule, safetyPort int) error {
-	firewallMu.Lock()
-	defer firewallMu.Unlock()
-	previous, err := loadAdvancedFirewallRules()
-	if err != nil {
-		return err
-	}
-	for i := range rules {
-		if rules[i].ID == "" {
-			rules[i].ID = newFirewallRuleID()
-		}
-		if err := validateAdvancedRule(&rules[i]); err != nil {
-			return err
-		}
-	}
-	sortAdvancedRules(rules)
-	if err := saveFirewallJSON(firewallAdvancedRulesKey, rules); err != nil {
-		return err
-	}
-	backend, err := detectManagedFirewallBackend(ctx)
-	if err != nil {
-		return err
-	}
-	on, err := backend.enabled(ctx)
-	if err != nil || !on {
-		return err
-	}
-	if backend.name == "nftables" || backend.name == "iptables" {
-		return s.syncManagedSafeLocked(ctx, backend, safetyPort)
-	}
-	return reconcileLegacyAdvancedRules(ctx, backend, previous, rules)
-}
-
 func loadAdvancedFirewallRules() ([]FirewallAdvancedRule, error) {
 	var rules []FirewallAdvancedRule
 	raw, err := firewallSetting(firewallAdvancedRulesKey, "[]")
@@ -436,19 +403,4 @@ func firewalldRichRule(rule FirewallAdvancedRule) string {
 		parts = append(parts, "accept")
 	}
 	return strings.Join(parts, " ")
-}
-
-func reconcileLegacyAdvancedRules(ctx context.Context, backend firewallBackend, previous, rules []FirewallAdvancedRule) error {
-	// Existing advanced rules are tagged in UFW and represented as exact rich rules
-	// in firewalld. Restore is implemented as delete-known + add desired; unknown
-	// administrator rules remain untouched.
-	for _, rule := range previous {
-		_ = applyLegacyAdvancedRule(ctx, backend, rule, false)
-	}
-	for _, rule := range rules {
-		if err := applyLegacyAdvancedRule(ctx, backend, rule, true); err != nil {
-			return err
-		}
-	}
-	return nil
 }

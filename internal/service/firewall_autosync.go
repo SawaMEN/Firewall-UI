@@ -63,40 +63,9 @@ func firewallControlInitialized() bool {
 	return err == nil && enabled
 }
 
-// SetAutoSyncPreference changes automatic inbound reconciliation. Turning it
-// off deliberately freezes the rules currently present instead of immediately
-// removing every Firewall-UI-owned inbound rule; the operator may still use Sync now
-// or manual rules while automatic reconciliation is disabled.
-func (s *FirewallService) SetAutoSyncPreference(ctx context.Context, enabled bool, safetyPort int) (FirewallStatus, error) {
-	firewallMu.Lock()
-	defer firewallMu.Unlock()
-
-	settings := &SettingService{}
-	if !enabled {
-		if err := settings.setBool(firewallAutoSyncKey, false); err != nil {
-			return FirewallStatus{}, err
-		}
-		return s.status(ctx, safetyPort)
-	}
-
-	backend, err := detectFirewallBackend(ctx)
-	if err != nil {
-		return FirewallStatus{}, err
-	}
-	if err := settings.setBool(firewallAutoSyncKey, true); err != nil {
-		return FirewallStatus{}, err
-	}
-	if err := s.sync(ctx, backend, safetyPort); err != nil {
-		return FirewallStatus{}, err
-	}
-	return s.status(ctx, safetyPort)
-}
-
 // StartAutoSync keeps firewall rules aligned with enabled local inbounds even
-// when changes arrive through imports, API calls, or node synchronization.
-// Inbound API mutations trigger an immediate coalesced reconcile; a periodic
-// five-second pass remains as drift repair for imports and future mutation
-// paths and keeps the managed iptables jump behind newly added admin rules.
+// when sockets or rules change outside the panel. API changes reconcile immediately;
+// this periodic pass repairs drift and preserves administrator rule priority.
 func (s *FirewallService) StartAutoSync() {
 	firewallAutoSyncOnce.Do(func() {
 		go func() {
@@ -173,10 +142,7 @@ func (s *FirewallService) StartAutoSync() {
 			ticker := time.NewTicker(5 * time.Second)
 			defer ticker.Stop()
 			for {
-				select {
-				case <-ticker.C:
-				case <-firewallSyncTrigger:
-				}
+				<-ticker.C
 				syncNow()
 			}
 		}()

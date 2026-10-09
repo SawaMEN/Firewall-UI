@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.5
+
+- Retain only light, dark and cyberpunk themes; replace inherited page/sidebar styles and continuous visual effects with three static palettes using local system fonts.
+- Remove unused theme APIs, obsolete firewall mutation APIs and their unused trigger/bulk replacement paths; remove the retired 2FA compatibility test.
+- Pause overview polling and port streams in hidden tabs; avoid overlapping overview requests and paginate exposed-port lists.
+- Handle failed GET requests without unhandled promise rejections or permanently pending page loaders.
+- Memoize port search indexes and filtering; stream only changes to owned active sockets in the default view.
+- Avoid reading process metadata for unrelated sockets and cache Docker/Podman inspection for 30 seconds.
+
 ## 1.2.4
 
 - Show a process-wide min-max port extent with an ASCII hyphen, exact port count and explicit gap indication; retain precise per-protocol ranges in expanded details.

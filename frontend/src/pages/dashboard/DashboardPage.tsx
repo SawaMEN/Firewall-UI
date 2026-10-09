@@ -1,7 +1,18 @@
 import { useEffect, useState } from 'react';
-import { Alert, Card, Col, Row, Space, Statistic, Table, Tag, Typography } from 'antd';
+import {
+  Alert,
+  Card,
+  Col,
+  Row,
+  Space,
+  Statistic,
+  Table,
+  Tag,
+  Typography,
+} from 'antd';
 import { useTranslation } from 'react-i18next';
 import { HttpUtil } from '@/utils';
+import { usePageVisibility } from '@/hooks/usePageVisibility';
 
 type Process = { pid: number; name: string; executable?: string };
 type Port = {
@@ -43,35 +54,57 @@ type Dashboard = {
 
 export default function DashboardPage() {
   const { i18n } = useTranslation();
+  const visible = usePageVisibility();
   const ru = i18n.language.startsWith('ru');
   const [data, setData] = useState<Dashboard | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
+    if (!visible) return;
     let cancelled = false;
+    let timer: number;
     const load = async () => {
-      const result = await HttpUtil.get<Dashboard>('/api/dashboard');
-      if (cancelled) return;
-      if (result.success && result.obj) {
-        setData(result.obj);
-        setError('');
-      } else {
-        setError(result.msg);
+      try {
+        const result = await HttpUtil.get<Dashboard>('/api/dashboard');
+        if (cancelled) return;
+        if (result.success && result.obj) {
+          const next = result.obj;
+          setData((previous) =>
+            previous &&
+            JSON.stringify({ ...previous, lastPortScan: '' }) ===
+              JSON.stringify({ ...next, lastPortScan: '' })
+              ? previous
+              : next,
+          );
+          setError('');
+        } else setError(result.msg);
+      } catch {
+        if (!cancelled)
+          setError(
+            ru
+              ? 'Не удалось получить состояние сервера'
+              : 'Failed to read server status',
+          );
+      } finally {
+        if (!cancelled) timer = window.setTimeout(() => void load(), 10000);
       }
     };
     void load();
-    const timer = window.setInterval(() => void load(), 5000);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
     };
-  }, []);
+  }, [visible, ru]);
 
-  if (error) return <Alert type="error" showIcon title={error} />;
-  if (!data) return <Card className="panel-card">{ru ? 'Загрузка…' : 'Loading…'}</Card>;
+  if (error && !data) return <Alert type="error" showIcon title={error} />;
+  if (!data)
+    return <Card className="panel-card">{ru ? 'Загрузка…' : 'Loading…'}</Card>;
 
   const stats = [
-    [ru ? 'Файрволл' : 'Firewall', data.firewallEnabled ? (ru ? 'Включён' : 'On') : (ru ? 'Выключен' : 'Off')],
+    [
+      ru ? 'Файрволл' : 'Firewall',
+      data.firewallEnabled ? (ru ? 'Включён' : 'On') : ru ? 'Выключен' : 'Off',
+    ],
     [ru ? 'Слушающие порты' : 'Listening ports', data.listeningPorts],
     [ru ? 'Публичные порты' : 'Public ports', data.publicPorts],
     [ru ? 'Правила' : 'Rules', data.managedRules + data.advancedRules],
@@ -80,6 +113,7 @@ export default function DashboardPage() {
 
   return (
     <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
+      {error ? <Alert type="warning" showIcon title={error} /> : null}
       <Row gutter={[14, 14]}>
         {stats.map(([title, value]) => (
           <Col xs={12} md={8} xl={4} key={title}>
@@ -97,7 +131,11 @@ export default function DashboardPage() {
 
       <Card
         className="panel-card"
-        title={ru ? 'Потенциально открытые без явного правила' : 'Potentially exposed without an explicit rule'}
+        title={
+          ru
+            ? 'Потенциально открытые без явного правила'
+            : 'Potentially exposed without an explicit rule'
+        }
       >
         {data.riskyPorts.length === 0 ? (
           <Typography.Text type="secondary">
@@ -107,7 +145,7 @@ export default function DashboardPage() {
           <Table<Port>
             size="small"
             scroll={{ x: 600 }}
-            pagination={false}
+            pagination={{ defaultPageSize: 10, hideOnSinglePage: true }}
             rowKey={(p) => p.socketId}
             dataSource={data.riskyPorts}
             columns={[
@@ -121,23 +159,39 @@ export default function DashboardPage() {
               { title: ru ? 'Адрес' : 'Address', dataIndex: 'address' },
               {
                 title: ru ? 'Процесс' : 'Process',
-                render: (_, p) => p.processes.map((x) => x.name || `PID ${x.pid}`).join(', ') || '—',
+                render: (_, p) =>
+                  p.processes.map((x) => x.name || `PID ${x.pid}`).join(', ') ||
+                  '—',
               },
             ]}
           />
         )}
       </Card>
 
-      <Card className="panel-card" title={ru ? 'Опубликованные порты контейнеров' : 'Published container ports'}>
+      <Card
+        className="panel-card"
+        title={
+          ru ? 'Опубликованные порты контейнеров' : 'Published container ports'
+        }
+      >
         <Table<ContainerPort>
           size="small"
           scroll={{ x: 720 }}
-          rowKey={(p) => `${p.runtime}-${p.containerId}-${p.hostPort}-${p.protocol}`}
+          rowKey={(p) =>
+            `${p.runtime}-${p.containerId}-${p.hostPort}-${p.protocol}`
+          }
           dataSource={data.containerPorts}
           pagination={{ pageSize: 10, hideOnSinglePage: true }}
-          locale={{ emptyText: ru ? 'Docker/Podman порты не найдены' : 'No Docker/Podman ports found' }}
+          locale={{
+            emptyText: ru
+              ? 'Docker/Podman порты не найдены'
+              : 'No Docker/Podman ports found',
+          }}
           columns={[
-            { title: ru ? 'Контейнер' : 'Container', dataIndex: 'containerName' },
+            {
+              title: ru ? 'Контейнер' : 'Container',
+              dataIndex: 'containerName',
+            },
             { title: 'Image', dataIndex: 'image', ellipsis: true },
             {
               title: ru ? 'Публикация' : 'Published',
@@ -145,9 +199,12 @@ export default function DashboardPage() {
                 <Space wrap>
                   <Tag>{p.runtime}</Tag>
                   <Typography.Text code>
-                    {p.hostIp || '0.0.0.0'}:{p.hostPort} → {p.containerPort}/{p.protocol}
+                    {p.hostIp || '0.0.0.0'}:{p.hostPort} → {p.containerPort}/
+                    {p.protocol}
                   </Typography.Text>
-                  {p.public ? <Tag color="warning">{ru ? 'Публичный' : 'Public'}</Tag> : null}
+                  {p.public ? (
+                    <Tag color="warning">{ru ? 'Публичный' : 'Public'}</Tag>
+                  ) : null}
                 </Space>
               ),
             },
