@@ -79,7 +79,7 @@ export default function DashboardPage() {
   ] as const;
 
   return (
-    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+    <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
       <Row gutter={[14, 14]}>
         {stats.map(([title, value]) => (
           <Col xs={12} md={8} xl={4} key={title}>
@@ -106,6 +106,7 @@ export default function DashboardPage() {
         ) : (
           <Table<Port>
             size="small"
+            scroll={{ x: 600 }}
             pagination={false}
             rowKey={(p) => p.socketId}
             dataSource={data.riskyPorts}
@@ -130,6 +131,7 @@ export default function DashboardPage() {
       <Card className="panel-card" title={ru ? 'Опубликованные порты контейнеров' : 'Published container ports'}>
         <Table<ContainerPort>
           size="small"
+          scroll={{ x: 720 }}
           rowKey={(p) => `${p.runtime}-${p.containerId}-${p.hostPort}-${p.protocol}`}
           dataSource={data.containerPorts}
           pagination={{ pageSize: 10, hideOnSinglePage: true }}

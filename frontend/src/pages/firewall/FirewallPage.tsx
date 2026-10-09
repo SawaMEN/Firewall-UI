@@ -73,7 +73,7 @@ export default function FirewallPage() {
                   <Typography.Text type="secondary">{selected.subtitle}</Typography.Text>
                 </div>
               </div>
-              <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+              <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
                 <Suspense fallback={<Spin />} >
                 {page === 'overview' ? <DashboardPage /> : null}
                 {page === 'firewall' ? <FirewallManager /> : null}

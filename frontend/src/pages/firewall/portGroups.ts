@@ -12,6 +12,24 @@ export type Port = {
 };
 export type ProcessGroup = { id: string; processes: Process[]; ports: Port[] };
 
+// A process summary is an extent, not a claim that every intermediate port is
+// open. Keep the exact (possibly sparse) list in the expanded details.
+export function summarizePorts(values: number[]) {
+  const ports = [...new Set(values)].sort((a, b) => a - b);
+  const first = ports[0],
+    last = ports[ports.length - 1];
+  return {
+    range:
+      ports.length === 0
+        ? '—'
+        : first === last
+          ? String(first)
+          : `${first}-${last}`,
+    count: ports.length,
+    sparse: ports.length > 1 && last - first + 1 !== ports.length,
+  };
+}
+
 // Only consecutive, actually present ports become a range; gaps stay visible.
 export function formatPortRanges(values: number[]): string {
   const ports = [...new Set(values)].sort((a, b) => a - b);
@@ -28,13 +46,25 @@ export function formatPortRanges(values: number[]): string {
 export function groupPortsByProcess(ports: Port[]): ProcessGroup[] {
   const groups = new Map<string, ProcessGroup>();
   for (const port of ports) {
-    const owners = [...new Map(port.processes.map((owner) => [owner.pid, owner])).values()].sort((a, b) => a.pid - b.pid);
+    const owners = [
+      ...new Map(port.processes.map((owner) => [owner.pid, owner])).values(),
+    ].sort((a, b) => a.pid - b.pid);
     // Shared sockets have their own owner-set group. Unknown owners must never
     // be combined into an imaginary process, even in diagnostic mode.
-    const id = owners.length ? `process:${owners.map((owner) => owner.pid).join(',')}` : `socket:${port.family}:${port.protocol}:${port.socketId}`;
+    const id = owners.length
+      ? `process:${owners.map((owner) => owner.pid).join(',')}`
+      : `socket:${port.family}:${port.protocol}:${port.socketId}`;
     const group = groups.get(id);
     if (group) group.ports.push(port);
     else groups.set(id, { id, processes: owners, ports: [port] });
   }
-  return [...groups.values()].map((group) => ({ ...group, ports: group.ports.sort((a, b) => a.port - b.port || a.protocol.localeCompare(b.protocol) || a.address.localeCompare(b.address)) }));
+  return [...groups.values()].map((group) => ({
+    ...group,
+    ports: group.ports.sort(
+      (a, b) =>
+        a.port - b.port ||
+        a.protocol.localeCompare(b.protocol) ||
+        a.address.localeCompare(b.address),
+    ),
+  }));
 }

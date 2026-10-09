@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.4
+
+- Show a process-wide min-max port extent with an ASCII hyphen, exact port count and explicit gap indication; retain precise per-protocol ranges in expanded details.
+- Rework active ports into a responsive toolbar and readable expandable process table with aligned access controls.
+- Fix page containment and compact button sizing to avoid viewport overflow and clipped table actions.
+
 ## 1.2.3
 
 - Use English y/n responses in terminal confirmation prompts while retaining Russian descriptions.

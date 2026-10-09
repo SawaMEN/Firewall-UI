@@ -1067,3 +1067,20 @@ body.theme-cyberpunk .sider-brand .brand-text::after {
     transform: none;
   }
 }
+
+/* The brand uses the full header height in every theme, including low-power mode. */
+body .ant-sidebar .sider-brand { padding-inline: 16px; }
+body .ant-sidebar .sider-brand .sider-brand-content {
+  position: static;
+  inset: auto;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  transform: none;
+}
+body .ant-sidebar .sider-brand .brand-text { font-size: 22px; transform: none; }
+body .ant-sidebar .ant-layout-sider-collapsed .sider-brand { padding-inline: 8px; }
+body .ant-sidebar .ant-layout-sider-collapsed .sider-brand .brand-text-full { display: none; }
+body .ant-sidebar .ant-layout-sider-collapsed .sider-brand .brand-text-compact { display: inline; }
