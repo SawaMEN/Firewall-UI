@@ -30,13 +30,16 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Validate shell scripts
-        run: bash -n install.sh deploy/firewall-ui && bash tests/installer.sh && bash tests/manager.sh && bash tests/access.sh && bash tests/uninstall.sh
+        run: bash -n install.sh deploy/firewall-ui && bash tests/installer.sh && bash tests/manager.sh && bash tests/access.sh && bash tests/uninstall.sh && bash tests/install-menu.sh
 
       - run: npm ci --ignore-scripts
         working-directory: frontend
 
       - name: Audit production frontend dependencies
         run: npm audit --omit=dev --audit-level=high
+        working-directory: frontend
+
+      - run: npm test
         working-directory: frontend
 
       - run: npm run build

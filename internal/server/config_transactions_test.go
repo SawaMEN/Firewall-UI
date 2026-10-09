@@ -12,10 +12,9 @@ import (
 	"testing/fstest"
 
 	"github.com/SawaMEN/Firewall-UI/internal/appconfig"
-	"github.com/SawaMEN/Firewall-UI/internal/security"
 )
 
-func TestConcurrentSettingsAndTOTPKeepBothChanges(t *testing.T) {
+func TestConcurrentSettingsAndCredentialsKeepBothChanges(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		s := New("admin", "test-password", 8088, fstest.MapFS{})
 		s.ConfigPath = filepath.Join(t.TempDir(), "config.json")
@@ -36,7 +35,7 @@ func TestConcurrentSettingsAndTOTPKeepBothChanges(t *testing.T) {
 			defer wg.Done()
 			<-start
 			w := httptest.NewRecorder()
-			s.setupTOTP(w, httptest.NewRequest("POST", "/api/security/totp/setup", nil))
+			s.credentials(w, httptest.NewRequest("POST", "/api/security/credentials", bytes.NewBufferString(`{"username":"user","password":"1","currentPassword":"test-password"}`)))
 			results <- w
 		}()
 		close(start)
@@ -54,8 +53,8 @@ func TestConcurrentSettingsAndTOTPKeepBothChanges(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if saved.ListenHost != "0.0.0.0" || saved.UpdateChannel != "dev" || saved.TOTPSecret == "" {
-			t.Fatal("concurrent operations lost settings or the TOTP secret")
+		if saved.ListenHost != "0.0.0.0" || saved.UpdateChannel != "dev" || s.Username != "user" || s.Password != "1" {
+			t.Fatal("concurrent operations lost settings or credentials")
 		}
 		if !reflect.DeepEqual(saved, s.RuntimeConfig) {
 			t.Fatal("disk and runtime configurations differ")
@@ -63,18 +62,17 @@ func TestConcurrentSettingsAndTOTPKeepBothChanges(t *testing.T) {
 	}
 }
 
-func TestRuntimeRollbackPreservesTwoFactorSettings(t *testing.T) {
+func TestRuntimeRollbackPreservesCredentials(t *testing.T) {
 	s := New("admin", "test-password", 8088, fstest.MapFS{})
 	s.ConfigPath = filepath.Join(t.TempDir(), "config.json")
 	old := s.RuntimeConfig
 	s.RuntimeConfig.ExternalPort = 443
 	expected := runtimeBackupFromConfig(s.RuntimeConfig)
-	secret, err := security.GenerateTOTPSecret()
-	if err != nil {
-		t.Fatal(err)
+	w := httptest.NewRecorder()
+	s.credentials(w, httptest.NewRequest("POST", "/api/security/credentials", bytes.NewBufferString(`{"username":"user","password":"1","currentPassword":"test-password"}`)))
+	if w.Code != 200 {
+		t.Fatal(w.Body.String())
 	}
-	s.RuntimeConfig.TOTPEnabled = true
-	s.RuntimeConfig.TOTPSecret = secret
 	if err := s.restoreRuntimeAfterRollback(old, expected); err != nil {
 		t.Fatal(err)
 	}
@@ -82,8 +80,8 @@ func TestRuntimeRollbackPreservesTwoFactorSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if saved.ExternalPort != old.ExternalPort || !saved.TOTPEnabled || saved.TOTPSecret != secret {
-		t.Fatal("rollback failed to restore runtime settings or overwrote 2FA")
+	if saved.ExternalPort != old.ExternalPort || s.Username != "user" || s.Password != "1" {
+		t.Fatal("rollback failed to restore runtime settings or overwrote credentials")
 	}
 	if !reflect.DeepEqual(saved, s.RuntimeConfig) {
 		t.Fatal("runtime and disk differ after rollback")

@@ -48,8 +48,8 @@ export default function FirewallPage() {
         icon: <SettingOutlined />,
         title: ru ? 'Настройки' : 'Settings',
         subtitle: ru
-          ? 'Доступ к панели, 2FA, CIDR allowlist, backup, история, журнал и обновления.'
-          : 'Panel access, 2FA, CIDR allowlist, backups, history, audit log and updates.',
+          ? 'Доступ к панели, CIDR allowlist, backup, история, журнал и обновления.'
+          : 'Panel access, CIDR allowlist, backups, history, audit log and updates.',
       },
     }),
     [ru],

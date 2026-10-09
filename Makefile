@@ -11,4 +11,6 @@ test:
 	bash tests/manager.sh
 	bash tests/access.sh
 	bash tests/uninstall.sh
+	bash tests/install-menu.sh
+	cd frontend && npm test
 	cd frontend && npm run typecheck

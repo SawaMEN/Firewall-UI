@@ -164,10 +164,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.URL.Path == "/api/session" && r.Method == http.MethodGet {
-		s.mu.Lock()
-		totpEnabled := s.RuntimeConfig.TOTPEnabled
-		s.mu.Unlock()
-		reply(w, http.StatusOK, map[string]any{"csrf": sess.csrf, "username": s.username(), "totpEnabled": totpEnabled}, nil)
+		reply(w, http.StatusOK, map[string]any{"csrf": sess.csrf, "username": s.username()}, nil)
 		return
 	}
 	if r.URL.Path == "/api/logout" && r.Method == http.MethodPost {
@@ -252,7 +249,6 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
-		Code     string `json:"code,omitempty"`
 	}
 	if err := decode(w, r, &req); err != nil {
 		reply(w, http.StatusBadRequest, nil, err)
@@ -264,14 +260,6 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusUnauthorized, nil, fmt.Errorf("invalid credentials"))
 		return
 	}
-	s.mu.Lock()
-	totpEnabled, totpSecret := s.RuntimeConfig.TOTPEnabled, s.RuntimeConfig.TOTPSecret
-	s.mu.Unlock()
-	if totpEnabled && !security.ValidateTOTP(totpSecret, req.Code, now) {
-		reply(w, http.StatusUnauthorized, nil, fmt.Errorf("invalid two-factor code"))
-		return
-	}
-
 	id, csrf := token(), token()
 	s.mu.Lock()
 	delete(s.attempts, ip)
@@ -306,7 +294,6 @@ type runtimeSettingsResponse struct {
 	TLSEnabled       bool     `json:"tlsEnabled"`
 	UpdateChannel    string   `json:"updateChannel"`
 	AllowedCIDRs     []string `json:"allowedCidrs"`
-	TOTPEnabled      bool     `json:"totpEnabled"`
 	RollbackSeconds  int      `json:"rollbackSeconds"`
 	PortScanInterval int      `json:"portScanInterval"`
 	Restarting       bool     `json:"restarting,omitempty"`
@@ -324,7 +311,6 @@ func runtimeSettingsView(cfg appconfig.Config, restarting bool) runtimeSettingsR
 		TLSEnabled:       cfg.TLSCert != "" && cfg.TLSKey != "",
 		UpdateChannel:    cfg.UpdateChannel,
 		AllowedCIDRs:     append([]string(nil), cfg.AllowedCIDRs...),
-		TOTPEnabled:      cfg.TOTPEnabled,
 		RollbackSeconds:  cfg.RollbackSeconds,
 		PortScanInterval: cfg.PortScanInterval,
 		Restarting:       restarting,

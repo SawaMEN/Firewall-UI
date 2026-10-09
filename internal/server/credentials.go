@@ -8,9 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
-
-	"github.com/SawaMEN/Firewall-UI/internal/security"
 )
 
 func (s *Server) username() string { s.mu.Lock(); defer s.mu.Unlock(); return s.Username }
@@ -24,7 +21,6 @@ func (s *Server) credentials(w http.ResponseWriter, r *http.Request) {
 		Username        string `json:"username"`
 		Password        string `json:"password"`
 		CurrentPassword string `json:"currentPassword"`
-		Code            string `json:"code,omitempty"`
 	}
 	if err := decode(w, r, &req); err != nil {
 		reply(w, 400, nil, err)
@@ -40,14 +36,9 @@ func (s *Server) credentials(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	got, want := sha256.Sum256([]byte(req.CurrentPassword)), sha256.Sum256([]byte(s.Password))
 	valid := subtle.ConstantTimeCompare(got[:], want[:]) == 1
-	cfg := s.RuntimeConfig
 	s.mu.Unlock()
 	if !valid {
 		reply(w, 403, nil, fmt.Errorf("Неверный текущий пароль"))
-		return
-	}
-	if cfg.TOTPEnabled && !security.ValidateTOTP(cfg.TOTPSecret, req.Code, time.Now()) {
-		reply(w, 403, nil, fmt.Errorf("Неверный код 2FA"))
 		return
 	}
 	// systemd reads this file on every service start. Atomic replacement prevents

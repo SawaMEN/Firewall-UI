@@ -5,18 +5,9 @@ import { useTranslation } from 'react-i18next';
 
 import { HttpUtil } from '@/utils';
 
-type Process = { pid: number; name: string; executable?: string };
-type Port = {
-  socketId: string;
-  port: number;
-  protocol: string;
-  address: string;
-  family: string;
-  state: string;
-  listening: boolean;
-  loopback: boolean;
-  processes: Process[];
-};
+import type { ColumnsType } from 'antd/es/table';
+import { formatPortRanges, groupPortsByProcess, type Port, type ProcessGroup } from './portGroups';
+
 type ContainerPort = {
   runtime: string;
   containerId: string;
@@ -53,6 +44,7 @@ export function PortsTable() {
   const ru = i18n.language.startsWith('ru');
   const [snapshot, setSnapshot] = useState<Snapshot>({ ports: [], containers: [], updatedAt: '' });
   const [advanced, setAdvanced] = useState<AdvancedRule[]>([]);
+  const [byProcess, setByProcess] = useState(true);
   const [diagnostics, setDiagnostics] = useState(false);
   const [firewall, setFirewall] = useState<FirewallStatus | null>(null);
   const [loading, setLoading] = useState(false);
@@ -167,44 +159,8 @@ export function PortsTable() {
     return !query || haystack.includes(query);
   });
 
-  return (
-    <Card className="panel-card">
-      <Space wrap style={{ marginBottom: 16 }}>
-        <Input.Search
-          placeholder={ru ? 'Порт, адрес, процесс, PID или контейнер' : 'Port, address, process, PID or container'}
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          style={{ width: 330 }}
-          allowClear
-        />
-        <Select
-          value={protocol}
-          onChange={setProtocol}
-          style={{ width: 145 }}
-          options={[
-            { value: 'all', label: 'TCP + UDP' },
-            { value: 'tcp', label: 'TCP' },
-            { value: 'udp', label: 'UDP' },
-          ]}
-        />
-        <Space><Switch checked={diagnostics} onChange={(value) => { setDiagnostics(value); setListening(!value); }} /><span>{ru ? 'Все сокеты (диагностика)' : 'All sockets (diagnostics)'}</span></Space>
-        <Space><Switch checked={listening} disabled={!diagnostics} onChange={setListening} /><span>{ru ? 'Только слушающие' : 'Listening only'}</span></Space>
-        <Space><Switch checked={live} onChange={setLive} /><span>{ru ? 'Live' : 'Live'}</span></Space>
-        <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
-          {ru ? 'Обновить' : 'Refresh'}
-        </Button>
-      </Space>
-
-      {error ? <Alert type="error" showIcon title={error} style={{ marginBottom: 16 }} /> : null}
-
-      <Table<Port>
-        size="small"
-        rowKey={(port) => `${port.family}-${port.protocol}-${port.socketId}`}
-        dataSource={filtered}
-        loading={loading}
-        scroll={{ x: 1180 }}
-        pagination={{ pageSize: 20, showSizeChanger: true }}
-        columns={[
+  const processGroups = useMemo(() => groupPortsByProcess(filtered), [filtered]);
+  const portColumns: ColumnsType<Port> = [
           { title: ru ? 'Порт' : 'Port', dataIndex: 'port', width: 90, sorter: (a, b) => a.port - b.port },
           { title: ru ? 'Протокол' : 'Protocol', dataIndex: 'protocol', width: 100, render: (v: string) => <Tag>{v.toUpperCase()}</Tag> },
           {
@@ -276,13 +232,88 @@ export function PortsTable() {
               );
             },
           },
-        ]}
-      />
+        ];
+
+  const details = (ports: Port[]) => (
+    <Table<Port> size="small" rowKey={(port) => `${port.family}-${port.protocol}-${port.socketId}`} dataSource={ports} loading={loading} columns={portColumns} scroll={{ x: 1180 }} pagination={{ pageSize: 20, showSizeChanger: true, hideOnSinglePage: true }} />
+  );
+
+  return (
+    <Card className="panel-card">
+      <Space wrap style={{ marginBottom: 16 }}>
+        <Input.Search
+          placeholder={ru ? 'Порт, адрес, процесс, PID или контейнер' : 'Port, address, process, PID or container'}
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          style={{ width: 330 }}
+          allowClear
+        />
+        <Select
+          value={protocol}
+          onChange={setProtocol}
+          style={{ width: 145 }}
+          options={[
+            { value: 'all', label: 'TCP + UDP' },
+            { value: 'tcp', label: 'TCP' },
+            { value: 'udp', label: 'UDP' },
+          ]}
+        />
+        <Space><Switch checked={byProcess} onChange={setByProcess} /><span>{ru ? 'По процессам' : 'Group by process'}</span></Space>
+        <Space><Switch checked={diagnostics} onChange={(value) => { setDiagnostics(value); setListening(!value); }} /><span>{ru ? 'Все сокеты (диагностика)' : 'All sockets (diagnostics)'}</span></Space>
+        <Space><Switch checked={listening} disabled={!diagnostics} onChange={setListening} /><span>{ru ? 'Только слушающие' : 'Listening only'}</span></Space>
+        <Space><Switch checked={live} onChange={setLive} /><span>{ru ? 'Live' : 'Live'}</span></Space>
+        <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
+          {ru ? 'Обновить' : 'Refresh'}
+        </Button>
+      </Space>
+
+      {error ? <Alert type="error" showIcon title={error} style={{ marginBottom: 16 }} /> : null}
+
+      {byProcess ? (
+        <Table<ProcessGroup>
+          size="small"
+          rowKey="id"
+          dataSource={processGroups}
+          loading={loading}
+          scroll={{ x: 1000 }}
+          pagination={{ pageSize: 20, showSizeChanger: true }}
+          expandable={{ expandedRowRender: (group) => details(group.ports) }}
+          columns={[
+            {
+              title: ru ? 'Процесс / PID' : 'Process / PID', width: 220,
+              render: (_, group) => group.processes.length ? <Space orientation="vertical" size={2}>{group.processes.map((owner) => <Typography.Text key={owner.pid} title={owner.executable}>{owner.name || 'process'} <Typography.Text type="secondary">PID {owner.pid}</Typography.Text></Typography.Text>)}</Space> : <Typography.Text type="secondary">{ru ? 'Нет владельца' : 'No owner'}</Typography.Text>,
+            },
+            {
+              title: ru ? 'Порты и диапазоны' : 'Ports and ranges', width: 360,
+              render: (_, group) => <Space orientation="vertical" size={2}>{[...new Set(group.ports.map((port) => port.protocol))].map((proto) => <div key={proto}><Tag>{proto.toUpperCase()}</Tag><Typography.Paragraph style={{ maxWidth: 310, marginBottom: 0 }} ellipsis={{ rows: 2, tooltip: true }}><Typography.Text code>{formatPortRanges(group.ports.filter((port) => port.protocol === proto).map((port) => port.port))}</Typography.Text></Typography.Paragraph></div>)}</Space>,
+            },
+            {
+              title: ru ? 'Адреса' : 'Addresses',
+              render: (_, group) => <Space wrap>{[...new Set(group.ports.map((port) => port.address))].map((address) => <Typography.Text key={address} code>{address}</Typography.Text>)}</Space>,
+            },
+            {
+              title: ru ? 'Порты' : 'Ports', width: 90,
+              render: (_, group) => new Set(group.ports.map((port) => key(port.port, port.protocol))).size,
+            },
+            {
+              title: ru ? 'Файрволл' : 'Firewall', width: 210,
+              render: (_, group) => {
+                const ports = [...new Map(group.ports.filter((port) => port.listening && !port.loopback).map((port) => [key(port.port, port.protocol), port])).values()];
+                if (!ports.length) return <Tag>{ru ? 'Локальный / соединения' : 'Local / connections'}</Tag>;
+                if (!firewall?.enabled) return <Tag color="warning">{ru ? 'НЕ ФИЛЬТРУЕТСЯ' : 'UNFILTERED'}</Tag>;
+                const denied = ports.filter((port) => closedSet.has(key(port.port, port.protocol))).length;
+                return <Space wrap>{denied ? <Tag color="error">{ru ? 'Запрещено' : 'Denied'}: {denied}</Tag> : null}<Typography.Text type="secondary">{ru ? 'Раскройте для управления' : 'Expand to manage'}</Typography.Text></Space>;
+              },
+            },
+          ]}
+        />
+      ) : details(filtered)}
+
 
       <Typography.Text type="secondary">
         {ru
-          ? 'По умолчанию показаны слушающие TCP и привязанные UDP-сокеты с процессом-владельцем; одинаковые адреса и порты объединены. В диагностике доступны временные соединения и сокеты без владельца. Наличие сокета не означает доступность из интернета. Закрытие блокирует новые входящие соединения; процесс и уже установленные соединения продолжают работать.'
-          : 'The default view shows owned TCP listeners and bound UDP sockets, grouped by address and port. Diagnostics includes temporary connections and sockets without an owner. A socket does not prove internet reachability. Closing blocks new incoming connections; processes and existing connections keep running.'}
+          ? 'По умолчанию показаны слушающие TCP и привязанные UDP-сокеты с процессом-владельцем; Порты одного процесса собраны в раскрываемую строку, последовательные порты показаны диапазонами через дефис. Внутри доступны отдельные адреса, порты и действия файрволла. В диагностике доступны временные соединения и сокеты без владельца. Наличие сокета не означает доступность из интернета. Закрытие блокирует новые входящие соединения; процесс и уже установленные соединения продолжают работать.'
+          : 'The default view shows owned TCP listeners and bound UDP sockets, grouped into expandable process rows with hyphen-separated consecutive port ranges. Expand a row for addresses, individual ports and firewall actions. Diagnostics includes temporary connections and sockets without an owner. A socket does not prove internet reachability. Closing blocks new incoming connections; processes and existing connections keep running.'}
       </Typography.Text>
     </Card>
   );

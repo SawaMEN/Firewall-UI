@@ -25,8 +25,6 @@ type Config struct {
 	StatePath        string   `json:"statePath"`
 	UpdateChannel    string   `json:"updateChannel"`
 	AllowedCIDRs     []string `json:"allowedCidrs,omitempty"`
-	TOTPEnabled      bool     `json:"totpEnabled,omitempty"`
-	TOTPSecret       string   `json:"totpSecret,omitempty"`
 	RollbackSeconds  int      `json:"rollbackSeconds"`
 	PortScanInterval int      `json:"portScanInterval"`
 }
@@ -155,9 +153,6 @@ func Validate(cfg Config) error {
 	}
 	if err := security.ValidateCIDRs(cfg.AllowedCIDRs); err != nil {
 		return err
-	}
-	if cfg.TOTPEnabled && strings.TrimSpace(cfg.TOTPSecret) == "" {
-		return errors.New("totpSecret is required when TOTP is enabled")
 	}
 	if cfg.RollbackSeconds < 15 || cfg.RollbackSeconds > 300 {
 		return errors.New("rollbackSeconds must be between 15 and 300")

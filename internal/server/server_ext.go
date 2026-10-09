@@ -67,12 +67,6 @@ func (s *Server) handleExtendedAPI(w http.ResponseWriter, r *http.Request, sess 
 		s.setPortAccess(w, r)
 	case "/api/dashboard":
 		s.dashboard(w, r)
-	case "/api/security/totp/setup":
-		s.setupTOTP(w, r)
-	case "/api/security/totp/confirm":
-		s.confirmTOTP(w, r)
-	case "/api/security/totp/disable":
-		s.disableTOTP(w, r)
 	case "/api/audit":
 		s.auditLog(w, r)
 	case "/api/history":
@@ -248,115 +242,6 @@ func uniqueContainers(ports []service.ContainerPort) int {
 		seen[item.Runtime+":"+item.ContainerID] = true
 	}
 	return len(seen)
-}
-
-func (s *Server) setupTOTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		reply(w, http.StatusMethodNotAllowed, nil, fmt.Errorf("method not allowed"))
-		return
-	}
-	secret, err := security.GenerateTOTPSecret()
-	if err != nil {
-		reply(w, http.StatusInternalServerError, nil, err)
-		return
-	}
-	s.configMu.Lock()
-	defer s.configMu.Unlock()
-
-	s.mu.Lock()
-	cfg := s.RuntimeConfig
-	if cfg.TOTPEnabled {
-		s.mu.Unlock()
-		reply(w, http.StatusConflict, nil, fmt.Errorf("two-factor authentication is already enabled"))
-		return
-	}
-	cfg.TOTPSecret = secret
-	s.mu.Unlock()
-	if err := appconfig.Save(s.ConfigPath, cfg); err != nil {
-		reply(w, http.StatusOK, nil, err)
-		return
-	}
-	s.mu.Lock()
-	s.RuntimeConfig = cfg
-	s.mu.Unlock()
-	s.audit(r, "totp.setup", true, "", nil)
-	reply(w, http.StatusOK, map[string]string{
-		"secret": secret,
-		"uri":    security.ProvisioningURI(secret, s.username(), "Firewall-UI"),
-	}, nil)
-}
-
-func (s *Server) confirmTOTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		reply(w, http.StatusMethodNotAllowed, nil, fmt.Errorf("method not allowed"))
-		return
-	}
-	var req struct {
-		Code string `json:"code"`
-	}
-	if err := decode(w, r, &req); err != nil {
-		reply(w, http.StatusBadRequest, nil, err)
-		return
-	}
-	s.configMu.Lock()
-	defer s.configMu.Unlock()
-
-	s.mu.Lock()
-	cfg := s.RuntimeConfig
-	s.mu.Unlock()
-	if cfg.TOTPSecret == "" || !security.ValidateTOTP(cfg.TOTPSecret, req.Code, time.Now()) {
-		reply(w, http.StatusBadRequest, nil, fmt.Errorf("invalid two-factor code"))
-		return
-	}
-	cfg.TOTPEnabled = true
-	if err := appconfig.Save(s.ConfigPath, cfg); err != nil {
-		reply(w, http.StatusOK, nil, err)
-		return
-	}
-	s.mu.Lock()
-	s.RuntimeConfig = cfg
-	s.mu.Unlock()
-	s.audit(r, "totp.enable", true, "", nil)
-	reply(w, http.StatusOK, map[string]bool{"enabled": true}, nil)
-}
-
-func (s *Server) disableTOTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		reply(w, http.StatusMethodNotAllowed, nil, fmt.Errorf("method not allowed"))
-		return
-	}
-	var req struct {
-		Code string `json:"code"`
-	}
-	if err := decode(w, r, &req); err != nil {
-		reply(w, http.StatusBadRequest, nil, err)
-		return
-	}
-	s.configMu.Lock()
-	defer s.configMu.Unlock()
-
-	s.mu.Lock()
-	cfg := s.RuntimeConfig
-	s.mu.Unlock()
-	if !cfg.TOTPEnabled {
-		reply(w, http.StatusOK, map[string]bool{"enabled": false}, nil)
-		return
-	}
-	if !security.ValidateTOTP(cfg.TOTPSecret, req.Code, time.Now()) {
-		reply(w, http.StatusBadRequest, nil, fmt.Errorf("invalid two-factor code"))
-		return
-	}
-	cfg.TOTPEnabled = false
-	cfg.TOTPSecret = ""
-	if err := appconfig.Save(s.ConfigPath, cfg); err != nil {
-		reply(w, http.StatusOK, nil, err)
-		return
-	}
-	s.mu.Lock()
-	s.RuntimeConfig = cfg
-	s.mu.Unlock()
-	s.audit(r, "totp.disable", true, "", nil)
-	reply(w, http.StatusOK, map[string]bool{"enabled": false}, nil)
 }
 
 func (s *Server) auditLog(w http.ResponseWriter, r *http.Request) {
@@ -687,7 +572,7 @@ func (s *Server) beginRollbackWithConfig(before service.FirewallBackup, oldCfg a
 	return pending, err
 }
 
-// Authentication is excluded from runtime backups. Restore only those fields,
+// Credentials are excluded from runtime backups. Restore only runtime fields,
 // and only if no later runtime edit has superseded the backup transaction.
 func (s *Server) restoreRuntimeAfterRollback(old appconfig.Config, expected runtimeBackup) error {
 	s.configMu.Lock()

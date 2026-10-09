@@ -3,7 +3,6 @@ import {
   Alert,
   Button,
   Card,
-  Divider,
   Form,
   Input,
   InputNumber,
@@ -40,13 +39,12 @@ type RuntimeSettings = {
   tlsKey: string;
   updateChannel: string;
   allowedCidrs: string[];
-  totpEnabled: boolean;
   rollbackSeconds: number;
   portScanInterval: number;
   restarting?: boolean;
 };
 
-type FormSettings = Omit<RuntimeSettings, 'allowedCidrs' | 'totpEnabled' | 'tlsEnabled' | 'restarting'> & {
+type FormSettings = Omit<RuntimeSettings, 'allowedCidrs' | 'tlsEnabled' | 'restarting'> & {
   allowedCidrsText: string;
 };
 
@@ -58,7 +56,6 @@ type UpdateStatus = {
   restarting?: boolean;
 };
 
-type TOTPSetup = { secret: string; uri: string };
 type AuditEntry = {
   time: string;
   user?: string;
@@ -87,12 +84,9 @@ export default function SettingsPage() {
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [applyingUpdate, setApplyingUpdate] = useState(false);
   const [updateError, setUpdateError] = useState('');
-  const [totpSetup, setTotpSetup] = useState<TOTPSetup | null>(null);
-  const [totpCode, setTotpCode] = useState('');
-  const [credentials, setCredentials] = useState({ username: '', password: '', currentPassword: '', code: '' });
+  const [credentials, setCredentials] = useState({ username: '', password: '', currentPassword: '' });
   const [credentialsBusy, setCredentialsBusy] = useState(false);
   const [credentialError, setCredentialError] = useState('');
-  const [securityBusy, setSecurityBusy] = useState(false);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [history, setHistory] = useState<HistorySnapshot[]>([]);
   const [historyBusy, setHistoryBusy] = useState('');
@@ -124,15 +118,6 @@ export default function SettingsPage() {
             save: 'Сохранить настройки',
             restarting: 'Настройки сохранены. Firewall-UI перезапускается.',
             failed: 'Не удалось загрузить настройки.',
-            twoFactor: 'Двухфакторная аутентификация (TOTP)',
-            twoFactorOn: 'TOTP включён',
-            twoFactorOff: 'TOTP выключен',
-            setup2fa: 'Настроить TOTP',
-            enable2fa: 'Подтвердить и включить',
-            disable2fa: 'Отключить TOTP',
-            secret: 'Секрет',
-            uri: 'otpauth URI',
-            code: '6-значный код',
             updates: 'Обновления',
             channel: 'Канал обновлений',
             stable: 'Stable',
@@ -181,15 +166,6 @@ export default function SettingsPage() {
             save: 'Save settings',
             restarting: 'Settings saved. Firewall-UI is restarting.',
             failed: 'Failed to load settings.',
-            twoFactor: 'Two-factor authentication (TOTP)',
-            twoFactorOn: 'TOTP enabled',
-            twoFactorOff: 'TOTP disabled',
-            setup2fa: 'Set up TOTP',
-            enable2fa: 'Verify and enable',
-            disable2fa: 'Disable TOTP',
-            secret: 'Secret',
-            uri: 'otpauth URI',
-            code: '6-digit code',
             updates: 'Updates',
             channel: 'Update channel',
             stable: 'Stable',
@@ -328,42 +304,11 @@ export default function SettingsPage() {
     try {
       const result = await HttpUtil.post('/api/security/credentials', credentials, { silentSuccess: true });
       if (result.success) {
-        setCredentials({ username: '', password: '', currentPassword: '', code: '' });
+        setCredentials({ username: '', password: '', currentPassword: '' });
         void message.success(ru ? 'Логин и пароль изменены. Войдите заново.' : 'Credentials changed. Please sign in again.');
         window.dispatchEvent(new Event('session-expired'));
       } else setCredentialError(result.msg);
     } finally { setCredentialsBusy(false); }
-  }
-
-  async function setupTOTP() {
-    setSecurityBusy(true);
-    try {
-      const result = await HttpUtil.post<TOTPSetup>('/api/security/totp/setup', {});
-      if (result.success && result.obj) setTotpSetup(result.obj);
-    } finally { setSecurityBusy(false); }
-  }
-
-  async function confirmTOTP() {
-    setSecurityBusy(true);
-    try {
-      const result = await HttpUtil.post<{ enabled: boolean }>('/api/security/totp/confirm', { code: totpCode });
-      if (result.success && result.obj?.enabled) {
-        setCurrent((old) => old ? { ...old, totpEnabled: true } : old);
-        setTotpSetup(null);
-        setTotpCode('');
-      }
-    } finally { setSecurityBusy(false); }
-  }
-
-  async function disableTOTP() {
-    setSecurityBusy(true);
-    try {
-      const result = await HttpUtil.post<{ enabled: boolean }>('/api/security/totp/disable', { code: totpCode });
-      if (result.success) {
-        setCurrent((old) => old ? { ...old, totpEnabled: false } : old);
-        setTotpCode('');
-      }
-    } finally { setSecurityBusy(false); }
   }
 
   async function applyStableUpdate() {
@@ -445,16 +390,15 @@ export default function SettingsPage() {
 
         <Card className="panel-card" title={ru ? 'Логин и пароль' : 'Username and password'}>
           <Typography.Paragraph type="secondary">
-            {ru ? 'Пароль может быть любой длины. Рекомендуем длинный уникальный пароль и 2FA. После изменения потребуется повторный вход на всех устройствах.' : 'Any nonempty password is accepted. We recommend a long unique password and 2FA. All devices will need to sign in again.'}
+            {ru ? 'Пароль может быть любой длины. Рекомендуем длинный уникальный пароль. После изменения потребуется повторный вход на всех устройствах.' : 'Any nonempty password is accepted. We recommend a long unique password. All devices will need to sign in again.'}
           </Typography.Paragraph>
           {credentialError ? <Alert type="error" showIcon title={credentialError} style={{ marginBottom: 16 }} /> : null}
           <div className="settings-grid">
             <div><Typography.Text>{ru ? 'Новый логин' : 'New username'}</Typography.Text><Input autoComplete="username" value={credentials.username} onChange={(event) => setCredentials((old) => ({ ...old, username: event.target.value }))} /></div>
             <div><Typography.Text>{ru ? 'Новый пароль' : 'New password'}</Typography.Text><Input.Password autoComplete="new-password" value={credentials.password} onChange={(event) => setCredentials((old) => ({ ...old, password: event.target.value }))} /></div>
             <div><Typography.Text>{ru ? 'Текущий пароль' : 'Current password'}</Typography.Text><Input.Password autoComplete="current-password" value={credentials.currentPassword} onChange={(event) => setCredentials((old) => ({ ...old, currentPassword: event.target.value }))} /></div>
-            {current?.totpEnabled ? <div><Typography.Text>{ru ? 'Код 2FA' : '2FA code'}</Typography.Text><Input inputMode="numeric" maxLength={6} value={credentials.code} onChange={(event) => setCredentials((old) => ({ ...old, code: event.target.value.replace(/\D/g, '').slice(0, 6) }))} /></div> : null}
           </div>
-          <Button style={{ marginTop: 16 }} type="primary" loading={credentialsBusy} disabled={!credentials.username.trim() || !credentials.password || !credentials.currentPassword || (current?.totpEnabled && credentials.code.length !== 6)} onClick={() => void changeCredentials()}>
+          <Button style={{ marginTop: 16 }} type="primary" loading={credentialsBusy} disabled={!credentials.username.trim() || !credentials.password || !credentials.currentPassword} onClick={() => void changeCredentials()}>
             {ru ? 'Изменить логин и пароль' : 'Change username and password'}
           </Button>
         </Card>
@@ -508,47 +452,7 @@ export default function SettingsPage() {
             <Tag color={current?.tlsEnabled ? 'success' : undefined}>{current?.tlsEnabled ? text.tlsOn : text.tlsOff}</Tag>
           </Space>
 
-          <Divider />
-          <Typography.Title level={5}>{text.twoFactor}</Typography.Title>
-          <Space direction="vertical" size="small" style={{ width: '100%' }}>
-            <Tag color={current?.totpEnabled ? 'success' : undefined}>
-              {current?.totpEnabled ? text.twoFactorOn : text.twoFactorOff}
-            </Tag>
-            {!current?.totpEnabled && !totpSetup ? (
-              <Button loading={securityBusy} onClick={() => void setupTOTP()}>{text.setup2fa}</Button>
-            ) : null}
-            {totpSetup ? (
-              <Card size="small">
-                <Space direction="vertical" style={{ width: '100%' }}>
-                  <Typography.Text strong>{text.secret}</Typography.Text>
-                  <Typography.Text code copyable>{totpSetup.secret}</Typography.Text>
-                  <Typography.Text strong>{text.uri}</Typography.Text>
-                  <Typography.Text code copyable>{totpSetup.uri}</Typography.Text>
-                </Space>
-              </Card>
-            ) : null}
-            {(totpSetup || current?.totpEnabled) ? (
-              <Space wrap>
-                <Input
-                  value={totpCode}
-                  onChange={(event) => setTotpCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
-                  inputMode="numeric"
-                  maxLength={6}
-                  placeholder={text.code}
-                  style={{ width: 180 }}
-                />
-                {totpSetup ? (
-                  <Button type="primary" disabled={totpCode.length !== 6} loading={securityBusy} onClick={() => void confirmTOTP()}>
-                    {text.enable2fa}
-                  </Button>
-                ) : (
-                  <Popconfirm title={text.disable2fa} onConfirm={() => void disableTOTP()}>
-                    <Button danger disabled={totpCode.length !== 6} loading={securityBusy}>{text.disable2fa}</Button>
-                  </Popconfirm>
-                )}
-              </Space>
-            ) : null}
-          </Space>
+
         </Card>
 
         <Card className="panel-card" title={text.updates}>

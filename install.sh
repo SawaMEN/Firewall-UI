@@ -351,7 +351,7 @@ create_settings() {
       printf '\n' >&3
     fi
     if [[ -z "$password" ]]; then password="$(od -An -N20 -tx1 /dev/urandom | tr -d ' \n')"; echo "Сгенерированный пароль Firewall-UI: $password"; fi
-    echo 'Рекомендация: длинный уникальный пароль и 2FA.'
+    echo 'Рекомендация: длинный уникальный пароль.'
     [[ -n "$password" && "$password" != *$'\n'* && "$password" != *$'\r'* ]] || { echo 'Перевод строки в пароле не поддерживается.' >&2; return 1; }
     local temp_env; temp_env="$(mktemp "$CONFIG_DIR/.environment-XXXXXX")"
     { printf 'FIREWALL_UI_USERNAME="%s"\n' "$(escape_env_value "$username")"; printf 'FIREWALL_UI_PASSWORD="%s"\n' "$(escape_env_value "$password")"; } > "$temp_env"
@@ -396,11 +396,59 @@ cleanup() {
   return "$result"
 }
 
+select_installer_action() {
+  INSTALL_ACTION=install
+  [[ "${INSTALL_INTERACTIVE:-0}" == 1 ]] || return 0
+  echo 'Firewall-UI — меню установщика'
+  echo '1) Установить / обновить'
+  echo '2) Настроить доступ: домен / IP / сертификат'
+  echo '3) Сбросить пароль (сохранить логин)'
+  echo '4) Полностью удалить Firewall-UI'
+  echo '0) Выход'
+  local choice
+  ask choice 'Выберите действие' 1 || return 1
+  case "$choice" in
+    1) INSTALL_ACTION=install;;
+    2) INSTALL_ACTION=configure;;
+    3) INSTALL_ACTION=reset-password;;
+    4) INSTALL_ACTION=uninstall;;
+    0) INSTALL_ACTION=exit;;
+    *) echo 'Неизвестный пункт меню.' >&2; return 1;;
+  esac
+}
+
+run_installer_manager_action() (
+  set -euo pipefail
+  local stage
+  stage="$(mktemp -d)"
+  trap 'rm -rf -- "$stage"' EXIT
+  fetch_repo_file deploy/firewall-ui "$stage/manager"
+  if [[ "${INSTALL_INTERACTIVE:-0}" == 1 ]]; then
+    bash "$stage/manager" "$@" <&3
+  else bash "$stage/manager" "$@"; fi
+)
+
 main() {
-  case "${1:-}" in --help|-h) echo 'Использование: install.sh [--check|--configure]. FIREWALL_UI_NONINTERACTIVE=1 — без вопросов.'; return;; --check) check_system; return;; --configure) FIREWALL_UI_RECONFIGURE=1;; '') ;; *) echo 'Неизвестный параметр.' >&2; return 1;; esac
+  INSTALL_ACTION=install
+  case "${1:-}" in
+    --help|-h) echo 'Использование: install.sh [--check|--configure|--reset-password|--uninstall]. Без параметров — русское меню. FIREWALL_UI_NONINTERACTIVE=1 — без вопросов.'; return;;
+    --check) check_system; return;;
+    --configure) INSTALL_ACTION=configure;;
+    --reset-password) INSTALL_ACTION=reset-password;;
+    --uninstall) INSTALL_ACTION=uninstall;;
+    '') ;;
+    *) echo 'Неизвестный параметр.' >&2; return 1;;
+  esac
   [[ ${EUID:-$(id -u)} -eq 0 ]] || { echo 'Запустите установщик от root.' >&2; return 1; }
   INSTALL_INTERACTIVE=0
   if [[ "${FIREWALL_UI_NONINTERACTIVE:-0}" != 1 ]] && { exec 3<>/dev/tty; } 2>/dev/null; then INSTALL_INTERACTIVE=1; fi
+  if [[ -z "${1:-}" ]]; then select_installer_action || return 1; fi
+  case "$INSTALL_ACTION" in
+    exit) return 0;;
+    reset-password) run_installer_manager_action reset-password; return;;
+    uninstall) run_installer_manager_action uninstall --purge; return;;
+    configure) FIREWALL_UI_RECONFIGURE=1;;
+  esac
   check_system
   UPDATE_CHANNEL="${FIREWALL_UI_UPDATE_CHANNEL:-}"
   if [[ -z "$UPDATE_CHANNEL" && -f "$CONFIG_DIR/config.json" ]]; then UPDATE_CHANNEL="$(sed -n 's/.*"updateChannel":[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG_DIR/config.json" | head -n 1)"; fi

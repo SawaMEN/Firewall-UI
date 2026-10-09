@@ -136,7 +136,7 @@ func main() {
 		log.Fatal("FIREWALL_UI_PASSWORD must not be empty")
 	}
 	if len(password) < 12 {
-		log.Print("Recommendation: use a long unique password and enable 2FA")
+		log.Print("Recommendation: use a long unique password")
 	}
 	user := strings.TrimSpace(os.Getenv("FIREWALL_UI_USERNAME"))
 	if user == "" {

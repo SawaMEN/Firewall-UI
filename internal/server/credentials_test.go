@@ -79,19 +79,6 @@ func TestCredentialSaveFailureKeepsLogin(t *testing.T) {
 	}
 }
 
-func TestCredentialRotationRequiresTwoFactor(t *testing.T) {
-	s := New("admin", "old", 8088, fstest.MapFS{})
-	s.ConfigPath = filepath.Join(t.TempDir(), "config.json")
-	s.RuntimeConfig.TOTPEnabled = true
-	s.RuntimeConfig.TOTPSecret = "JBSWY3DPEHPK3PXP"
-	req := httptest.NewRequest("POST", "/api/security/credentials", strings.NewReader(`{"username":"new","password":"1","currentPassword":"old"}`))
-	w := httptest.NewRecorder()
-	s.credentials(w, req)
-	if w.Code != 403 || s.Username != "admin" {
-		t.Fatal("changed credentials without enabled 2FA")
-	}
-}
-
 func TestPortAccessRequiresExplicitAction(t *testing.T) {
 	s := New("admin", "old", 8088, fstest.MapFS{})
 	req := httptest.NewRequest("POST", "/api/firewall/port", strings.NewReader(`{"port":9000,"protocol":"tcp"}`))

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.2
+
+- Group port rows by process/PID with expandable details and consecutive ranges written with hyphens; preserve gaps and individual firewall controls.
+- Remove TOTP/2FA from login, settings, APIs and configuration; legacy configurations no longer require a second factor.
+- Add a Russian installer menu with password reset and full removal, available before installation dependencies are checked.
+- Reset passwords atomically while preserving the existing username and environment settings.
+
 ## 1.2.1
 
 - Add username/password changes in web settings, current-password/2FA verification, atomic persistence and session revocation.

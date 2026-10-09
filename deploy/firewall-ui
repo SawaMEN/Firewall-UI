@@ -176,7 +176,7 @@ change_credentials() {
   local username password
   read -r -p "Имя пользователя [admin]: " username
   username="${username:-admin}"
-  echo 'Рекомендация: используйте длинный уникальный пароль и включите 2FA.'
+  echo 'Рекомендация: используйте длинный уникальный пароль.'
   read -r -s -p 'Пароль (любой длины; Enter — сгенерировать): ' password
   echo
   if [[ -z "$password" ]]; then
@@ -193,6 +193,38 @@ change_credentials() {
   systemctl restart "${SERVICE}.service"
   echo "Учётные данные обновлены."
 }
+
+reset_password() (
+  set -euo pipefail
+  require_root
+  [[ -x "$BIN" && -f "$ENV_FILE" ]] || { echo 'Firewall-UI не установлен или нет файла учётных данных.' >&2; return 1; }
+  local password stage
+  if [[ -v FIREWALL_UI_PASSWORD ]]; then password="$FIREWALL_UI_PASSWORD"
+  elif [[ "${FIREWALL_UI_NONINTERACTIVE:-0}" == 1 ]]; then
+    echo 'Для сброса без вопросов задайте FIREWALL_UI_PASSWORD.' >&2; return 1
+  else
+    echo 'Рекомендация: используйте длинный уникальный пароль.'
+    read -r -s -p 'Новый пароль (любой длины; Enter — сгенерировать): ' password
+    echo
+  fi
+  if [[ -z "$password" ]]; then
+    password="$(od -An -N20 -tx1 /dev/urandom | tr -d ' \n')"
+    echo "Сгенерированный пароль: $password"
+  fi
+  [[ "$password" != *$'\r'* && "$password" != *$'\n'* ]] || { echo 'Перевод строки в пароле не поддерживается.' >&2; return 1; }
+  stage="$(mktemp "$(dirname "$ENV_FILE")/.password-XXXXXX")"
+  trap 'rm -f -- "$stage"' EXIT
+  # Preserve the username and all other environment settings verbatim.
+  sed '/^FIREWALL_UI_PASSWORD=/d' "$ENV_FILE" > "$stage"
+  printf 'FIREWALL_UI_PASSWORD="%s"\n' "$(escape_env_value "$password")" >> "$stage"
+  chmod 0600 "$stage"
+  mv -f -- "$stage" "$ENV_FILE"
+  if ! systemctl restart "${SERVICE}.service"; then
+    echo 'Новый пароль сохранён, но служба не перезапустилась. Выполните firewall-ui restart.' >&2
+    return 1
+  fi
+  echo 'Пароль сброшен. Логин сохранён. Войдите с новым паролем.'
+)
 
 cleanup_access_rules() {
   [[ -f "$STATE_DIR/access-rules" ]] || return 0
@@ -276,6 +308,7 @@ menu() {
     echo "8) Roll back previous binary"
     echo "9) Удалить с выбором сохранения данных"
     echo "10) Полностью удалить Firewall-UI"
+    echo "11) Сбросить пароль (сохранить логин)"
     echo "0) Exit"
     read -r -p "Select: " choice
     case "$choice" in
@@ -289,6 +322,7 @@ menu() {
       8) rollback_binary ;;
       9) uninstall_service; exit 0 ;;
       10) uninstall_service --purge; exit 0 ;;
+      11) reset_password ;;
       0) exit 0 ;;
       *) echo "Unknown option." ;;
     esac
@@ -313,6 +347,9 @@ case "${1:-}" in
   credentials|password)
     change_credentials
     ;;
+  reset-password)
+    reset_password
+    ;;
   rollback)
     rollback_binary
     ;;
@@ -323,7 +360,7 @@ case "${1:-}" in
     menu
     ;;
   *)
-    echo "Usage: firewall-ui [start|stop|restart|status|logs|update|rollback|credentials|uninstall [--purge]]"
+    echo "Usage: firewall-ui [start|stop|restart|status|logs|update|rollback|credentials|reset-password|uninstall [--purge]]"
     exit 2
     ;;
 esac

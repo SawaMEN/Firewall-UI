@@ -9,7 +9,6 @@ import {
   Input,
   message,
   Spin,
-  Typography,
 } from 'antd';
 import ruRU from 'antd/locale/ru_RU';
 import enUS from 'antd/locale/en_US';
@@ -30,8 +29,8 @@ void i18n.use(initReactI18next).init({
   interpolation: { escapeValue: false },
 });
 
-type Session = { csrf: string; username?: string; totpEnabled?: boolean };
-type LoginValues = { username: string; password: string; code?: string };
+type Session = { csrf: string; username?: string };
+type LoginValues = { username: string; password: string };
 
 function Application() {
   const { antdThemeConfig } = useTheme();
@@ -95,21 +94,9 @@ function Application() {
                 <Form.Item name="password" label={ru ? 'Пароль' : 'Password'} rules={[{ required: true }]}>
                   <Input.Password autoComplete="current-password" />
                 </Form.Item>
-                <Form.Item
-                  name="code"
-                  label={ru ? 'Код 2FA (если включён)' : '2FA code (if enabled)'}
-                  normalize={(value: string) => value?.replace(/\D/g, '').slice(0, 6)}
-                >
-                  <Input inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="123456" />
-                </Form.Item>
                 <Button htmlType="submit" type="primary" block loading={busy}>
                   {ru ? 'Войти' : 'Sign in'}
                 </Button>
-                <Typography.Paragraph type="secondary" style={{ margin: '14px 0 0', fontSize: 12 }}>
-                  {ru
-                    ? 'Если TOTP не настроен, поле 2FA можно оставить пустым.'
-                    : 'Leave the 2FA field empty when TOTP is not configured.'}
-                </Typography.Paragraph>
               </Form>
             </Card>
           </div>
