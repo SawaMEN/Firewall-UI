@@ -50,7 +50,9 @@ export default function PortRangesTable({
         '—'}
       <Typography.Text type="secondary">
         {' '}
-        · PID: {group.processes.length}
+        {group.processes.length <= 3
+          ? ` · PID ${group.processes.map((owner) => owner.pid).join(', ')}`
+          : ` · ${ru ? 'Процессов' : 'Processes'}: ${group.processes.length}`}
       </Typography.Text>
       <PurposeLabels ports={group.ports} ru={ru} />
     </div>
