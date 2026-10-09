@@ -29,6 +29,7 @@ type fullBackup struct {
 }
 
 type runtimeBackup struct {
+	PublicHost       string   `json:"publicHost,omitempty"`
 	ListenHost       string   `json:"listenHost"`
 	ListenPort       int      `json:"listenPort"`
 	ExternalPort     int      `json:"externalPort"`
@@ -431,6 +432,7 @@ func (s *Server) backup(w http.ResponseWriter, r *http.Request) {
 
 func runtimeBackupFromConfig(cfg appconfig.Config) runtimeBackup {
 	return runtimeBackup{
+		PublicHost:       cfg.PublicHost,
 		ListenHost:       cfg.ListenHost,
 		ListenPort:       cfg.ListenPort,
 		ExternalPort:     cfg.ExternalPort,
@@ -445,6 +447,7 @@ func runtimeBackupFromConfig(cfg appconfig.Config) runtimeBackup {
 }
 
 func applyRuntimeBackup(cfg appconfig.Config, b runtimeBackup) appconfig.Config {
+	cfg.PublicHost = b.PublicHost
 	cfg.ListenHost = b.ListenHost
 	cfg.ListenPort = b.ListenPort
 	cfg.ExternalPort = b.ExternalPort

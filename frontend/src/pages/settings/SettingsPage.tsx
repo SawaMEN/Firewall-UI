@@ -30,6 +30,7 @@ import { useTranslation } from 'react-i18next';
 import { HttpUtil } from '@/utils';
 
 type RuntimeSettings = {
+  publicHost: string;
   listenHost: string;
   listenPort: number;
   externalPort: number;
@@ -246,6 +247,9 @@ export default function SettingsPage() {
         }
         setCurrent(result.obj);
         form.setFieldsValue({
+          publicHost: result.obj.publicHost,
+          tlsCert: result.obj.tlsCert,
+          tlsKey: result.obj.tlsKey,
           listenHost: result.obj.listenHost,
           listenPort: result.obj.listenPort,
           externalPort: result.obj.externalPort,
@@ -272,6 +276,7 @@ export default function SettingsPage() {
         .map((item) => item.trim())
         .filter(Boolean);
       const result = await HttpUtil.post<RuntimeSettings>('/api/settings', {
+        publicHost: values.publicHost || '',
         listenHost: values.listenHost,
         listenPort: values.listenPort,
         externalPort: values.externalPort,
@@ -295,6 +300,7 @@ export default function SettingsPage() {
         window.setTimeout(() => {
           if (direct && (old?.listenPort !== values.listenPort || old?.tlsEnabled !== Boolean(values.tlsCert))) {
             const target = new URL(window.location.href);
+            if (values.publicHost) target.hostname = values.publicHost.includes(':') ? `[${values.publicHost}]` : values.publicHost;
             target.port = String(values.listenPort);
             target.protocol = values.tlsCert ? 'https:' : 'http:';
             window.location.assign(target.toString());
@@ -428,6 +434,9 @@ export default function SettingsPage() {
                 { value: '::', label: text.ipv6 },
               ]} />
             </Form.Item>
+            <Form.Item name="publicHost" label={ru ? 'Домен или IP для внешнего доступа' : 'External domain or IP'} extra={ru ? 'Без https:// и порта. Сертификат должен быть выдан для этого адреса.' : 'Without scheme or port. The certificate must cover this address.'}>
+              <Input placeholder="panel.example.com / 203.0.113.10" />
+            </Form.Item>
             <Form.Item name="listenPort" label={text.port}>
               <InputNumber min={1} max={65535} style={{ width: '100%' }} />
             </Form.Item>
@@ -455,6 +464,10 @@ export default function SettingsPage() {
               <Input placeholder="/etc/letsencrypt/live/example.com/privkey.pem" />
             </Form.Item>
           </div>
+          {current?.publicHost ? <Typography.Paragraph>
+            {ru ? 'Адрес панели: ' : 'Panel URL: '}
+            <Typography.Text copyable>{`${current.tlsEnabled ? 'https' : 'http'}://${current.publicHost.includes(':') ? `[${current.publicHost}]` : current.publicHost}:${current.externalPort || current.listenPort}/`}</Typography.Text>
+          </Typography.Paragraph> : null}
           <Space>
             <Typography.Text type="secondary">{text.tls}:</Typography.Text>
             <Tag color={current?.tlsEnabled ? 'success' : undefined}>{current?.tlsEnabled ? text.tlsOn : text.tlsOff}</Tag>

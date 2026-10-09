@@ -170,14 +170,16 @@ escape_env_value() {
 change_credentials() {
   require_root
   local username password
-  read -r -p "Username [admin]: " username
+  read -r -p "Имя пользователя [admin]: " username
   username="${username:-admin}"
-  while true; do
-    read -r -s -p "Password (12+ characters): " password
-    echo
-    [[ ${#password} -ge 12 ]] && break
-    echo "Password is too short."
-  done
+  echo 'Рекомендация: используйте длинный уникальный пароль и включите 2FA.'
+  read -r -s -p 'Пароль (любой длины; Enter — сгенерировать): ' password
+  echo
+  if [[ -z "$password" ]]; then
+    password="$(od -An -N20 -tx1 /dev/urandom | tr -d ' \n')"
+    echo "Сгенерированный пароль: $password"
+  fi
+  [[ "$username" != *$'\r'* && "$password" != *$'\r'* ]] || { echo 'Перевод строки в учётных данных не поддерживается.' >&2; return 1; }
   install -d -m 0700 "$(dirname "$ENV_FILE")"
   {
     printf 'FIREWALL_UI_USERNAME="%s"\n' "$(escape_env_value "$username")"
@@ -185,12 +187,14 @@ change_credentials() {
   } > "$ENV_FILE"
   chmod 0600 "$ENV_FILE"
   systemctl restart "${SERVICE}.service"
-  echo "Credentials updated."
+  echo "Учётные данные обновлены."
 }
 
 uninstall_service() {
   require_root
   systemctl disable --now "${SERVICE}.service" >/dev/null 2>&1 || true
+  systemctl disable --now firewall-ui-cert-renew.timer >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/firewall-ui-cert-renew.service /etc/systemd/system/firewall-ui-cert-renew.timer
   rm -f "/etc/systemd/system/${SERVICE}.service"
   rm -rf "$INSTALL_DIR"
   rm -f "/usr/local/bin/firewall-ui"

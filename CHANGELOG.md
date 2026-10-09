@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.0
+
+- Accept simple nonempty passwords; replace minimum-length enforcement with recommendations.
+- Add a Russian installation wizard for local access or external domain/IP HTTPS access.
+- Choose existing PEM files, Let's Encrypt certificates or self-signed certificates with DNS/IP SANs.
+- Add isolated Certbot renewal with a twice-daily systemd timer and panel restart after renewal.
+- Support Let’s Encrypt IP certificates when Certbot has IP/profile support.
+- Add `--configure` to change installation access while preserving credentials, 2FA and other settings.
+- Store the public connection host separately from the bind interface and show its URL in web settings.
+- Validate certificate coverage for the selected domain/IP and retain TLS form values when saving.
+
 ## 1.1.4
 
 - Serialize runtime settings, TOTP setup/confirmation/disable and backup configuration writes.

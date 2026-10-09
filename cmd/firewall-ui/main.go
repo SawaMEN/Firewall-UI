@@ -36,6 +36,8 @@ func main() {
 	keyFlag := flag.String("tls-key", "", "TLS key path (overrides config)")
 	secureFlag := flag.Bool("secure-cookies", false, "Require HTTPS cookies behind a reverse proxy (overrides config)")
 	checkConfig := flag.Bool("check-config", false, "Validate panel configuration and exit")
+	saveConfig := flag.Bool("save-config", false, "Save configuration overrides and exit")
+	publicHostFlag := flag.String("public-host", "", "External domain or IP (overrides config)")
 	showVersion := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
 	if *showVersion {
@@ -53,6 +55,9 @@ func main() {
 		visited[f.Name] = true
 	})
 
+	if visited["public-host"] {
+		cfg.PublicHost = strings.TrimSpace(*publicHostFlag)
+	}
 	if visited["listen"] {
 		host, rawPort, err := net.SplitHostPort(*listenFlag)
 		if err != nil {
@@ -84,13 +89,23 @@ func main() {
 		log.Fatal(err)
 	}
 
+	if *saveConfig {
+		if err := appconfig.Save(*configPath, cfg); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("Configuration saved")
+		return
+	}
 	if *checkConfig {
 		fmt.Println("Configuration is valid")
 		return
 	}
 	password := os.Getenv("FIREWALL_UI_PASSWORD")
+	if password == "" {
+		log.Fatal("FIREWALL_UI_PASSWORD must not be empty")
+	}
 	if len(password) < 12 {
-		log.Fatal("FIREWALL_UI_PASSWORD must contain at least 12 characters")
+		log.Print("Recommendation: use a long unique password and enable 2FA")
 	}
 	user := strings.TrimSpace(os.Getenv("FIREWALL_UI_USERNAME"))
 	if user == "" {

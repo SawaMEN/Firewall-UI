@@ -94,6 +94,15 @@ func TestTLSFilesAreValidated(t *testing.T) {
 	if err := Validate(cfg); err != nil {
 		t.Fatalf("valid TLS pair rejected: %v", err)
 	}
+	cfg.PublicHost = "127.0.0.1"
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("matching IP SAN rejected: %v", err)
+	}
+	cfg.PublicHost = "wrong-panel.invalid"
+	if err := Validate(cfg); err == nil {
+		t.Fatal("certificate accepted for an unrelated hostname")
+	}
+	cfg.PublicHost = ""
 	os.WriteFile(cfg.TLSKey, []byte("invalid key"), 0600)
 	if err := Validate(cfg); err == nil {
 		t.Fatal("invalid TLS key accepted")
@@ -101,5 +110,22 @@ func TestTLSFilesAreValidated(t *testing.T) {
 	cfg.TLSCert = "relative.pem"
 	if err := Validate(cfg); err == nil {
 		t.Fatal("relative TLS path accepted")
+	}
+}
+
+func TestPublicConnectionHosts(t *testing.T) {
+	for _, host := range []string{"panel.example.com", "203.0.113.10", "2001:db8::1"} {
+		cfg := Default()
+		cfg.PublicHost = host
+		if err := Validate(cfg); err != nil {
+			t.Fatalf("host %s rejected: %v", host, err)
+		}
+	}
+	for _, host := range []string{"0.0.0.0", "::", "https://panel.example.com", "panel.example.com:443", "192.0.2.999", "-panel.example.com", "panel..com", "panel.example.com/path"} {
+		cfg := Default()
+		cfg.PublicHost = host
+		if err := Validate(cfg); err == nil {
+			t.Fatalf("invalid public host accepted: %s", host)
+		}
 	}
 }

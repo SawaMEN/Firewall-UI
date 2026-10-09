@@ -2,6 +2,7 @@ package appconfig
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 )
 
 type Config struct {
+	PublicHost       string   `json:"publicHost,omitempty"`
 	ListenHost       string   `json:"listenHost"`
 	ListenPort       int      `json:"listenPort"`
 	ExternalPort     int      `json:"externalPort"`
@@ -115,6 +117,9 @@ func Validate(cfg Config) error {
 	if host != "localhost" && net.ParseIP(host) == nil {
 		return fmt.Errorf("invalid listen host %q", host)
 	}
+	if cfg.PublicHost != "" && !ValidPublicHost(cfg.PublicHost) {
+		return errors.New("publicHost must be a domain or IP address without a scheme or port")
+	}
 	if cfg.ListenPort < 1 || cfg.ListenPort > 65535 {
 		return fmt.Errorf("invalid listen port %d", cfg.ListenPort)
 	}
@@ -128,8 +133,18 @@ func Validate(cfg Config) error {
 		if !filepath.IsAbs(cfg.TLSCert) || !filepath.IsAbs(cfg.TLSKey) {
 			return errors.New("TLS paths must be absolute")
 		}
-		if _, err := tls.LoadX509KeyPair(cfg.TLSCert, cfg.TLSKey); err != nil {
+		pair, err := tls.LoadX509KeyPair(cfg.TLSCert, cfg.TLSKey)
+		if err != nil {
 			return fmt.Errorf("invalid TLS certificate/key: %w", err)
+		}
+		if cfg.PublicHost != "" {
+			leaf, err := x509.ParseCertificate(pair.Certificate[0])
+			if err != nil {
+				return fmt.Errorf("invalid TLS certificate: %w", err)
+			}
+			if err := leaf.VerifyHostname(cfg.PublicHost); err != nil {
+				return fmt.Errorf("TLS certificate does not cover publicHost: %w", err)
+			}
 		}
 	}
 	if strings.TrimSpace(cfg.StatePath) == "" || !filepath.IsAbs(cfg.StatePath) {
@@ -155,4 +170,26 @@ func Validate(cfg Config) error {
 
 func (cfg Config) Address() string {
 	return net.JoinHostPort(strings.TrimSpace(cfg.ListenHost), fmt.Sprintf("%d", cfg.ListenPort))
+}
+
+// PublicHost is a connection address, separate from the listener's bind IP.
+func ValidPublicHost(host string) bool {
+	if ip := net.ParseIP(host); ip != nil {
+		return !ip.IsUnspecified()
+	}
+	if len(host) > 253 || !strings.Contains(host, ".") {
+		return false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, r := range label {
+			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-') {
+				return false
+			}
+		}
+	}
+	// A malformed numeric IPv4 address must not be treated as a DNS name.
+	return strings.Trim(host, "0123456789.") != ""
 }

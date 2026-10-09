@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check shell scripts
-        run: bash -n install.sh deploy/firewall-ui && bash tests/installer.sh && bash tests/manager.sh
+        run: bash -n install.sh deploy/firewall-ui && bash tests/installer.sh && bash tests/manager.sh && bash tests/access.sh
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.x'

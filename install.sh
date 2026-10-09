@@ -24,7 +24,7 @@ pkg_install() {
   elif command -v yum >/dev/null 2>&1; then yum install -y "$@"
   elif command -v pacman >/dev/null 2>&1; then pacman -S --needed --noconfirm "$@"
   elif command -v zypper >/dev/null 2>&1; then zypper --non-interactive install "$@"
-  else echo 'A supported package manager (apt/dnf/yum/pacman/zypper) is required.' >&2; return 1; fi
+  else echo 'Нужен пакетный менеджер apt/dnf/yum/pacman/zypper.' >&2; return 1; fi
 }
 
 detect_firewall() {
@@ -44,16 +44,16 @@ detect_firewall() {
 }
 
 check_system() {
-  [[ "$(uname -s)" == Linux ]] || { echo 'Firewall-UI supports Linux only.' >&2; return 1; }
-  case "$(uname -m)" in x86_64|amd64) ARCH=amd64;; aarch64|arm64) ARCH=arm64;; *) echo 'Unsupported CPU architecture.' >&2; return 1;; esac
-  command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]] || { echo 'A running systemd is required.' >&2; return 1; }
-  echo "Linux/$ARCH; detected firewall: $(detect_firewall)"
+  [[ "$(uname -s)" == Linux ]] || { echo 'Firewall-UI поддерживает только Linux.' >&2; return 1; }
+  case "$(uname -m)" in x86_64|amd64) ARCH=amd64;; aarch64|arm64) ARCH=arm64;; *) echo 'Архитектура процессора не поддерживается.' >&2; return 1;; esac
+  command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]] || { echo 'Нужен запущенный systemd.' >&2; return 1; }
+  echo "Linux/$ARCH; обнаружен файрволл: $(detect_firewall)"
 }
 
 sha256_file() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
   elif command -v openssl >/dev/null 2>&1; then openssl dgst -sha256 "$1" | awk '{print $NF}'
-  else echo 'sha256sum or openssl is required.' >&2; return 1; fi
+  else echo 'Нужен sha256sum или openssl.' >&2; return 1; fi
 }
 
 fetch_repo_file() {
@@ -65,7 +65,7 @@ fetch_repo_file() {
 
 build_from_source() {
   command -v go >/dev/null && command -v npm >/dev/null && command -v tar >/dev/null || {
-    echo 'No release is available. Wait for GitHub Actions, or supply FIREWALL_UI_BINARY from a local build.' >&2; return 1;
+    echo 'Готовый релиз недоступен. Дождитесь сборки GitHub Actions или задайте FIREWALL_UI_BINARY.' >&2; return 1;
   }
   local directory="$TEMP_DIR/source"
   mkdir -p "$directory"
@@ -79,7 +79,7 @@ download_binary() {
   if [[ -n "${FIREWALL_UI_BINARY:-}" ]]; then
     install -m 0755 "$FIREWALL_UI_BINARY" "$TEMP_DIR/binary"
     if [[ -n "${FIREWALL_UI_SHA256:-}" ]]; then
-      [[ "$(sha256_file "$TEMP_DIR/binary")" == "$FIREWALL_UI_SHA256" ]] || { echo 'Local binary checksum mismatch.' >&2; return 1; }
+      [[ "$(sha256_file "$TEMP_DIR/binary")" == "$FIREWALL_UI_SHA256" ]] || { echo 'Контрольная сумма локального бинарника не совпадает.' >&2; return 1; }
     fi
     return
   fi
@@ -88,7 +88,7 @@ download_binary() {
   if [[ "$channel" == dev ]]; then manifest_url="https://github.com/${REPO}/releases/download/dev/update.json"
   else manifest_url="https://github.com/${REPO}/releases/latest/download/update.json"; fi
   if ! curl -fLsS --retry 3 --connect-timeout 15 "$manifest_url" -o "$TEMP_DIR/update.json"; then
-    echo 'Release metadata is unavailable. Trying a local source build...'
+    echo 'Метаданные релиза недоступны. Пробуем собрать из исходников...'
     build_from_source
     return
   fi
@@ -96,53 +96,242 @@ download_binary() {
   url="$(printf '%s\n' "$block" | sed -n 's/.*"url":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
   expected="$(printf '%s\n' "$block" | sed -n 's/.*"sha256":[[:space:]]*"\([0-9A-Fa-f]*\)".*/\1/p' | head -n 1)"
   [[ "$url" =~ ^https://github.com/${REPO}/releases/download/[A-Za-z0-9._-]+/firewall-ui-linux-${ARCH}$ && "$expected" =~ ^[0-9A-Fa-f]{64}$ ]] || {
-    echo 'Invalid release metadata.' >&2; return 1;
+    echo 'Неверные метаданные релиза.' >&2; return 1;
   }
   if [[ -n "${FIREWALL_UI_DOWNLOAD_URL:-}" && "$FIREWALL_UI_DOWNLOAD_URL" != "$url" ]]; then
-    echo 'Use FIREWALL_UI_BINARY and FIREWALL_UI_SHA256 for a custom binary; release downloads must match the manifest.' >&2; return 1
+    echo 'Для своего бинарника используйте FIREWALL_UI_BINARY и FIREWALL_UI_SHA256.' >&2; return 1
   fi
   curl -fLsS --retry 3 --connect-timeout 15 "$url" -o "$TEMP_DIR/binary"
   actual="$(sha256_file "$TEMP_DIR/binary")"
-  [[ "${actual,,}" == "${expected,,}" ]] || { echo 'Release binary SHA-256 mismatch.' >&2; return 1; }
+  [[ "${actual,,}" == "${expected,,}" ]] || { echo 'SHA-256 бинарника релиза не совпадает.' >&2; return 1; }
   chmod 0755 "$TEMP_DIR/binary"
 }
 
 escape_env_value() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
-create_settings() {
-  CONFIG_FILE="$CONFIG_DIR/config.json"
-  if [[ ! -f "$CONFIG_FILE" ]]; then
-    PANEL_PORT="${FIREWALL_UI_PORT:-8088}"
-    PANEL_HOST="${FIREWALL_UI_LISTEN_HOST:-127.0.0.1}"
-    [[ "$PANEL_PORT" =~ ^[0-9]{1,5}$ ]] && ((10#$PANEL_PORT>=1 && 10#$PANEL_PORT<=65535)) || { echo 'Invalid panel port.' >&2; return 1; }
-    [[ "$PANEL_HOST" == localhost || "$PANEL_HOST" =~ ^[0-9a-fA-F:.]+$ ]] || { echo 'Invalid listen host.' >&2; return 1; }
-    cat > "$CONFIG_FILE" <<JSON
+# The installer reads from /dev/tty even when invoked through curl/process substitution.
+ask() {
+  local name="$1" prompt="$2" fallback="$3" reply=''
+  if [[ "${INSTALL_INTERACTIVE:-0}" == 1 ]]; then
+    read -r -p "$prompt [$fallback]: " reply <&3 || return 1
+  fi
+  printf -v "$name" '%s' "${reply:-$fallback}"
+}
+
+json_text() {
+  [[ "$1" != *$'\n'* && "$1" != *$'\r'* ]] || { echo 'Перевод строки в параметре не поддерживается.' >&2; return 1; }
+  escape_env_value "$1"
+}
+
+choose_access() {
+  ACCESS_MODE="${FIREWALL_UI_ACCESS_MODE:-local}"
+  if [[ "${INSTALL_INTERACTIVE:-0}" == 1 && -z "${FIREWALL_UI_ACCESS_MODE:-}" ]]; then
+    echo 'Как подключаться к Firewall-UI?'
+    echo '1) Только локально / через SSH-туннель'
+    echo '2) Из интернета по домену, с HTTPS'
+    echo '3) Из интернета по IP, с HTTPS'
+    local choice
+    ask choice 'Выберите режим' 1
+    case "$choice" in 1) ACCESS_MODE=local;; 2) ACCESS_MODE=domain;; 3) ACCESS_MODE=ip;; *) echo 'Неизвестный режим доступа.' >&2; return 1;; esac
+  fi
+  PANEL_HOST="${FIREWALL_UI_LISTEN_HOST:-127.0.0.1}"
+  PANEL_PORT="${FIREWALL_UI_PORT:-${SAVED_PANEL_PORT:-8088}}"
+  PUBLIC_HOST="${FIREWALL_UI_PUBLIC_HOST:-${SAVED_PUBLIC_HOST:-}}"
+  TLS_CERT="${FIREWALL_UI_TLS_CERT:-${SAVED_TLS_CERT:-}}"; TLS_KEY="${FIREWALL_UI_TLS_KEY:-${SAVED_TLS_KEY:-}}"
+  TLS_MODE="${FIREWALL_UI_TLS_MODE:-}"
+  case "$ACCESS_MODE" in
+    local)
+      PUBLIC_HOST="${FIREWALL_UI_PUBLIC_HOST:-}"
+      TLS_CERT="${FIREWALL_UI_TLS_CERT:-}"; TLS_KEY="${FIREWALL_UI_TLS_KEY:-}"
+      [[ -z "$TLS_MODE" || "$TLS_MODE" == existing ]] || { echo 'Для выпуска сертификата выберите режим домена или IP.' >&2; return 1; }
+      ;;
+    domain|ip)
+      ask PUBLIC_HOST 'Домен или IP (без https:// и порта)' "$PUBLIC_HOST"
+      [[ -n "$PUBLIC_HOST" && "$PUBLIC_HOST" != *[!a-zA-Z0-9.:-]* ]] || { echo 'Укажите домен или IP без схемы, пробелов и порта.' >&2; return 1; }
+      [[ "$ACCESS_MODE" != ip || "$PUBLIC_HOST" == *:* || "$PUBLIC_HOST" =~ ^[0-9.]+$ ]] || { echo 'В режиме IP нужен IP-адрес.' >&2; return 1; }
+      [[ "$ACCESS_MODE" != domain || ( "$PUBLIC_HOST" != *:* && ! "$PUBLIC_HOST" =~ ^[0-9.]+$ ) ]] || { echo 'В режиме домена нужно доменное имя.' >&2; return 1; }
+      PANEL_HOST="${FIREWALL_UI_LISTEN_HOST:-0.0.0.0}"
+      [[ "$PUBLIC_HOST" != *:* || -n "${FIREWALL_UI_LISTEN_HOST:-}" ]] || PANEL_HOST='::'
+      [[ "$PANEL_HOST" != 127.0.0.1 && "$PANEL_HOST" != ::1 && "$PANEL_HOST" != localhost ]] || { echo 'Для внешнего доступа выберите внешний интерфейс.' >&2; return 1; }
+      if [[ -z "$TLS_MODE" ]]; then
+        if [[ -n "$TLS_CERT" && -n "$TLS_KEY" ]]; then TLS_MODE=existing
+        elif [[ "${INSTALL_INTERACTIVE:-0}" == 1 ]]; then
+          echo 'Сертификат для HTTPS:'
+          echo '1) Готовый сертификат и ключ PEM'
+          echo '2) Получить доверенный сертификат Let’s Encrypt (домен или публичный IP)'
+          echo '3) Создать самоподписанный (браузер потребует подтверждения доверия)'
+          local choice
+          ask choice 'Выберите сертификат' 2
+          case "$choice" in 1) TLS_MODE=existing;; 2) TLS_MODE=letsencrypt;; 3) TLS_MODE=selfsigned;; *) echo 'Неизвестный вариант сертификата.' >&2; return 1;; esac
+        else echo 'Для внешнего доступа задайте FIREWALL_UI_TLS_MODE: existing, letsencrypt или selfsigned.' >&2; return 1; fi
+      fi
+      ;;
+    *) echo 'Режим доступа: local, domain или ip.' >&2; return 1;;
+  esac
+  ask PANEL_PORT 'TCP-порт панели' "$PANEL_PORT"
+  [[ "$PANEL_PORT" =~ ^[0-9]{1,5}$ ]] && ((10#$PANEL_PORT>=1 && 10#$PANEL_PORT<=65535)) || { echo 'Неверный порт панели.' >&2; return 1; }
+  [[ "$PANEL_HOST" == localhost || "$PANEL_HOST" =~ ^[0-9a-fA-F:.]+$ ]] || { echo 'Неверный адрес интерфейса.' >&2; return 1; }
+  OPEN_PORTS="${FIREWALL_UI_OPEN_PORTS:-0}"
+  if [[ "$ACCESS_MODE" != local && "${INSTALL_INTERACTIVE:-0}" == 1 && -z "${FIREWALL_UI_OPEN_PORTS:-}" ]]; then
+    local answer
+    ask answer 'Разрешить входящий TCP-порт панели (и 80 для Let’s Encrypt) в UFW/firewalld? (д/н)' д
+    case "$answer" in д|Д|y|Y) OPEN_PORTS=1;; esac
+  fi
+  if [[ "$TLS_MODE" == existing ]]; then
+    ask TLS_CERT 'Абсолютный путь к сертификату PEM' "$TLS_CERT"
+    ask TLS_KEY 'Абсолютный путь к приватному ключу PEM' "$TLS_KEY"
+  fi
+}
+
+write_new_config() {
+  local target="$1" secure=false value
+  for value in "$PUBLIC_HOST" "$PANEL_HOST" "$TLS_CERT" "$TLS_KEY" "$STATE_DIR"; do json_text "$value" >/dev/null || return 1; done
+  [[ -z "$TLS_CERT" ]] || secure=true
+  cat > "$target" <<JSON
 {
-  "listenHost": "$PANEL_HOST",
+  "publicHost": "$(json_text "$PUBLIC_HOST")",
+  "listenHost": "$(json_text "$PANEL_HOST")",
   "listenPort": $((10#$PANEL_PORT)),
   "externalPort": 0,
-  "secureCookies": false,
-  "statePath": "$STATE_DIR/state.json",
+  "secureCookies": $secure,
+  "tlsCert": "$(json_text "$TLS_CERT")",
+  "tlsKey": "$(json_text "$TLS_KEY")",
+  "statePath": "$(json_text "$STATE_DIR")/state.json",
   "updateChannel": "$UPDATE_CHANNEL",
   "rollbackSeconds": 45,
   "portScanInterval": 2
 }
 JSON
-    chmod 0600 "$CONFIG_FILE"
+  chmod 0600 "$target"
+}
+
+allow_access_port() {
+  [[ "${OPEN_PORTS:-0}" == 1 ]] || return 0
+  local port="$1" backend; backend="$(detect_firewall)"
+  case "$backend" in
+    ufw) ufw allow "$port/tcp" comment 'Firewall-UI access';;
+    firewalld) firewall-cmd --add-port="$port/tcp"; firewall-cmd --permanent --add-port="$port/tcp";;
+    nftables|iptables) echo "В существующем $backend разрешите входящий TCP $port вручную; чужой ruleset не изменяется.";;
+  esac
+}
+
+prepare_tls() {
+  case "$TLS_MODE" in
+    '') [[ "$ACCESS_MODE" == local ]] || return 1;;
+    existing)
+      [[ "$TLS_CERT" == /* && "$TLS_KEY" == /* && -r "$TLS_CERT" && -r "$TLS_KEY" ]] || { echo 'Нужны доступные сертификат и ключ с абсолютными путями.' >&2; return 1; }
+      ;;
+    selfsigned)
+      command -v openssl >/dev/null || pkg_install openssl
+      install -d -m 0700 "$CONFIG_DIR/tls"
+      local cert_dir; cert_dir="$(mktemp -d "$CONFIG_DIR/tls/cert-XXXXXX")"
+      local san="DNS:$PUBLIC_HOST"
+      [[ "$ACCESS_MODE" != ip ]] || san="IP:$PUBLIC_HOST"
+      if ! openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 365 -subj '/CN=Firewall-UI' -addext "subjectAltName=$san" -keyout "$cert_dir/privkey.pem" -out "$cert_dir/fullchain.pem" 2>"$cert_dir/generation.log"; then cat "$cert_dir/generation.log" >&2; return 1; fi
+      rm -f "$cert_dir/generation.log"
+      chmod 0600 "$cert_dir/privkey.pem"
+      TLS_CERT="$cert_dir/fullchain.pem"; TLS_KEY="$cert_dir/privkey.pem"
+      echo 'Самоподписанный сертификат создан. Браузер не доверяет ему автоматически.'
+      ;;
+    letsencrypt)
+      [[ "$PANEL_PORT" != 80 ]] || { echo 'Для Let’s Encrypt порт панели должен отличаться от 80.' >&2; return 1; }
+      echo 'Для выпуска и продления нужен доступ с интернета к TCP 80. Домен должен указывать на этот сервер.'
+      echo 'Если порт 80 занят веб-сервером, используйте его готовые PEM-файлы или выпустите сертификат отдельно.'
+      command -v certbot >/dev/null || pkg_install certbot
+      local email="${FIREWALL_UI_ACME_EMAIL:-}" help
+      ask email 'Email для Let’s Encrypt (необязательно)' "$email"
+      local args=(certonly --standalone --non-interactive --agree-tos --cert-name firewall-ui --config-dir "$CONFIG_DIR/acme" --work-dir "$STATE_DIR/acme" --logs-dir "$STATE_DIR/acme-logs")
+      if [[ -n "$email" ]]; then args+=(--email "$email"); else args+=(--register-unsafely-without-email); fi
+      if [[ "$ACCESS_MODE" == ip ]]; then
+        help="$(certbot --help all)"
+        [[ "$help" == *--ip-address* && "$help" == *--preferred-profile* ]] || { echo 'Для сертификата IP нужен Certbot 5.3 или новее. Обновите Certbot или выберите готовый/самоподписанный сертификат.' >&2; return 1; }
+        args+=(--ip-address "$PUBLIC_HOST" --preferred-profile shortlived)
+      else args+=(-d "$PUBLIC_HOST"); fi
+      allow_access_port 80
+      certbot "${args[@]}"
+      TLS_CERT="$CONFIG_DIR/acme/live/firewall-ui/fullchain.pem"; TLS_KEY="$CONFIG_DIR/acme/live/firewall-ui/privkey.pem"
+      [[ -r "$TLS_CERT" && -r "$TLS_KEY" ]] || { echo 'Certbot не создал сертификат и ключ.' >&2; return 1; }
+      ACME_SETUP=1
+      ;;
+    *) echo 'Сертификат: existing, letsencrypt или selfsigned.' >&2; return 1;;
+  esac
+}
+
+setup_renewal() {
+  if [[ "${ACME_SETUP:-0}" != 1 ]]; then
+    if [[ "${CONFIG_CHANGED:-0}" == 1 ]]; then systemctl disable --now firewall-ui-cert-renew.timer >/dev/null 2>&1 || true; fi
+    return 0
   fi
+  fetch_repo_file deploy/firewall-ui-cert-renew.service "$TEMP_DIR/renew.service"
+  fetch_repo_file deploy/firewall-ui-cert-renew.timer "$TEMP_DIR/renew.timer"
+  install -m 0644 "$TEMP_DIR/renew.service" /etc/systemd/system/firewall-ui-cert-renew.service
+  install -m 0644 "$TEMP_DIR/renew.timer" /etc/systemd/system/firewall-ui-cert-renew.timer
+  systemctl daemon-reload
+  systemctl enable --now firewall-ui-cert-renew.timer
+  echo 'Автоматическое продление сертификата настроено (проверка каждые 12 часов).'
+}
+
+show_panel_url() {
+  local scheme=http host="${PUBLIC_HOST:-$PANEL_HOST}"
+  [[ -z "${TLS_CERT:-}" ]] || scheme=https
+  [[ "$host" != 0.0.0.0 && "$host" != :: ]] || host='<IP-сервера>'
+  [[ "$host" != *:* ]] || host="[$host]"
+  echo "Адрес панели: ${scheme}://${host}:${PANEL_PORT}/"
+}
+
+create_settings() {
+  CONFIG_FILE="$CONFIG_DIR/config.json"
+  if [[ -f "$CONFIG_FILE" ]]; then
+    SAVED_PANEL_PORT="$(sed -n 's/.*"listenPort":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$CONFIG_FILE" | head -n 1)"
+    SAVED_PUBLIC_HOST="$(sed -n 's/.*"publicHost":[[:space:]]*"\([^" ]*\)".*/\1/p' "$CONFIG_FILE" | head -n 1)"
+    SAVED_TLS_CERT="$(sed -n 's/.*"tlsCert":[[:space:]]*"\([^" ]*\)".*/\1/p' "$CONFIG_FILE" | head -n 1)"
+    SAVED_TLS_KEY="$(sed -n 's/.*"tlsKey":[[:space:]]*"\([^" ]*\)".*/\1/p' "$CONFIG_FILE" | head -n 1)"
+  fi
+  local reconfigure="${FIREWALL_UI_RECONFIGURE:-0}" candidate
+  if [[ -f "$CONFIG_FILE" && "$reconfigure" != 1 && "${INSTALL_INTERACTIVE:-0}" == 1 ]]; then
+    local answer
+    ask answer 'Настройки уже есть. Изменить способ доступа? (д/н)' н
+    [[ "$answer" != д && "$answer" != Д && "$answer" != y && "$answer" != Y ]] || reconfigure=1
+  fi
+  if [[ ! -f "$CONFIG_FILE" || "$reconfigure" == 1 ]]; then
+    choose_access
+    candidate="$(mktemp "$CONFIG_DIR/.access-XXXXXX")"
+    ACCESS_CANDIDATE="$candidate"
+    # Validate the address before contacting a CA or creating a certificate.
+    local requested_cert="$TLS_CERT" requested_key="$TLS_KEY"
+    TLS_CERT=''; TLS_KEY=''; write_new_config "$candidate"
+    if [[ -x "${TEMP_DIR:-}/binary" ]]; then "$TEMP_DIR/binary" -config "$candidate" -check-config; fi
+    TLS_CERT="$requested_cert"; TLS_KEY="$requested_key"
+    prepare_tls
+    if [[ -f "$CONFIG_FILE" ]]; then
+      cp -p "$CONFIG_FILE" "$candidate"
+      local bind="$PANEL_HOST" secure=false
+      [[ "$bind" != *:* ]] || bind="[$bind]"
+      [[ -z "$TLS_CERT" ]] || secure=true
+      "$TEMP_DIR/binary" -config "$candidate" -listen "$bind:$PANEL_PORT" -public-host "$PUBLIC_HOST" -external-port 0 -tls-cert "$TLS_CERT" -tls-key "$TLS_KEY" -secure-cookies="$secure" -save-config
+    else write_new_config "$candidate"; fi
+    if [[ -x "${TEMP_DIR:-}/binary" ]]; then "$TEMP_DIR/binary" -config "$candidate" -check-config; fi
+    mv -f "$candidate" "$CONFIG_FILE"
+    ACCESS_CANDIDATE=
+    CONFIG_CHANGED=1
+  else echo 'Существующие параметры доступа сохранены. Для изменения запустите установщик с --configure.'; fi
   # Read existing settings as well: repeat installs must never depend on creation-only variables.
   PANEL_HOST="$(sed -n 's/.*"listenHost":[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG_FILE" | head -n 1)"
   PANEL_PORT="$(sed -n 's/.*"listenPort":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$CONFIG_FILE" | head -n 1)"
+  PUBLIC_HOST="$(sed -n 's/.*"publicHost":[[:space:]]*"\([^" ]*\)".*/\1/p' "$CONFIG_FILE" | head -n 1)"
+  TLS_CERT="$(sed -n 's/.*"tlsCert":[[:space:]]*"\([^" ]*\)".*/\1/p' "$CONFIG_FILE" | head -n 1)"
   local env_file="$CONFIG_DIR/environment" username password
   if [[ ! -f "$env_file" ]]; then
     username="${FIREWALL_UI_USERNAME:-admin}"; password="${FIREWALL_UI_PASSWORD:-}"
-    [[ -n "$username" && "$username" != *$'\n'* && "$username" != *$'\r'* ]] || { echo 'Invalid username.' >&2; return 1; }
-    if [[ -z "$password" && "${FIREWALL_UI_NONINTERACTIVE:-0}" != 1 ]] && { exec 3<>/dev/tty; } 2>/dev/null; then
-      read -r -s -p 'Firewall-UI password (12+ characters, Enter generates one): ' password <&3 || true
-      printf '\n' >&3; exec 3>&-
+    ask username 'Имя пользователя' "$username"
+    [[ -n "$username" && "$username" != *$'\n'* && "$username" != *$'\r'* ]] || { echo 'Неверное имя пользователя.' >&2; return 1; }
+    if [[ -z "$password" && "${INSTALL_INTERACTIVE:-0}" == 1 ]]; then
+      read -r -s -p 'Пароль (любая длина; Enter — сгенерировать): ' password <&3 || true
+      printf '\n' >&3
     fi
-    if [[ -z "$password" ]]; then password="$(od -An -N20 -tx1 /dev/urandom | tr -d ' \n')"; echo "Generated Firewall-UI password: $password"; fi
-    [[ ${#password} -ge 12 && "$password" != *$'\n'* && "$password" != *$'\r'* ]] || { echo 'Password must contain at least 12 characters and no line breaks.' >&2; return 1; }
+    if [[ -z "$password" ]]; then password="$(od -An -N20 -tx1 /dev/urandom | tr -d ' \n')"; echo "Сгенерированный пароль Firewall-UI: $password"; fi
+    echo 'Рекомендация: длинный уникальный пароль и 2FA.'
+    [[ -n "$password" && "$password" != *$'\n'* && "$password" != *$'\r'* ]] || { echo 'Перевод строки в пароле не поддерживается.' >&2; return 1; }
     local temp_env; temp_env="$(mktemp "$CONFIG_DIR/.environment-XXXXXX")"
     { printf 'FIREWALL_UI_USERNAME="%s"\n' "$(escape_env_value "$username")"; printf 'FIREWALL_UI_PASSWORD="%s"\n' "$(escape_env_value "$password")"; } > "$temp_env"
     chmod 0600 "$temp_env"; mv -f "$temp_env" "$env_file"
@@ -166,7 +355,7 @@ cleanup() {
   if ((REPLACED && !SUCCEEDED)); then
     systemctl stop firewall-ui.service || true
     if ((!WAS_ENABLED)); then systemctl disable firewall-ui.service || true; fi
-    echo 'Installation failed; restoring the previous service files.' >&2
+    echo 'Установка завершилась ошибкой; восстанавливаем предыдущие файлы службы.' >&2
     if ((HAD_BINARY)); then cp -p "$TEMP_DIR/previous-binary" "$INSTALL_DIR/firewall-ui"; else rm -f "$INSTALL_DIR/firewall-ui"; fi
     local name destination
     for name in manager service; do
@@ -177,28 +366,36 @@ cleanup() {
     systemctl reset-failed firewall-ui.service || true
     if ((WAS_ACTIVE)); then systemctl restart firewall-ui.service || true; else systemctl stop firewall-ui.service || true; fi
   fi
+  if [[ "${CONFIG_CHANGED:-0}" == 1 && "$SUCCEEDED" == 0 && -f "$TEMP_DIR/previous-config" ]]; then
+    cp -p "$TEMP_DIR/previous-config" "$CONFIG_DIR/config.json"
+    if ((WAS_ACTIVE)); then systemctl restart firewall-ui.service || true; fi
+  fi
+  [[ -z "${ACCESS_CANDIDATE:-}" ]] || rm -f -- "$ACCESS_CANDIDATE"
   [[ -z "$TEMP_DIR" ]] || rm -rf -- "$TEMP_DIR"
   return "$result"
 }
 
 main() {
-  case "${1:-}" in --help|-h) echo 'Usage: install.sh [--check]; FIREWALL_UI_NONINTERACTIVE=1 for unattended setup.'; return;; --check) check_system; return;; '') ;; *) echo 'Unknown option.' >&2; return 1;; esac
-  [[ ${EUID:-$(id -u)} -eq 0 ]] || { echo 'Firewall-UI installer must run as root.' >&2; return 1; }
+  case "${1:-}" in --help|-h) echo 'Использование: install.sh [--check|--configure]. FIREWALL_UI_NONINTERACTIVE=1 — без вопросов.'; return;; --check) check_system; return;; --configure) FIREWALL_UI_RECONFIGURE=1;; '') ;; *) echo 'Неизвестный параметр.' >&2; return 1;; esac
+  [[ ${EUID:-$(id -u)} -eq 0 ]] || { echo 'Запустите установщик от root.' >&2; return 1; }
+  INSTALL_INTERACTIVE=0
+  if [[ "${FIREWALL_UI_NONINTERACTIVE:-0}" != 1 ]] && { exec 3<>/dev/tty; } 2>/dev/null; then INSTALL_INTERACTIVE=1; fi
   check_system
   UPDATE_CHANNEL="${FIREWALL_UI_UPDATE_CHANNEL:-}"
   if [[ -z "$UPDATE_CHANNEL" && -f "$CONFIG_DIR/config.json" ]]; then UPDATE_CHANNEL="$(sed -n 's/.*"updateChannel":[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG_DIR/config.json" | head -n 1)"; fi
   UPDATE_CHANNEL="${UPDATE_CHANNEL:-stable}"
-  [[ "$UPDATE_CHANNEL" == stable || "$UPDATE_CHANNEL" == dev ]] || { echo 'Update channel must be stable or dev.' >&2; return 1; }
+  [[ "$UPDATE_CHANNEL" == stable || "$UPDATE_CHANNEL" == dev ]] || { echo 'Канал обновления: stable или dev.' >&2; return 1; }
   command -v curl >/dev/null || pkg_install curl ca-certificates
   local backend; backend="$(detect_firewall)"
-  if [[ "$backend" == none ]]; then echo 'No supported firewall found. Installing UFW...'; pkg_install ufw; command -v ufw >/dev/null || { echo 'UFW installation failed.' >&2; return 1; }; fi
-  echo 'Existing firewall settings will be preserved. UFW is not enabled automatically.'
+  if [[ "$backend" == none ]]; then echo 'Поддерживаемый файрволл не найден. Устанавливаем UFW...'; pkg_install ufw; command -v ufw >/dev/null || { echo 'Не удалось установить UFW.' >&2; return 1; }; fi
+  echo 'Существующие правила файрволла сохраняются. UFW автоматически не включается.'
   TEMP_DIR="$(mktemp -d)"; trap cleanup EXIT
   download_binary
   fetch_repo_file deploy/firewall-ui "$TEMP_DIR/manager"
   fetch_repo_file deploy/firewall-ui.service "$TEMP_DIR/service"
   install -d -m 0755 "$INSTALL_DIR"
   install -d -m 0700 "$CONFIG_DIR" "$STATE_DIR"
+  if [[ -f "$CONFIG_DIR/config.json" ]]; then cp -p "$CONFIG_DIR/config.json" "$TEMP_DIR/previous-config"; fi
   create_settings
   "$TEMP_DIR/binary" -config "$CONFIG_FILE" -check-config
   if [[ -f "$INSTALL_DIR/firewall-ui" ]]; then cp -p "$INSTALL_DIR/firewall-ui" "$TEMP_DIR/previous-binary"; HAD_BINARY=1; fi
@@ -216,12 +413,12 @@ main() {
   systemctl restart firewall-ui.service
   if ! wait_for_service; then systemctl status --no-pager firewall-ui.service || true; return 1; fi
   if ((HAD_BINARY)); then cp -p "$TEMP_DIR/previous-binary" "$INSTALL_DIR/firewall-ui.previous"; fi
+  allow_access_port "$PANEL_PORT"
+  setup_renewal
   SUCCEEDED=1
-  local host="$PANEL_HOST"
-  [[ "$host" != *:* ]] || host="[$host]"
-  [[ "$PANEL_HOST" != 0.0.0.0 && "$PANEL_HOST" != :: ]] || host='<server-ip>'
-  [[ "$PANEL_HOST" != 0.0.0.0 && "$PANEL_HOST" != :: ]] || echo 'Public HTTP bind selected; configure TLS or an HTTPS reverse proxy in your deployment.'
-  echo "Firewall-UI installed. Panel: http://${host}:${PANEL_PORT}/"
-  echo 'Management: firewall-ui; logs: firewall-ui logs'
+  echo 'Firewall-UI установлен.'
+  show_panel_url
+  echo 'Управление: firewall-ui; журнал: firewall-ui logs'
+
 }
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi

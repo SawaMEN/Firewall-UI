@@ -36,19 +36,42 @@ bash <(curl -Ls https://raw.githubusercontent.com/SawaMEN/Firewall-UI/main/insta
 
 Проверка системы без установки: `bash install.sh --check`. Для автоматической установки задайте `FIREWALL_UI_NONINTERACTIVE=1`: если пароль не задан, установщик сгенерирует его и покажет один раз. Значение `FIREWALL_UI_UPDATE_CHANNEL=stable` или `dev` выбирает источник первой установки; при повторном запуске используется сохранённый канал. Локальный бинарник можно передать через `FIREWALL_UI_BINARY`, а его ожидаемую сумму — через `FIREWALL_UI_SHA256`.
 
-**По умолчанию панель слушает только `127.0.0.1:8088`.** Для удалённого доступа используйте SSH tunnel или reverse proxy с HTTPS. Публичный HTTP bind нужно включить явно:
+Установщик задаёт вопросы на русском:
+
+1. Локальный доступ, внешний доступ по домену или внешний доступ по IP.
+2. Адрес подключения и порт панели.
+3. Готовые PEM-файлы, Let’s Encrypt или самоподписанный сертификат.
+4. Разрешение порта в UFW/firewalld и пароль.
+
+**Простой пароль любой длины разрешён.** Длинный уникальный пароль и 2FA — рекомендации. Enter вместо пароля генерирует случайный. Пустая строка не используется как пароль.
+
+Для уже установленной панели повторно запустите мастер доступа:
 
 ```bash
-sudo FIREWALL_UI_LISTEN_HOST=0.0.0.0 \
-  FIREWALL_UI_PORT=8088 \
-  FIREWALL_UI_USERNAME=admin \
-  FIREWALL_UI_PASSWORD='long-random-password' \
+bash <(curl -fsSL https://raw.githubusercontent.com/SawaMEN/Firewall-UI/main/install.sh) --configure
+```
+
+Он сохраняет учётную запись, 2FA и остальные настройки. Локальный режим по умолчанию слушает `127.0.0.1:8088`; внешний — `0.0.0.0`, для IPv6-адреса — `::`. Домен/IP подключения хранится отдельно от адреса интерфейса, поэтому URL не показывает `0.0.0.0`.
+
+Let’s Encrypt требует свободный TCP 80, доступный с интернета, и корректный DNS для домена. Для публичного IP нужен Certbot с поддержкой `--ip-address` (5.3+); используется профиль `shortlived`. Продление проверяется таймером `firewall-ui-cert-renew.timer` каждые 12 часов и после успешного обновления перезапускает панель. Файлы Certbot изолированы в `/etc/firewall-ui/acme`. Если TCP 80 занят другим веб-сервером, выберите его готовые PEM-файлы или выпустите сертификат отдельно. Самоподписанный сертификат содержит SAN домена/IP, но не получает автоматическое доверие браузера.
+
+В UFW/firewalld мастер может разрешить TCP-порт панели и TCP 80 для ACME. Существующие nftables/iptables ruleset, firewall провайдера и проброс портов роутера настраиваются отдельно. UFW не включается автоматически.
+
+Автоматическая установка с существующим сертификатом:
+
+```bash
+sudo FIREWALL_UI_NONINTERACTIVE=1 \
+  FIREWALL_UI_ACCESS_MODE=domain \
+  FIREWALL_UI_PUBLIC_HOST=panel.example.com \
+  FIREWALL_UI_TLS_MODE=existing \
+  FIREWALL_UI_TLS_CERT=/path/fullchain.pem \
+  FIREWALL_UI_TLS_KEY=/path/privkey.pem \
+  FIREWALL_UI_OPEN_PORTS=1 \
+  FIREWALL_UI_PASSWORD='1' \
   bash install.sh
 ```
 
-При публичном bind установщик выводит предупреждение.
-
-UFW после установки не включается автоматически. Управление firewall включается из панели.
+`FIREWALL_UI_ACCESS_MODE`: `local`, `domain`, `ip`; `FIREWALL_UI_TLS_MODE`: `existing`, `letsencrypt`, `selfsigned`. Для смены доступа без вопросов добавьте `FIREWALL_UI_RECONFIGURE=1`; для ACME можно задать `FIREWALL_UI_ACME_EMAIL`. Смена пароля через `firewall-ui credentials` также не ограничивает сложность.
 
 ## Управление сервисом
 

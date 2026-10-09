@@ -9,4 +9,5 @@ test:
 	bash -n install.sh deploy/firewall-ui
 	bash tests/installer.sh
 	bash tests/manager.sh
+	bash tests/access.sh
 	cd frontend && npm run typecheck

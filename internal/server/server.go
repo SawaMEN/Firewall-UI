@@ -294,6 +294,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 }
 
 type runtimeSettingsResponse struct {
+	PublicHost       string   `json:"publicHost"`
 	ListenHost       string   `json:"listenHost"`
 	ListenPort       int      `json:"listenPort"`
 	ExternalPort     int      `json:"externalPort"`
@@ -311,6 +312,7 @@ type runtimeSettingsResponse struct {
 
 func runtimeSettingsView(cfg appconfig.Config, restarting bool) runtimeSettingsResponse {
 	return runtimeSettingsResponse{
+		PublicHost:       cfg.PublicHost,
 		ListenHost:       cfg.ListenHost,
 		ListenPort:       cfg.ListenPort,
 		ExternalPort:     cfg.ExternalPort,
@@ -341,6 +343,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
+		PublicHost       *string  `json:"publicHost"`
 		TLSCert          *string  `json:"tlsCert"`
 		TLSKey           *string  `json:"tlsKey"`
 		ListenHost       string   `json:"listenHost"`
@@ -368,6 +371,9 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	cfg := s.RuntimeConfig
 	s.mu.Unlock()
 	oldCfg := cfg
+	if req.PublicHost != nil {
+		cfg.PublicHost = strings.TrimSpace(*req.PublicHost)
+	}
 	if req.TLSCert != nil {
 		cfg.TLSCert = strings.TrimSpace(*req.TLSCert)
 	}
