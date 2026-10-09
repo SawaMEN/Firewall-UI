@@ -27,12 +27,12 @@ export CLEANUP_RESULT=1
 if uninstall_service --purge; then echo 'Ignored failed rule cleanup'; exit 1; fi
 [[ -f "$CONFIG_DIR/environment" && -x "$BIN" && -f "$STATE_DIR/state.json" && -f "$MANAGER_PATH" ]]
 export CLEANUP_RESULT=0
-FIREWALL_UI_NONINTERACTIVE=1
-uninstall_service
+FIREWALL_UI_NONINTERACTIVE=0
+uninstall_service <<< 'n'
 [[ ! -d "$INSTALL_DIR" && -f "$CONFIG_DIR/environment" && -f "$STATE_DIR/state.json" ]]
 prepare
 printf 'foreign firewall configuration' > "$FIXTURE/foreign-firewall"
-uninstall_service --purge
+uninstall_service <<< 'y'
 [[ ! -d "$INSTALL_DIR" && ! -d "$CONFIG_DIR" && ! -d "$STATE_DIR" && ! -f "$MANAGER_PATH" ]]
 [[ -f "$FIXTURE/foreign-firewall" && ! -f "$UNIT_DIR/firewall-ui-cert-renew.timer" ]]
 [[ "$(cat "$FIXTURE/systemctl")" == *'stop firewall-ui.service firewall-ui-cert-renew.timer firewall-ui-cert-renew.service'* ]]

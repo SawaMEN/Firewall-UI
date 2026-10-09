@@ -15,16 +15,21 @@ create_settings
 rm -f "$CONFIG_DIR/config.json" "$CONFIG_DIR/environment"
 unset FIREWALL_UI_PASSWORD
 INSTALL_INTERACTIVE=1
-printf '2\npanel.example.com\n3\n8443\nн\nadmin\n1\n' > "$FIXTURE/answers"
+printf '2\npanel.example.com\n3\n8443\nn\nadmin\n1\n' > "$FIXTURE/answers"
 exec 3<>"$FIXTURE/answers"
 create_settings
 exec 3>&-
-[[ "$PUBLIC_HOST" == panel.example.com && "$PANEL_HOST" == 0.0.0.0 && "$PANEL_PORT" == 8443 ]]
+[[ "$PUBLIC_HOST" == panel.example.com && "$PANEL_HOST" == 0.0.0.0 && "$PANEL_PORT" == 8443 && "$OPEN_PORTS" == 0 ]]
 [[ "$(cat "$CONFIG_DIR/environment")" == *'FIREWALL_UI_PASSWORD="1"'* ]]
 openssl x509 -in "$TLS_CERT" -noout -checkhost panel.example.com
 [[ "$(stat -c %a "$TLS_KEY")" == 600 ]]
 [[ "$(show_panel_url)" == 'Адрес панели: https://panel.example.com:8443/' ]]
 # IPv6 certificate SAN and URL brackets.
+printf '2\npanel.example.com\n3\n8443\nY\n' > "$FIXTURE/answers"
+exec 3<>"$FIXTURE/answers"
+choose_access
+exec 3>&-
+[[ "$OPEN_PORTS" == 1 ]]
 INSTALL_INTERACTIVE=0; FIREWALL_UI_ACCESS_MODE=ip; FIREWALL_UI_PUBLIC_HOST=2001:db8::1
 FIREWALL_UI_TLS_MODE=selfsigned; FIREWALL_UI_PORT=9443
 choose_access; prepare_tls

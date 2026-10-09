@@ -174,8 +174,12 @@ choose_access() {
   OPEN_PORTS="${FIREWALL_UI_OPEN_PORTS:-0}"
   if [[ "$ACCESS_MODE" != local && "${INSTALL_INTERACTIVE:-0}" == 1 && -z "${FIREWALL_UI_OPEN_PORTS:-}" ]]; then
     local answer
-    ask answer 'Разрешить входящий TCP-порт панели (и 80 для Let’s Encrypt) в UFW/firewalld? (д/н)' д
-    case "$answer" in д|Д|y|Y) OPEN_PORTS=1;; esac
+    ask answer 'Разрешить входящий TCP-порт панели (и 80 для Let’s Encrypt) в UFW/firewalld? (y/n)' y
+    case "${answer,,}" in
+      y|yes) OPEN_PORTS=1;;
+      n|no) OPEN_PORTS=0;;
+      *) echo 'Введите y или n.' >&2; return 1;;
+    esac
   fi
   if [[ "$TLS_MODE" == existing ]]; then
     ask TLS_CERT 'Абсолютный путь к сертификату PEM' "$TLS_CERT"
@@ -311,8 +315,12 @@ create_settings() {
   local reconfigure="${FIREWALL_UI_RECONFIGURE:-0}" candidate
   if [[ -f "$CONFIG_FILE" && "$reconfigure" != 1 && "${INSTALL_INTERACTIVE:-0}" == 1 ]]; then
     local answer
-    ask answer 'Настройки уже есть. Изменить способ доступа? (д/н)' н
-    [[ "$answer" != д && "$answer" != Д && "$answer" != y && "$answer" != Y ]] || reconfigure=1
+    ask answer 'Настройки уже есть. Изменить способ доступа? (y/n)' n
+    case "${answer,,}" in
+      y|yes) reconfigure=1;;
+      n|no) :;;
+      *) echo 'Введите y или n.' >&2; return 1;;
+    esac
   fi
   if [[ ! -f "$CONFIG_FILE" || "$reconfigure" == 1 ]]; then
     choose_access

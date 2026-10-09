@@ -255,8 +255,8 @@ uninstall_service() {
   local mode="${1:-}" answer
   [[ "$mode" == '' || "$mode" == --purge ]] || { echo 'Использование: firewall-ui uninstall [--purge]' >&2; return 2; }
   if [[ -z "$mode" && "${FIREWALL_UI_NONINTERACTIVE:-0}" != 1 ]]; then
-    read -r -p 'Удалить также настройки, данные и сертификаты? [д/Н]: ' answer
-    [[ "$answer" =~ ^([Yy]|[Дд])$ ]] && mode=--purge
+    read -r -p 'Удалить также настройки, данные и сертификаты? [y/N]: ' answer
+    [[ "$answer" =~ ^[Yy]$ ]] && mode=--purge
   fi
   # Stop the timer AND a renewal already in progress before touching files.
   systemctl stop "${SERVICE}.service" firewall-ui-cert-renew.timer firewall-ui-cert-renew.service >/dev/null 2>&1 || true

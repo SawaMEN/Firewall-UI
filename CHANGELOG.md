@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.3
+
+- Use English y/n responses in terminal confirmation prompts while retaining Russian descriptions.
+- Validate installer confirmation input instead of silently interpreting invalid answers.
+
 ## 1.2.2
 
 - Group port rows by process/PID with expandable details and consecutive ranges written with hyphens; preserve gaps and individual firewall controls.
