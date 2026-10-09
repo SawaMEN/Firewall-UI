@@ -152,6 +152,7 @@ func main() {
 	app.SecureCookies = cfg.SecureCookies
 	app.ConfigPath = *configPath
 	app.RuntimeConfig = cfg
+	app.XUI.Configure(cfg.XUI)
 	app.Restart = func() {
 		process, findErr := os.FindProcess(os.Getpid())
 		if findErr == nil {
@@ -165,6 +166,7 @@ func main() {
 	app.History = history.New(filepath.Join(dataDir, "history.jsonl"))
 	portMonitor := service.NewPortMonitor("/proc", time.Duration(cfg.PortScanInterval)*time.Second)
 	app.PortMonitor = portMonitor
+	portMonitor.Integration = app.XUI
 	app.Firewall.StartAutoSync()
 
 	srv := &http.Server{
@@ -180,6 +182,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	app.XUI.Start(ctx)
 	portMonitor.Start(ctx)
 	go updateManager.Run(ctx, *configPath)
 	go func() {

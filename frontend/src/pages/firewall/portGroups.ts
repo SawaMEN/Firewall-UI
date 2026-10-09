@@ -1,5 +1,13 @@
 export type Process = { pid: number; name: string; executable?: string };
+export type PortService = {
+  id: number;
+  name: string;
+  protocol: string;
+  transport?: string;
+  security?: string;
+};
 export type Port = {
+  services?: PortService[];
   socketId: string;
   port: number;
   protocol: string;
@@ -12,22 +20,32 @@ export type Port = {
 };
 export type ProcessGroup = { id: string; processes: Process[]; ports: Port[] };
 
-// A process summary is an extent, not a claim that every intermediate port is
-// open. Keep the exact (possibly sparse) list in the expanded details.
+// Summaries never include missing ports; every gap starts a separate interval.
 export function summarizePorts(values: number[]) {
   const ports = [...new Set(values)].sort((a, b) => a - b);
-  const first = ports[0],
-    last = ports[ports.length - 1];
   return {
-    range:
-      ports.length === 0
-        ? '—'
-        : first === last
-          ? String(first)
-          : `${first}-${last}`,
+    range: formatPortRanges(ports) || '—',
     count: ports.length,
-    sparse: ports.length > 1 && last - first + 1 !== ports.length,
+    sparse:
+      ports.length > 1 &&
+      ports[ports.length - 1] - ports[0] + 1 !== ports.length,
   };
+}
+
+export function splitPortSegments<T>(
+  items: T[],
+  getPort: (item: T) => number,
+): T[][] {
+  const sorted = [...items].sort((a, b) => getPort(a) - getPort(b));
+  const segments: T[][] = [];
+  let last = -1;
+  for (const item of sorted) {
+    const port = getPort(item);
+    if (!segments.length || port > last + 1) segments.push([]);
+    segments[segments.length - 1].push(item);
+    last = port;
+  }
+  return segments;
 }
 
 // Only consecutive, actually present ports become a range; gaps stay visible.
@@ -46,10 +64,7 @@ export function formatPortRanges(values: number[]): string {
 // Executable identity joins workers of one application, while different binaries
 // and unidentified owners remain separate. Exact PIDs stay on socket details.
 export function groupPortsByProcess(ports: Port[]): ProcessGroup[] {
-  const groups = new Map<
-    string,
-    ProcessGroup & { owners: Map<number, Process> }
-  >();
+  const groups = new Map<string, ProcessGroup>();
   for (const port of ports) {
     const owners = [
       ...new Map(port.processes.map((owner) => [owner.pid, owner])).values(),
@@ -67,25 +82,31 @@ export function groupPortsByProcess(ports: Port[]): ProcessGroup[] {
     const group = groups.get(id);
     if (group) {
       group.ports.push(port);
-      for (const owner of owners) group.owners.set(owner.pid, owner);
     } else
       groups.set(id, {
         id,
         processes: owners,
-        owners: new Map(owners.map((owner) => [owner.pid, owner])),
         ports: [port],
       });
   }
-  return [...groups.values()].map((group) => ({
-    id: group.id,
-    processes: [...group.owners.values()].sort((a, b) => a.pid - b.pid),
-    ports: group.ports.sort(
-      (a, b) =>
-        a.port - b.port ||
-        a.protocol.localeCompare(b.protocol) ||
-        a.address.localeCompare(b.address),
-    ),
-  }));
+  return [...groups.values()].flatMap((group) =>
+    splitPortSegments(group.ports, (port) => port.port).map((ports) => ({
+      id: `${group.id}:${ports[0].port}`,
+      processes: [
+        ...new Map(
+          ports
+            .flatMap((port) => port.processes)
+            .map((owner) => [owner.pid, owner]),
+        ).values(),
+      ].sort((a, b) => a.pid - b.pid),
+      ports: ports.sort(
+        (a, b) =>
+          a.port - b.port ||
+          a.protocol.localeCompare(b.protocol) ||
+          a.address.localeCompare(b.address),
+      ),
+    })),
+  );
 }
 
 export type RulePort = {
@@ -134,15 +155,17 @@ export function groupFirewallRules<T extends RulePort>(
     if (group) group.rules.push(rule);
     else groups.set(id, { id, rules: [rule], range: '', sparse: false });
   }
-  return [...groups.values()].map((group) => {
-    group.rules.sort((a, b) => (a.port || 0) - (b.port || 0));
-    const summary = summarizePorts(
-      group.rules.flatMap((rule) => (rule.port ? [rule.port] : [])),
-    );
-    return {
-      ...group,
-      range: group.rules[0].portRange || summary.range,
-      sparse: summary.sparse,
-    };
-  });
+  return [...groups.values()].flatMap((group) =>
+    splitPortSegments(group.rules, (rule) => rule.port || 0).map((rules) => {
+      const summary = summarizePorts(
+        rules.flatMap((rule) => (rule.port ? [rule.port] : [])),
+      );
+      return {
+        id: `${group.id}:${rules[0].portRange || rules[0].port}`,
+        rules,
+        range: rules[0].portRange || summary.range,
+        sparse: summary.sparse,
+      };
+    }),
+  );
 }

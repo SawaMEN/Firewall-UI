@@ -44,6 +44,8 @@ type runtimeBackup struct {
 }
 
 type dashboardResponse struct {
+	ActivePorts     []service.Port          `json:"activePorts"`
+	Integration     service.XUIStatus       `json:"integration"`
 	Backend         string                  `json:"backend"`
 	FirewallEnabled bool                    `json:"firewallEnabled"`
 	AutoSync        bool                    `json:"autoSync"`
@@ -60,6 +62,10 @@ type dashboardResponse struct {
 
 func (s *Server) handleExtendedAPI(w http.ResponseWriter, r *http.Request) bool {
 	switch r.URL.Path {
+	case "/api/integrations/3x-ui":
+		s.xuiSettings(w, r)
+	case "/api/integrations/3x-ui/test":
+		s.xuiTest(w, r)
 	case "/api/ports/stream":
 		s.streamPorts(w, r)
 	case "/api/security/credentials":
@@ -110,9 +116,10 @@ func portStreamState(snapshot service.PortSnapshot, activeOnly bool) (service.Po
 		snapshot = activePortSnapshot(snapshot)
 	}
 	data, _ := json.Marshal(struct {
-		Ports      []service.Port
-		Containers []service.ContainerPort
-	}{snapshot.Ports, snapshot.Containers})
+		Ports       []service.Port
+		Containers  []service.ContainerPort
+		Integration service.XUIStatus
+	}{snapshot.Ports, snapshot.Containers, service.XUIStatus{Enabled: snapshot.Integration.Enabled, Connected: snapshot.Integration.Connected, Message: snapshot.Integration.Message, Inbounds: snapshot.Integration.Inbounds}})
 	return snapshot, sha256.Sum256(data)
 }
 
@@ -230,6 +237,8 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 
 	listening, public, risky := summarizePorts(snapshot.Ports, covered)
 	reply(w, http.StatusOK, dashboardResponse{
+		ActivePorts:     activePortSnapshot(snapshot).Ports,
+		Integration:     snapshot.Integration,
 		Backend:         status.Backend,
 		FirewallEnabled: status.Enabled,
 		AutoSync:        status.AutoSync,

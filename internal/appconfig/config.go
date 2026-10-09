@@ -12,21 +12,23 @@ import (
 	"strings"
 
 	"github.com/SawaMEN/Firewall-UI/internal/security"
+	"github.com/SawaMEN/Firewall-UI/internal/service"
 )
 
 type Config struct {
-	PublicHost       string   `json:"publicHost,omitempty"`
-	ListenHost       string   `json:"listenHost"`
-	ListenPort       int      `json:"listenPort"`
-	ExternalPort     int      `json:"externalPort"`
-	SecureCookies    bool     `json:"secureCookies"`
-	TLSCert          string   `json:"tlsCert,omitempty"`
-	TLSKey           string   `json:"tlsKey,omitempty"`
-	StatePath        string   `json:"statePath"`
-	UpdateChannel    string   `json:"updateChannel"`
-	AllowedCIDRs     []string `json:"allowedCidrs,omitempty"`
-	RollbackSeconds  int      `json:"rollbackSeconds"`
-	PortScanInterval int      `json:"portScanInterval"`
+	XUI              service.XUIConfig `json:"xui,omitempty"`
+	PublicHost       string            `json:"publicHost,omitempty"`
+	ListenHost       string            `json:"listenHost"`
+	ListenPort       int               `json:"listenPort"`
+	ExternalPort     int               `json:"externalPort"`
+	SecureCookies    bool              `json:"secureCookies"`
+	TLSCert          string            `json:"tlsCert,omitempty"`
+	TLSKey           string            `json:"tlsKey,omitempty"`
+	StatePath        string            `json:"statePath"`
+	UpdateChannel    string            `json:"updateChannel"`
+	AllowedCIDRs     []string          `json:"allowedCidrs,omitempty"`
+	RollbackSeconds  int               `json:"rollbackSeconds"`
+	PortScanInterval int               `json:"portScanInterval"`
 }
 
 func Default() Config {
@@ -108,6 +110,9 @@ func Save(path string, cfg Config) error {
 }
 
 func Validate(cfg Config) error {
+	if err := service.ValidateXUIConfig(cfg.XUI); err != nil {
+		return err
+	}
 	host := strings.TrimSpace(cfg.ListenHost)
 	if host == "" {
 		return errors.New("listen host is required")

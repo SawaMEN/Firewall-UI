@@ -5,3 +5,6 @@ internal/webassets/dist/*
 /dist/
 *.log
 .env
+/dist-dev/
+/dist-stable/
+/release-assets/

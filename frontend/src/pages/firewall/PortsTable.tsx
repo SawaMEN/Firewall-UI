@@ -43,6 +43,7 @@ import {
   type Port,
   type ProcessGroup,
 } from './portGroups';
+import { AddressLabel, PurposeLabels, InboundProtocolTags } from './PortLabels';
 
 type ContainerPort = {
   runtime: string;
@@ -56,6 +57,12 @@ type ContainerPort = {
   public: boolean;
 };
 type Snapshot = {
+  integration?: {
+    enabled: boolean;
+    connected: boolean;
+    message?: string;
+    inbounds: number;
+  };
   ports: Port[];
   containers: ContainerPort[];
   updatedAt: string;
@@ -265,6 +272,12 @@ export function PortsTable() {
           port.port,
           port.address,
           port.state,
+          ...(port.services || []).flatMap((service) => [
+            service.name,
+            service.protocol,
+            service.transport || '',
+            service.security || '',
+          ]),
           port.family,
           ...port.processes.flatMap((owner) => [
             owner.pid,
@@ -378,7 +391,13 @@ export function PortsTable() {
     {
       title: ru ? 'Порт' : 'Port',
       dataIndex: 'port',
-      width: 90,
+      render: (_, port) => (
+        <div>
+          <strong>{port.port}</strong>
+          <InboundProtocolTags services={port.services} />
+        </div>
+      ),
+      width: 130,
       sorter: (a, b) => a.port - b.port,
     },
     {
@@ -392,13 +411,12 @@ export function PortsTable() {
       dataIndex: 'address',
       width: 240,
       render: (value: string, port) => (
-        <Space wrap>
-          <Typography.Text copyable code>
-            {value}
-          </Typography.Text>
-          <Tag>{port.family}</Tag>
-          {port.loopback ? <Tag>Loopback</Tag> : null}
-        </Space>
+        <AddressLabel
+          address={value}
+          family={port.family}
+          port={port.port}
+          ru={ru}
+        />
       ),
     },
     {
@@ -430,6 +448,12 @@ export function PortsTable() {
             {ru ? 'Нет владельца' : 'No owner'}
           </Typography.Text>
         ),
+    },
+    {
+      key: 'purpose',
+      title: ru ? 'Назначение' : 'Purpose',
+      width: 200,
+      render: (_, port) => <PurposeLabels ports={[port]} ru={ru} />,
     },
     {
       key: 'container',
@@ -489,11 +513,17 @@ export function PortsTable() {
             >
               <div className="mobile-port-title">
                 <strong>{port.port}</strong>
+                <InboundProtocolTags services={port.services} />
                 <Tag>{port.protocol.toUpperCase()}</Tag>
                 <span>{port.family}</span>
               </div>
               <div className="port-addresses">
-                <span>{port.address}</span>
+                <AddressLabel
+                  address={port.address}
+                  family={port.family}
+                  port={port.port}
+                  ru={ru}
+                />
               </div>
               {!compact ? (
                 <div className="port-owners">
@@ -504,6 +534,7 @@ export function PortsTable() {
                   ))}
                 </div>
               ) : null}
+              <PurposeLabels ports={[port]} ru={ru} />
               {(containerMap.get(key(port.port, port.protocol)) || []).map(
                 (container) => (
                   <Typography.Text
@@ -527,6 +558,8 @@ export function PortsTable() {
           columns={portColumns.filter(
             (column) =>
               (!compact || column.key !== 'process') &&
+              (column.key !== 'purpose' ||
+                ports.some((port) => port.services?.length)) &&
               (column.key !== 'container' ||
                 ports.some((port) =>
                   containerMap.has(key(port.port, port.protocol)),
@@ -566,6 +599,7 @@ export function PortsTable() {
               {ru ? 'Нет владельца' : 'No owner'}
             </Typography.Text>
           )}
+          <PurposeLabels ports={group.ports} ru={ru} />
         </div>
       ),
     },
@@ -577,6 +611,9 @@ export function PortsTable() {
         return (
           <div className="port-range-cell">
             <span className="port-range">{summary.range}</span>
+            <InboundProtocolTags
+              services={group.ports.flatMap((port) => port.services || [])}
+            />
             <div className="port-range-meta">
               {[...new Set(group.ports.map((port) => port.protocol))]
                 .sort()
@@ -605,7 +642,12 @@ export function PortsTable() {
         <div className="port-addresses">
           {[...new Set(group.ports.map((port) => port.address))].map(
             (address) => (
-              <span key={address}>{address}</span>
+              <AddressLabel
+                key={address}
+                address={address}
+                family={address.includes(':') ? 'IPv6' : 'IPv4'}
+                ru={ru}
+              />
             ),
           )}
         </div>
@@ -754,6 +796,19 @@ export function PortsTable() {
           {new Set(filtered.map((port) => port.port)).size}
         </Typography.Text>
       </div>
+      {snapshot.integration?.enabled ? (
+        <Alert
+          style={{ marginBottom: 16 }}
+          type={snapshot.integration.connected ? 'info' : 'warning'}
+          showIcon
+          title={
+            snapshot.integration.connected
+              ? `${ru ? '3X-UI подключена · активных инбаундов' : '3X-UI connected · active inbounds'}: ${snapshot.integration.inbounds}`
+              : snapshot.integration.message ||
+                (ru ? 'Подключение к 3X-UI…' : 'Connecting to 3X-UI…')
+          }
+        />
+      ) : null}
       {error ? (
         <Alert
           type="error"
@@ -792,9 +847,15 @@ export function PortsTable() {
                         ) : (
                           <span>{ru ? 'Нет владельца' : 'No owner'}</span>
                         )}
+                        <PurposeLabels ports={group.ports} ru={ru} />
                       </div>
                       <div className="port-range-cell">
                         <span className="port-range">{summary.range}</span>
+                        <InboundProtocolTags
+                          services={group.ports.flatMap(
+                            (port) => port.services || [],
+                          )}
+                        />
                         <span className="port-range-note">
                           {ru ? 'Портов' : 'Ports'}: {summary.count} ·{' '}
                           {[
@@ -864,8 +925,8 @@ export function PortsTable() {
       <div className="ports-footnote">
         <Typography.Text type="secondary">
           {ru
-            ? 'Раскройте список у процесса, чтобы посмотреть точные порты и закрыть доступ. Диапазон — минимальный и максимальный занятый порт; пропуски отмечены отдельно. Наличие порта не означает доступность из интернета.'
-            : 'Expand a process to see its exact ports and block access. The range shows the lowest and highest bound port; gaps are marked separately. A bound port does not imply internet reachability.'}
+            ? 'Раскройте список у процесса, чтобы посмотреть точные порты и закрыть доступ. В диапазон входят только подряд идущие занятые порты; после пропуска начинается отдельная строка. Наличие порта не означает доступность из интернета.'
+            : 'Expand a process to see its exact ports and block access. Ranges include consecutive occupied ports only; gaps start separate rows. A bound port does not imply internet reachability.'}
         </Typography.Text>
       </div>
     </Card>

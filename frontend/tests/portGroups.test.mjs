@@ -24,8 +24,8 @@ test('ownerless diagnostic sockets stay separate', () => {
   assert.equal(groupPortsByProcess([socket(9000, []), socket(9001, [])]).length, 2);
 });
 
-test('process extent uses a hyphen across sparse and mixed-protocol ports without filling gaps', () => {
-  assert.deepEqual(summarizePorts([8443, 443, 8443]), { range: '443-8443', count: 2, sparse: true });
+test('summaries split gaps and use hyphens only for consecutive occupied ports', () => {
+  assert.deepEqual(summarizePorts([8443, 443, 8443]), { range: '443, 8443', count: 2, sparse: true });
   assert.deepEqual(summarizePorts([9001, 9000]), { range: '9000-9001', count: 2, sparse: false });
   assert.deepEqual(summarizePorts([443, 443]), { range: '443', count: 1, sparse: false });
   assert.deepEqual(summarizePorts([]), { range: '—', count: 0, sparse: false });
@@ -41,10 +41,19 @@ test('workers of the same executable show one range and retain every PID', () =>
 });
 test('firewall ranges preserve protection, gaps, protocol and denied state', () => {
   const rule = (port, extra = {}) => ({ port, source: 'service', label: 'xray', protocol: 'tcp', exists: true, owned: true, ...extra });
-  const groups = groupFirewallRules([rule(9000), rule(9002), rule(9001), rule(22, { source: 'ssh' }), rule(9000, { protocol: 'udp' }), rule(9100, { source: 'manual' })], new Set(['close-port-9001-tcp']));
-  assert.equal(groups.length, 5);
-  assert.equal(groups[0].range, '9000-9002');
-  assert.equal(groups[0].sparse, true);
-  assert.deepEqual(groups[0].rules.map(r => r.port), [9000, 9002]);
-  assert.equal(groups[1].range, '9001');
+  const groups = groupFirewallRules([rule(9000), rule(9002), rule(9003), rule(9001), rule(22, { source: 'ssh' }), rule(9000, { protocol: 'udp' }), rule(9100, { source: 'manual' })], new Set(['close-port-9001-tcp']));
+  assert.equal(groups.length, 6);
+  assert.equal(groups[0].range, '9000');
+  assert.equal(groups[1].range, '9002-9003');
+  assert.equal(groups[0].sparse, false);
+  assert.deepEqual(groups[1].rules.map(r => r.port), [9002, 9003]);
+  assert.equal(groups[2].range, '9001');
+});
+
+test('large process gaps create separate rows while mixed sockets share a contiguous range', () => {
+  const owner = { pid: 100, name: 'xray', executable: '/usr/bin/xray' };
+  const groups = groupPortsByProcess([socket(443, [owner]), socket(8443, [owner]), socket(9000, [owner]), socket(9001, [{ ...owner, pid: 101 }]), socket(9002, [owner]), socket(9000, [owner], { protocol: 'udp' })]);
+  assert.deepEqual(groups.map(group => summarizePorts(group.ports.map(port => port.port)).range), ['443', '8443', '9000-9002']);
+  assert.deepEqual(groups[2].processes.map(owner => owner.pid), [100, 101]);
+  assert.equal(groups[2].ports.length, 4);
 });

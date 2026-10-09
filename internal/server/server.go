@@ -51,6 +51,7 @@ type Server struct {
 	RuntimeConfig appconfig.Config
 	Restart       func()
 	Updater       *updater.Manager
+	XUI           *service.XUIIntegration
 	PortMonitor   *service.PortMonitor
 	Audit         *audit.Logger
 	History       *history.Store
@@ -71,6 +72,7 @@ func New(user, password string, port int, assets fs.FS) *Server {
 		Assets:        assets,
 		RuntimeConfig: cfg,
 		Rollbacks:     rollback.NewManager(),
+		XUI:           service.NewXUIIntegration(),
 		sessions:      map[string]session{},
 		attempts:      map[string]attempt{},
 	}

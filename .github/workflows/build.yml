@@ -5,16 +5,18 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: firewall-ui-ci-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  test:
+  frontend:
     runs-on: ubuntu-latest
+    outputs:
+      build_time: ${{ steps.metadata.outputs.build_time }}
     steps:
       - uses: actions/checkout@v4
-      - name: Check shell scripts
-        run: bash -n install.sh deploy/firewall-ui && bash tests/installer.sh && bash tests/manager.sh && bash tests/access.sh && bash tests/uninstall.sh && bash tests/install-menu.sh
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25.x'
+      - id: metadata
+        run: echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -22,39 +24,79 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci --ignore-scripts
         working-directory: frontend
-
-      - name: Audit production frontend dependencies
-        run: npm audit --omit=dev --audit-level=high
+      - run: npm audit --omit=dev --audit-level=high
         working-directory: frontend
       - run: npm test
         working-directory: frontend
-
       - run: npm run build
         working-directory: frontend
-      - name: Check Go formatting
-        run: |
-          files="$(gofmt -l ./cmd ./internal)"
-          printf "%s\\n" "$files"
-          test -z "$files"
-      - run: go test -race ./...
-      - run: go vet ./...
-      - name: Build Linux binaries
-        run: |
-          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          DEV_VERSION="dev-${GITHUB_SHA::7}"
-          mkdir -p dist
-          for arch in amd64 arm64; do
-            GOOS=linux GOARCH=$arch CGO_ENABLED=0 go build \
-              -trimpath \
-              -ldflags="-s -w \
-                -X github.com/SawaMEN/Firewall-UI/internal/buildinfo.Version=$DEV_VERSION \
-                -X github.com/SawaMEN/Firewall-UI/internal/buildinfo.Channel=dev \
-                -X github.com/SawaMEN/Firewall-UI/internal/buildinfo.Commit=$GITHUB_SHA \
-                -X github.com/SawaMEN/Firewall-UI/internal/buildinfo.BuildTime=$BUILD_TIME" \
-              -o "dist/firewall-ui-linux-$arch" \
-              ./cmd/firewall-ui
-          done
       - uses: actions/upload-artifact@v4
         with:
-          name: firewall-ui-linux
-          path: dist/*
+          name: frontend-dist
+          path: internal/webassets/dist
+          retention-days: 3
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: false
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build
+          key: go-${{ runner.os }}-tests-${{ hashFiles('go.mod') }}-${{ hashFiles('**/*.go') }}
+          restore-keys: |
+            go-${{ runner.os }}-tests-${{ hashFiles('go.mod') }}-
+      - name: Check shell scripts
+        run: bash -n install.sh deploy/firewall-ui scripts/build-release.sh && bash tests/installer.sh && bash tests/manager.sh && bash tests/access.sh && bash tests/uninstall.sh && bash tests/install-menu.sh
+      - name: Check Go formatting
+        run: test -z "$(gofmt -l ./cmd ./internal)"
+      - run: go test -race -vet=off ./...
+      - run: go vet ./...
+  binaries:
+    needs: [frontend, checks]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: false
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('go.mod') }}-${{ hashFiles('**/*.go') }}
+          restore-keys: |
+            go-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('go.mod') }}-
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: internal/webassets/dist
+      - name: Build release binaries once
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCH: ${{ matrix.arch }}
+          BUILD_TIME: ${{ needs.frontend.outputs.build_time }}
+        run: |
+          set -euo pipefail
+          DEV_VERSION="dev-${GITHUB_SHA::7}"
+          scripts/build-release.sh "$ARCH" dev "$DEV_VERSION"
+          STABLE_VERSION="$(tr -d '[:space:]' < VERSION)"
+          if [[ "$GITHUB_REF" == refs/heads/main && "$GITHUB_EVENT_NAME" != pull_request ]] && ! gh release view "v$STABLE_VERSION" >/dev/null 2>&1; then
+            scripts/build-release.sh "$ARCH" stable "$STABLE_VERSION"
+          fi
+          printf '%s\n' "$BUILD_TIME" > dist-dev/build-time.txt
+          mkdir -p release-assets
+          cp -R dist-dev release-assets/
+          if [[ -d dist-stable ]]; then cp -R dist-stable release-assets/; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firewall-ui-linux-${{ matrix.arch }}
+          path: release-assets
+          retention-days: 7

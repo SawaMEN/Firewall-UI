@@ -19,16 +19,17 @@ type Process struct {
 	Executable string `json:"executable,omitempty"`
 }
 type Port struct {
-	SocketID  string    `json:"socketId"`
-	Port      int       `json:"port"`
-	Protocol  string    `json:"protocol"`
-	Address   string    `json:"address"`
-	Family    string    `json:"family"`
-	State     string    `json:"state"`
-	Listening bool      `json:"listening"`
-	Loopback  bool      `json:"loopback"`
-	Processes []Process `json:"processes"`
-	Inode     string    `json:"-"`
+	Services  []PortService `json:"services,omitempty"`
+	SocketID  string        `json:"socketId"`
+	Port      int           `json:"port"`
+	Protocol  string        `json:"protocol"`
+	Address   string        `json:"address"`
+	Family    string        `json:"family"`
+	State     string        `json:"state"`
+	Listening bool          `json:"listening"`
+	Loopback  bool          `json:"loopback"`
+	Processes []Process     `json:"processes"`
+	Inode     string        `json:"-"`
 }
 
 var socketStates = map[string]string{"01": "ESTABLISHED", "02": "SYN_SENT", "03": "SYN_RECV", "04": "FIN_WAIT1", "05": "FIN_WAIT2", "06": "TIME_WAIT", "07": "UNCONNECTED", "08": "CLOSE_WAIT", "09": "LAST_ACK", "0A": "LISTEN", "0B": "CLOSING", "0C": "NEW_SYN_RECV"}
@@ -160,5 +161,5 @@ func parseSocket(line, table string) (Port, error) {
 		family = "IPv6"
 	}
 	listening := protocol == "tcp" && fields[3] == "0A" || protocol == "udp" && fields[3] == "07"
-	return Port{fields[1] + "-" + fields[2] + "-" + fields[9], int(port), protocol, ip.String(), family, socketStates[fields[3]], listening, ip.IsLoopback(), []Process{}, fields[9]}, nil
+	return Port{SocketID: fields[1] + "-" + fields[2] + "-" + fields[9], Port: int(port), Protocol: protocol, Address: ip.String(), Family: family, State: socketStates[fields[3]], Listening: listening, Loopback: ip.IsLoopback(), Processes: []Process{}, Inode: fields[9]}, nil
 }

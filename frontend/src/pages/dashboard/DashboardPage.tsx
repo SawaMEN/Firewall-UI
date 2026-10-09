@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Card,
@@ -13,19 +13,14 @@ import {
 import { useTranslation } from 'react-i18next';
 import { HttpUtil } from '@/utils';
 import { usePageVisibility } from '@/hooks/usePageVisibility';
+import PortRangesTable from '@/pages/firewall/PortRangesTable';
+import {
+  summarizePorts,
+  splitPortSegments,
+  type Port,
+} from '@/pages/firewall/portGroups';
+import { AddressLabel } from '@/pages/firewall/PortLabels';
 
-type Process = { pid: number; name: string; executable?: string };
-type Port = {
-  socketId: string;
-  port: number;
-  protocol: string;
-  address: string;
-  family: string;
-  state: string;
-  listening: boolean;
-  loopback: boolean;
-  processes: Process[];
-};
 type ContainerPort = {
   runtime: string;
   containerId: string;
@@ -38,6 +33,13 @@ type ContainerPort = {
   public: boolean;
 };
 type Dashboard = {
+  activePorts?: Port[];
+  integration?: {
+    enabled: boolean;
+    connected: boolean;
+    message?: string;
+    inbounds: number;
+  };
   backend: string;
   firewallEnabled: boolean;
   autoSync: boolean;
@@ -96,6 +98,29 @@ export default function DashboardPage() {
     };
   }, [visible, ru]);
 
+  const containerGroups = useMemo(() => {
+    const groups = new Map<string, ContainerPort[]>();
+    for (const port of data?.containerPorts || []) {
+      const id = JSON.stringify([
+        port.runtime,
+        port.containerId,
+        port.hostIp,
+        port.protocol,
+      ]);
+      const group = groups.get(id);
+      if (group) group.push(port);
+      else groups.set(id, [port]);
+    }
+    return [...groups.entries()].flatMap(([id, allPorts]) =>
+      splitPortSegments(allPorts, (port) => port.hostPort).map((ports) => ({
+        ...ports[0],
+        id: `${id}:${ports[0].hostPort}`,
+        ports,
+        summary: summarizePorts(ports.map((port) => port.hostPort)),
+      })),
+    );
+  }, [data?.containerPorts]);
+
   if (error && !data) return <Alert type="error" showIcon title={error} />;
   if (!data)
     return <Card className="panel-card">{ru ? 'Загрузка…' : 'Loading…'}</Card>;
@@ -132,6 +157,35 @@ export default function DashboardPage() {
       <Card
         className="panel-card"
         title={
+          ru ? 'Активные порты по приложениям' : 'Active ports by application'
+        }
+      >
+        {data.integration?.enabled ? (
+          <Alert
+            style={{ marginBottom: 12 }}
+            type={data.integration.connected ? 'info' : 'warning'}
+            title={
+              data.integration.connected
+                ? `3X-UI · ${ru ? 'Инбаундов' : 'Inbounds'}: ${data.integration.inbounds}`
+                : data.integration.message ||
+                  (ru ? 'Подключение к 3X-UI…' : 'Connecting to 3X-UI…')
+            }
+          />
+        ) : null}
+        <PortRangesTable ports={data.activePorts || data.riskyPorts} ru={ru} />
+        <Typography.Paragraph
+          type="secondary"
+          style={{ marginTop: 12, marginBottom: 0 }}
+        >
+          {ru
+            ? 'В диапазон входят только подряд идущие занятые порты. Пропуски разделяют строки; точные порты, адреса и PID — в раскрытом списке.'
+            : 'Ranges contain consecutive occupied ports only. Gaps split rows; expand for exact ports, addresses and PIDs.'}
+        </Typography.Paragraph>
+      </Card>
+
+      <Card
+        className="panel-card"
+        title={
           ru
             ? 'Потенциально открытые без явного правила'
             : 'Potentially exposed without an explicit rule'
@@ -142,29 +196,7 @@ export default function DashboardPage() {
             {ru ? 'Не обнаружено.' : 'None detected.'}
           </Typography.Text>
         ) : (
-          <Table<Port>
-            size="small"
-            scroll={{ x: 600 }}
-            pagination={{ defaultPageSize: 10, hideOnSinglePage: true }}
-            rowKey={(p) => p.socketId}
-            dataSource={data.riskyPorts}
-            columns={[
-              { title: ru ? 'Порт' : 'Port', dataIndex: 'port', width: 90 },
-              {
-                title: ru ? 'Протокол' : 'Protocol',
-                dataIndex: 'protocol',
-                width: 100,
-                render: (v: string) => <Tag>{v.toUpperCase()}</Tag>,
-              },
-              { title: ru ? 'Адрес' : 'Address', dataIndex: 'address' },
-              {
-                title: ru ? 'Процесс' : 'Process',
-                render: (_, p) =>
-                  p.processes.map((x) => x.name || `PID ${x.pid}`).join(', ') ||
-                  '—',
-              },
-            ]}
-          />
+          <PortRangesTable ports={data.riskyPorts} ru={ru} />
         )}
       </Card>
 
@@ -174,13 +206,36 @@ export default function DashboardPage() {
           ru ? 'Опубликованные порты контейнеров' : 'Published container ports'
         }
       >
-        <Table<ContainerPort>
+        <Table<(typeof containerGroups)[number]>
           size="small"
           scroll={{ x: 720 }}
-          rowKey={(p) =>
-            `${p.runtime}-${p.containerId}-${p.hostPort}-${p.protocol}`
-          }
-          dataSource={data.containerPorts}
+          rowKey="id"
+          expandable={{
+            rowExpandable: (group) => group.ports.length > 1,
+            expandedRowRender: (group) => (
+              <Table<ContainerPort>
+                size="small"
+                rowKey={(p) => `${p.hostPort}-${p.containerPort}`}
+                dataSource={group.ports}
+                pagination={{ pageSize: 10, hideOnSinglePage: true }}
+                columns={[
+                  {
+                    title: ru ? 'Порт сервера' : 'Host port',
+                    dataIndex: 'hostPort',
+                  },
+                  {
+                    title: ru ? 'Порт контейнера' : 'Container port',
+                    dataIndex: 'containerPort',
+                  },
+                  {
+                    title: ru ? 'Протокол' : 'Protocol',
+                    dataIndex: 'protocol',
+                  },
+                ]}
+              />
+            ),
+          }}
+          dataSource={containerGroups}
           pagination={{ pageSize: 10, hideOnSinglePage: true }}
           locale={{
             emptyText: ru
@@ -198,10 +253,19 @@ export default function DashboardPage() {
               render: (_, p) => (
                 <Space wrap>
                   <Tag>{p.runtime}</Tag>
-                  <Typography.Text code>
-                    {p.hostIp || '0.0.0.0'}:{p.hostPort} → {p.containerPort}/
-                    {p.protocol}
-                  </Typography.Text>
+                  <strong className="port-range">
+                    {p.summary.range}/{p.protocol.toUpperCase()}
+                  </strong>
+                  <AddressLabel
+                    address={p.hostIp || '0.0.0.0'}
+                    family={p.hostIp.includes(':') ? 'IPv6' : 'IPv4'}
+                    ru={ru}
+                  />
+                  {p.summary.sparse ? (
+                    <Typography.Text type="secondary">
+                      {ru ? 'С пропусками' : 'With gaps'}
+                    </Typography.Text>
+                  ) : null}
                   {p.public ? (
                     <Tag color="warning">{ru ? 'Публичный' : 'Public'}</Tag>
                   ) : null}

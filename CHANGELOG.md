@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.7
+
+- Integrate with 3X-UI through authenticated read-only metadata requests; expose local inbound names, application protocols, transport and security beside socket ports. Cache metadata in the background without delaying socket scans; support panel base paths and older list APIs.
+- Add integration configuration, connection testing and token deletion; keep stored tokens out of API responses.
+- Split nonconsecutive ports into separate rows and ranges in active ports, firewall rules, overview and container publications. Never include missing ports in a range.
+- Label wildcard and loopback bind addresses clearly; retain copyable exact IPv4/IPv6 endpoints.
+- Add expandable application ranges to overview and exposed-port lists.
+- Run frontend and backend checks in parallel, cache Go compilation by architecture and build Linux architectures in parallel. Publish checked artifacts without repeating tests or frontend compilation.
+
 ## 1.2.6
 
 - Restore neon gradients, ambient background, luminous buttons and subtle shimmer exclusively in cyberpunk; retain the light and dark styles. Respect reduced motion.
