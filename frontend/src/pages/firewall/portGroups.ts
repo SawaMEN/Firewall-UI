@@ -43,23 +43,42 @@ export function formatPortRanges(values: number[]): string {
   return ranges.join(', ');
 }
 
+// Executable identity joins workers of one application, while different binaries
+// and unidentified owners remain separate. Exact PIDs stay on socket details.
 export function groupPortsByProcess(ports: Port[]): ProcessGroup[] {
-  const groups = new Map<string, ProcessGroup>();
+  const groups = new Map<
+    string,
+    ProcessGroup & { owners: Map<number, Process> }
+  >();
   for (const port of ports) {
     const owners = [
       ...new Map(port.processes.map((owner) => [owner.pid, owner])).values(),
     ].sort((a, b) => a.pid - b.pid);
-    // Shared sockets have their own owner-set group. Unknown owners must never
-    // be combined into an imaginary process, even in diagnostic mode.
+    const identities = [
+      ...new Set(
+        owners.map((owner) =>
+          owner.executable ? `exe:${owner.executable}` : `pid:${owner.pid}`,
+        ),
+      ),
+    ].sort();
     const id = owners.length
-      ? `process:${owners.map((owner) => owner.pid).join(',')}`
+      ? JSON.stringify(identities)
       : `socket:${port.family}:${port.protocol}:${port.socketId}`;
     const group = groups.get(id);
-    if (group) group.ports.push(port);
-    else groups.set(id, { id, processes: owners, ports: [port] });
+    if (group) {
+      group.ports.push(port);
+      for (const owner of owners) group.owners.set(owner.pid, owner);
+    } else
+      groups.set(id, {
+        id,
+        processes: owners,
+        owners: new Map(owners.map((owner) => [owner.pid, owner])),
+        ports: [port],
+      });
   }
   return [...groups.values()].map((group) => ({
-    ...group,
+    id: group.id,
+    processes: [...group.owners.values()].sort((a, b) => a.pid - b.pid),
     ports: group.ports.sort(
       (a, b) =>
         a.port - b.port ||
@@ -67,4 +86,63 @@ export function groupPortsByProcess(ports: Port[]): ProcessGroup[] {
         a.address.localeCompare(b.address),
     ),
   }));
+}
+
+export type RulePort = {
+  port?: number;
+  portRange?: string;
+  protocol: string;
+  source: string;
+  label: string;
+  owned: boolean;
+  exists: boolean;
+};
+export function groupFirewallRules<T extends RulePort>(
+  rules: T[],
+  closedIds: Set<string>,
+) {
+  const groups = new Map<
+    string,
+    { id: string; rules: T[]; range: string; sparse: boolean }
+  >();
+  for (const rule of rules) {
+    // Only automatic service rules with the same label, protocol and state join.
+    // Manual, protected and already ranged rules retain their own identity.
+    const id =
+      rule.source === 'service' && rule.label && rule.port && !rule.portRange
+        ? JSON.stringify([
+            rule.source,
+            [
+              ...new Set(
+                rule.label
+                  .split(',')
+                  .map((name) => name.trim())
+                  .filter(Boolean),
+              ),
+            ].sort(),
+            rule.protocol,
+            rule.owned,
+            rule.exists,
+            closedIds.has(`close-port-${rule.port}-${rule.protocol}`),
+          ])
+        : JSON.stringify([
+            rule.source,
+            rule.portRange || rule.port,
+            rule.protocol,
+          ]);
+    const group = groups.get(id);
+    if (group) group.rules.push(rule);
+    else groups.set(id, { id, rules: [rule], range: '', sparse: false });
+  }
+  return [...groups.values()].map((group) => {
+    group.rules.sort((a, b) => (a.port || 0) - (b.port || 0));
+    const summary = summarizePorts(
+      group.rules.flatMap((rule) => (rule.port ? [rule.port] : [])),
+    );
+    return {
+      ...group,
+      range: group.rules[0].portRange || summary.range,
+      sparse: summary.sparse,
+    };
+  });
 }

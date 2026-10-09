@@ -1,4 +1,4 @@
-/* Three static palettes; no remote fonts, blur layers or continuous effects. */
+/* Light and dark stay minimal. Decorative effects are scoped to cyberpunk. */
 :root {
   --xui-surface: #10141c;
   --xui-surface-container: #181e29;
@@ -79,4 +79,130 @@ html {
 }
 :root[data-theme='cyberpunk'] .brand-text {
   color: #37d8e9;
+}
+
+/* Cyberpunk: luminous surfaces, neon controls and a small animated wordmark.
+   No full-screen animation or backdrop blur; large tables stay inexpensive. */
+:root[data-theme='cyberpunk'] .content-area,
+:root[data-theme='cyberpunk'] .login-shell {
+  background:
+    radial-gradient(ellipse at 0% 0%, #13cadb16, transparent 55%),
+    radial-gradient(ellipse at 100% 25%, #d747ff14, transparent 55%),
+    linear-gradient(135deg, #080c17, #101024 60%, #08131a);
+}
+:root[data-theme='cyberpunk'] .ant-sidebar > .ant-layout-sider,
+:root[data-theme='cyberpunk'] .ant-drawer .ant-drawer-content {
+  background: linear-gradient(170deg, #101b2c, #0c101d 55%, #191024);
+  border-color: #37d8e944;
+}
+:root[data-theme='cyberpunk'] .panel-card,
+:root[data-theme='cyberpunk'] .login-shell .ant-card {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(135deg, #111c2b, #17152a) padding-box,
+    linear-gradient(125deg, #37d8e977, #8866ff66, #ec58d766) border-box;
+  box-shadow:
+    0 8px 28px #0004,
+    0 0 18px #37d8e909;
+}
+:root[data-theme='cyberpunk'] .ant-card-head {
+  background: linear-gradient(110deg, #37d8e909, #a564ff0b);
+}
+:root[data-theme='cyberpunk'] .page-header-icon {
+  background: linear-gradient(135deg, #0c3944, #31204b);
+  border-color: #37d8e96b;
+  box-shadow: 0 0 18px #37d8e928;
+}
+:root[data-theme='cyberpunk'] .brand-text {
+  color: #71f0ff;
+  background: linear-gradient(
+    100deg,
+    #6cedff 15%,
+    #c698ff 38%,
+    #ff88e3 52%,
+    #6cedff 75%
+  );
+  background-size: 220% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 5px #37d8e936);
+  animation: cyber-shimmer 9s ease-in-out infinite alternate;
+}
+:root[data-theme='cyberpunk'] .ant-btn {
+  border-color: #37d8e951;
+  background: linear-gradient(120deg, #142b39, #241d3d);
+  color: #c9f8ff;
+  transition:
+    border-color 150ms,
+    box-shadow 150ms;
+}
+:root[data-theme='cyberpunk'] .ant-btn-primary {
+  color: #071521;
+  font-weight: 650;
+  border-color: #75eaff;
+  background: linear-gradient(115deg, #36d9e9, #80b5ff 58%, #bca2ff);
+  box-shadow: 0 0 14px #37d8e92b;
+}
+:root[data-theme='cyberpunk'] .ant-btn:not(:disabled):hover {
+  border-color: #72eeff;
+  color: #f0fdff;
+  background: linear-gradient(115deg, #164554, #3c285b);
+  box-shadow: 0 0 16px #37d8e934;
+}
+:root[data-theme='cyberpunk'] .ant-btn-primary:not(:disabled):hover {
+  color: #071521;
+  background: linear-gradient(115deg, #79efff, #b4b0ff);
+}
+:root[data-theme='cyberpunk'] .ant-btn-dangerous {
+  color: #ff9bc9;
+  border-color: #ff58a46b;
+  background: linear-gradient(120deg, #381b30, #281c3e);
+}
+:root[data-theme='cyberpunk'] .ant-btn:disabled {
+  color: #7d8a9c;
+  background: #18202c;
+  box-shadow: none;
+}
+:root[data-theme='cyberpunk'] .ant-menu-item-selected,
+:root[data-theme='cyberpunk'] .ant-segmented-item-selected {
+  background: linear-gradient(105deg, #37d8e925, #aa64ff25);
+  color: #75ecff;
+  box-shadow: inset 0 0 0 1px #37d8e93d;
+}
+:root[data-theme='cyberpunk'] .ant-table-thead > tr > th {
+  background: linear-gradient(110deg, #142a38, #221c38);
+  color: #c2f5ff;
+}
+:root[data-theme='cyberpunk'] .port-range {
+  color: #75eaff;
+  text-shadow: 0 0 12px #37d8e92b;
+}
+:root[data-theme='cyberpunk'] .ant-input:focus,
+:root[data-theme='cyberpunk'] .ant-input-affix-wrapper-focused,
+:root[data-theme='cyberpunk'] .ant-select-focused .ant-select-selector {
+  border-color: #57e3f5;
+  box-shadow:
+    0 0 0 2px #37d8e916,
+    0 0 12px #37d8e918;
+}
+@keyframes cyber-shimmer {
+  from {
+    background-position: 0% 50%;
+  }
+  to {
+    background-position: 100% 50%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme='cyberpunk'] .brand-text {
+    animation: none;
+  }
+  :root[data-theme='cyberpunk'] .ant-btn {
+    transition: none;
+  }
+}
+
+:root[data-theme='cyberpunk'][data-page-visible='false'] .brand-text {
+  animation-play-state: paused;
 }

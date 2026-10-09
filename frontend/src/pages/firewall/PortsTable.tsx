@@ -549,8 +549,13 @@ export function PortsTable() {
       width: 210,
       render: (_, group) => (
         <div className="port-owners">
+          {group.processes.length > 3 ? (
+            <Typography.Text type="secondary">
+              {ru ? 'Процессов' : 'Processes'}: {group.processes.length}
+            </Typography.Text>
+          ) : null}
           {group.processes.length ? (
-            group.processes.map((owner) => (
+            group.processes.slice(0, 3).map((owner) => (
               <div key={owner.pid} title={owner.executable}>
                 <strong>{owner.name || 'process'}</strong>
                 <span>PID {owner.pid}</span>
@@ -732,7 +737,7 @@ export function PortsTable() {
           value={byProcess ? 'process' : 'port'}
           onChange={(value) => setByProcess(value === 'process')}
           options={[
-            { value: 'process', label: ru ? 'По процессам' : 'By process' },
+            { value: 'process', label: ru ? 'Диапазоны' : 'Ranges' },
             { value: 'port', label: ru ? 'По портам' : 'By port' },
           ]}
         />
@@ -771,8 +776,14 @@ export function PortsTable() {
                   label: (
                     <div className="mobile-process-label">
                       <div className="port-owners">
+                        {group.processes.length > 3 ? (
+                          <span>
+                            {ru ? 'Процессов' : 'Processes'}:{' '}
+                            {group.processes.length}
+                          </span>
+                        ) : null}
                         {group.processes.length ? (
-                          group.processes.map((owner) => (
+                          group.processes.slice(0, 3).map((owner) => (
                             <div key={owner.pid}>
                               <strong>{owner.name || 'process'}</strong>
                               <span>PID {owner.pid}</span>

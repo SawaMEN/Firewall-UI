@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { formatPortRanges, groupPortsByProcess, summarizePorts } from '../src/pages/firewall/portGroups.ts';
+import { formatPortRanges, groupPortsByProcess, groupFirewallRules, summarizePorts } from '../src/pages/firewall/portGroups.ts';
 
 const socket = (port, processes, extra = {}) => ({ socketId: String(port), port, processes, protocol: 'tcp', address: '0.0.0.0', family: 'IPv4', state: 'LISTEN', listening: true, loopback: false, ...extra });
 test('ranges use hyphens and never fill gaps or duplicate ports', () => {
@@ -29,4 +29,22 @@ test('process extent uses a hyphen across sparse and mixed-protocol ports withou
   assert.deepEqual(summarizePorts([9001, 9000]), { range: '9000-9001', count: 2, sparse: false });
   assert.deepEqual(summarizePorts([443, 443]), { range: '443', count: 1, sparse: false });
   assert.deepEqual(summarizePorts([]), { range: '—', count: 0, sparse: false });
+});
+
+test('workers of the same executable show one range and retain every PID', () => {
+  const a = { pid: 100, name: 'proxy', executable: '/usr/bin/proxy' };
+  const b = { ...a, pid: 101 };
+  const groups = groupPortsByProcess([socket(9000, [a]), socket(9002, [b]), socket(9001, [a, b]), socket(9100, [{ ...a, pid: 102, executable: '/other/proxy' }])]);
+  assert.equal(groups.length, 2);
+  assert.equal(summarizePorts(groups[0].ports.map(p => p.port)).range, '9000-9002');
+  assert.deepEqual(groups[0].processes.map(p => p.pid), [100, 101]);
+});
+test('firewall ranges preserve protection, gaps, protocol and denied state', () => {
+  const rule = (port, extra = {}) => ({ port, source: 'service', label: 'xray', protocol: 'tcp', exists: true, owned: true, ...extra });
+  const groups = groupFirewallRules([rule(9000), rule(9002), rule(9001), rule(22, { source: 'ssh' }), rule(9000, { protocol: 'udp' }), rule(9100, { source: 'manual' })], new Set(['close-port-9001-tcp']));
+  assert.equal(groups.length, 5);
+  assert.equal(groups[0].range, '9000-9002');
+  assert.equal(groups[0].sparse, true);
+  assert.deepEqual(groups[0].rules.map(r => r.port), [9000, 9002]);
+  assert.equal(groups[1].range, '9001');
 });

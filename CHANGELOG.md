@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.6
+
+- Restore neon gradients, ambient background, luminous buttons and subtle shimmer exclusively in cyberpunk; retain the light and dark styles. Respect reduced motion.
+- Group workers of the same executable into one expandable hyphenated port range while preserving exact socket owners and individual controls.
+- Add expandable ranges to active firewall rules; keep protected/manual rules, protocols and access states separate and label gaps explicitly.
+
 ## 1.2.5
 
 - Retain only light, dark and cyberpunk themes; replace inherited page/sidebar styles and continuous visual effects with three static palettes using local system fonts.

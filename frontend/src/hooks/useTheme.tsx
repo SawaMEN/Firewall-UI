@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { theme as antdTheme, type ThemeConfig } from 'antd';
+import { usePageVisibility } from './usePageVisibility';
 
 export type ThemeMode = 'light' | 'dark' | 'cyberpunk';
 const STORAGE_THEME = 'firewall-theme';
@@ -111,6 +112,10 @@ type ThemeContextValue = {
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
+  const visible = usePageVisibility();
+  useLayoutEffect(() => {
+    document.documentElement.dataset.pageVisible = String(visible);
+  }, [visible]);
   const [mode, setMode] = useState<ThemeMode>(initialTheme);
   useLayoutEffect(() => {
     applyTheme(mode);
