@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -39,9 +40,39 @@ func main() {
 	saveConfig := flag.Bool("save-config", false, "Save configuration overrides and exit")
 	publicHostFlag := flag.String("public-host", "", "External domain or IP (overrides config)")
 	showVersion := flag.Bool("version", false, "Print version and exit")
+	cleanupFirewall := flag.Bool("cleanup-firewall", false, "Remove only Firewall-UI-owned firewall rules and exit")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(buildinfo.Current().Version)
+		return
+	}
+
+	if *cleanupFirewall {
+		if os.Geteuid() != 0 {
+			log.Fatal("Firewall cleanup requires root")
+		}
+		// Cleanup must remain available when an installed certificate has expired
+		// or been removed. Only the state location is needed; do not start HTTP.
+		cfg := appconfig.Default()
+		raw, err := os.ReadFile(*configPath)
+		if err != nil && !os.IsNotExist(err) {
+			log.Fatal(err)
+		}
+		if len(raw) > 0 {
+			if err := json.Unmarshal(raw, &cfg); err != nil {
+				log.Fatal(err)
+			}
+		}
+		if !filepath.IsAbs(cfg.StatePath) {
+			log.Fatal("State path must be absolute")
+		}
+		service.Configure(cfg.StatePath, cfg.ListenPort, cfg.ExternalPort)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if err := (&service.FirewallService{}).CleanupOwnedRules(ctx); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("Firewall-UI rules removed")
 		return
 	}
 

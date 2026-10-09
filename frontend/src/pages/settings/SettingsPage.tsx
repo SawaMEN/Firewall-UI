@@ -89,6 +89,9 @@ export default function SettingsPage() {
   const [updateError, setUpdateError] = useState('');
   const [totpSetup, setTotpSetup] = useState<TOTPSetup | null>(null);
   const [totpCode, setTotpCode] = useState('');
+  const [credentials, setCredentials] = useState({ username: '', password: '', currentPassword: '', code: '' });
+  const [credentialsBusy, setCredentialsBusy] = useState(false);
+  const [credentialError, setCredentialError] = useState('');
   const [securityBusy, setSecurityBusy] = useState(false);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [history, setHistory] = useState<HistorySnapshot[]>([]);
@@ -238,6 +241,9 @@ export default function SettingsPage() {
 
   useEffect(() => {
     let cancelled = false;
+    void HttpUtil.get<{ username: string }>('/api/session').then((result) => {
+      if (!cancelled && result.success && result.obj) setCredentials((old) => ({ ...old, username: result.obj!.username }));
+    });
     void HttpUtil.get<RuntimeSettings>('/api/settings')
       .then((result) => {
         if (cancelled) return;
@@ -314,6 +320,19 @@ export default function SettingsPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function changeCredentials() {
+    setCredentialsBusy(true);
+    setCredentialError('');
+    try {
+      const result = await HttpUtil.post('/api/security/credentials', credentials, { silentSuccess: true });
+      if (result.success) {
+        setCredentials({ username: '', password: '', currentPassword: '', code: '' });
+        void message.success(ru ? 'Логин и пароль изменены. Войдите заново.' : 'Credentials changed. Please sign in again.');
+        window.dispatchEvent(new Event('session-expired'));
+      } else setCredentialError(result.msg);
+    } finally { setCredentialsBusy(false); }
   }
 
   async function setupTOTP() {
@@ -423,6 +442,22 @@ export default function SettingsPage() {
     >
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         {error ? <Alert type="error" showIcon title={error} /> : null}
+
+        <Card className="panel-card" title={ru ? 'Логин и пароль' : 'Username and password'}>
+          <Typography.Paragraph type="secondary">
+            {ru ? 'Пароль может быть любой длины. Рекомендуем длинный уникальный пароль и 2FA. После изменения потребуется повторный вход на всех устройствах.' : 'Any nonempty password is accepted. We recommend a long unique password and 2FA. All devices will need to sign in again.'}
+          </Typography.Paragraph>
+          {credentialError ? <Alert type="error" showIcon title={credentialError} style={{ marginBottom: 16 }} /> : null}
+          <div className="settings-grid">
+            <div><Typography.Text>{ru ? 'Новый логин' : 'New username'}</Typography.Text><Input autoComplete="username" value={credentials.username} onChange={(event) => setCredentials((old) => ({ ...old, username: event.target.value }))} /></div>
+            <div><Typography.Text>{ru ? 'Новый пароль' : 'New password'}</Typography.Text><Input.Password autoComplete="new-password" value={credentials.password} onChange={(event) => setCredentials((old) => ({ ...old, password: event.target.value }))} /></div>
+            <div><Typography.Text>{ru ? 'Текущий пароль' : 'Current password'}</Typography.Text><Input.Password autoComplete="current-password" value={credentials.currentPassword} onChange={(event) => setCredentials((old) => ({ ...old, currentPassword: event.target.value }))} /></div>
+            {current?.totpEnabled ? <div><Typography.Text>{ru ? 'Код 2FA' : '2FA code'}</Typography.Text><Input inputMode="numeric" maxLength={6} value={credentials.code} onChange={(event) => setCredentials((old) => ({ ...old, code: event.target.value.replace(/\D/g, '').slice(0, 6) }))} /></div> : null}
+          </div>
+          <Button style={{ marginTop: 16 }} type="primary" loading={credentialsBusy} disabled={!credentials.username.trim() || !credentials.password || !credentials.currentPassword || (current?.totpEnabled && credentials.code.length !== 6)} onClick={() => void changeCredentials()}>
+            {ru ? 'Изменить логин и пароль' : 'Change username and password'}
+          </Button>
+        </Card>
 
         <Card className="panel-card" title={text.webTitle}>
           <Alert type="info" showIcon title={text.hint} style={{ marginBottom: 20 }} />

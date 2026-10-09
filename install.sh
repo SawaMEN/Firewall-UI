@@ -207,10 +207,31 @@ JSON
 
 allow_access_port() {
   [[ "${OPEN_PORTS:-0}" == 1 ]] || return 0
-  local port="$1" backend; backend="$(detect_firewall)"
+  local port="$1" backend zone layer; backend="$(detect_firewall)"
   case "$backend" in
-    ufw) ufw allow "$port/tcp" comment 'Firewall-UI access';;
-    firewalld) firewall-cmd --add-port="$port/tcp"; firewall-cmd --permanent --add-port="$port/tcp";;
+    ufw)
+      local added line found=0
+      added="$(ufw show added)" || return 1
+      while IFS= read -r line; do
+        # UFW updates the comment of duplicate rules. Do not take ownership of
+        # an existing administrator allowance by replacing its comment.
+        line="${line%% comment *}"
+        if [[ "$line" == "ufw allow $port/tcp" || "$line" == "ufw allow proto tcp to any port $port" || "$line" == "ufw allow to any port $port proto tcp" ]]; then found=1; fi
+      done <<< "$added"
+      if (( !found )); then ufw allow "$port/tcp" comment 'Firewall-UI access'; fi;;
+    firewalld)
+      zone="$(firewall-cmd --get-default-zone)"
+      [[ "$zone" =~ ^[A-Za-z0-9_-]+$ ]] || return 1
+      install -d -m 0700 "$STATE_DIR"
+      touch "$STATE_DIR/access-rules"; chmod 0600 "$STATE_DIR/access-rules"
+      for layer in runtime permanent; do
+        local -a args=(--zone="$zone")
+        [[ "$layer" != permanent ]] || args+=(--permanent)
+        if ! firewall-cmd "${args[@]}" --query-port="$port/tcp" >/dev/null 2>&1; then
+          firewall-cmd "${args[@]}" --add-port="$port/tcp" || return 1
+          printf '%s %s %s/tcp\n' "$layer" "$zone" "$port" >> "$STATE_DIR/access-rules"
+        fi
+      done;;
     nftables|iptables) echo "В существующем $backend разрешите входящий TCP $port вручную; чужой ruleset не изменяется.";;
   esac
 }

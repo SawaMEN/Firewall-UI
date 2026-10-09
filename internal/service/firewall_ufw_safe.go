@@ -39,6 +39,25 @@ func deleteUFWManagedRules(ctx context.Context, binary, comment, spec string) er
 		if err != nil {
 			return err
 		}
+		if strings.Contains(status, "Status: inactive") {
+			added, err := runFirewallCommand(ctx, binary, "show", "added")
+			if err != nil {
+				return err
+			}
+			for _, line := range strings.Split(added, "\n") {
+				args := ownedUFWDeleteArgs(line)
+				if len(args) < 6 || args[len(args)-1] != comment {
+					continue
+				}
+				if spec != "" && args[3] != spec {
+					continue
+				}
+				if _, err := runFirewallCommand(ctx, binary, args...); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
 		number := findUFWManagedRuleNumber(status, comment, spec)
 		if number == 0 {
 			return nil

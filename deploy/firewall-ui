@@ -7,6 +7,10 @@ BIN="${INSTALL_DIR}/firewall-ui"
 CONFIG="/etc/firewall-ui/config.json"
 ENV_FILE="/etc/firewall-ui/environment"
 REPO="SawaMEN/Firewall-UI"
+CONFIG_DIR="/etc/firewall-ui"
+STATE_DIR="/var/lib/firewall-ui"
+UNIT_DIR="/etc/systemd/system"
+MANAGER_PATH="/usr/local/bin/firewall-ui"
 
 require_root() {
   if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
@@ -190,20 +194,72 @@ change_credentials() {
   echo "Учётные данные обновлены."
 }
 
+cleanup_access_rules() {
+  [[ -f "$STATE_DIR/access-rules" ]] || return 0
+  local layer zone port
+  while read -r layer zone port; do
+    [[ "$layer" == runtime || "$layer" == permanent ]] || { echo 'Некорректный журнал правил доступа.' >&2; return 1; }
+    [[ "$zone" =~ ^[A-Za-z0-9_-]+$ && "$port" =~ ^[0-9]+/tcp$ ]] || return 1
+    if [[ "$layer" == permanent ]]; then
+      if firewall-cmd --state >/dev/null 2>&1; then
+        if firewall-cmd --permanent --zone="$zone" --query-port="$port" >/dev/null 2>&1; then
+          firewall-cmd --permanent --zone="$zone" --remove-port="$port" || return 1
+        fi
+      else
+        command -v firewall-offline-cmd >/dev/null || return 1
+        if firewall-offline-cmd --zone="$zone" --query-port="$port" >/dev/null 2>&1; then
+          firewall-offline-cmd --zone="$zone" --remove-port="$port" || return 1
+        fi
+      fi
+    elif firewall-cmd --state >/dev/null 2>&1 && firewall-cmd --zone="$zone" --query-port="$port" >/dev/null 2>&1; then
+      firewall-cmd --zone="$zone" --remove-port="$port" || return 1
+    fi
+  done < "$STATE_DIR/access-rules"
+  rm -f -- "$STATE_DIR/access-rules"
+}
+
 uninstall_service() {
   require_root
-  systemctl disable --now "${SERVICE}.service" >/dev/null 2>&1 || true
-  systemctl disable --now firewall-ui-cert-renew.timer >/dev/null 2>&1 || true
-  rm -f /etc/systemd/system/firewall-ui-cert-renew.service /etc/systemd/system/firewall-ui-cert-renew.timer
-  rm -f "/etc/systemd/system/${SERVICE}.service"
-  rm -rf "$INSTALL_DIR"
-  rm -f "/usr/local/bin/firewall-ui"
-  systemctl daemon-reload
-  read -r -p "Remove configuration and state too? [y/N]: " answer
-  if [[ "$answer" =~ ^[Yy]$ ]]; then
-    rm -rf /etc/firewall-ui /var/lib/firewall-ui
+  local mode="${1:-}" answer
+  [[ "$mode" == '' || "$mode" == --purge ]] || { echo 'Использование: firewall-ui uninstall [--purge]' >&2; return 2; }
+  if [[ -z "$mode" && "${FIREWALL_UI_NONINTERACTIVE:-0}" != 1 ]]; then
+    read -r -p 'Удалить также настройки, данные и сертификаты? [д/Н]: ' answer
+    [[ "$answer" =~ ^([Yy]|[Дд])$ ]] && mode=--purge
   fi
-  echo "Firewall-UI uninstalled."
+  # Stop the timer AND a renewal already in progress before touching files.
+  systemctl stop "${SERVICE}.service" firewall-ui-cert-renew.timer firewall-ui-cert-renew.service >/dev/null 2>&1 || true
+  local unit
+  for unit in "${SERVICE}.service" firewall-ui-cert-renew.timer firewall-ui-cert-renew.service; do
+    if systemctl is-active --quiet "$unit"; then
+      echo "Не удалось остановить $unit. Удаление отменено." >&2
+      return 1
+    fi
+  done
+  if [[ -x "$BIN" ]]; then
+    if ! "$BIN" -config "$CONFIG" -cleanup-firewall; then
+      echo 'Очистка правил не выполнена. Файлы сохранены; исправьте ошибку и повторите удаление.' >&2
+      return 1
+    fi
+  else
+    echo 'Нет бинарного файла для очистки правил. Восстановите установку перед удалением.' >&2
+    return 1
+  fi
+  if ! cleanup_access_rules; then
+    echo 'Не удалось очистить правила доступа. Файлы сохранены для повторной попытки.' >&2
+    return 1
+  fi
+  systemctl disable "${SERVICE}.service" firewall-ui-cert-renew.timer >/dev/null 2>&1 || true
+  rm -f "$UNIT_DIR/${SERVICE}.service" "$UNIT_DIR/firewall-ui-cert-renew.service" "$UNIT_DIR/firewall-ui-cert-renew.timer"
+  rm -rf -- "$INSTALL_DIR"
+  rm -f -- "$MANAGER_PATH"
+  if [[ "$mode" == --purge ]]; then
+    rm -rf -- "$CONFIG_DIR" "$STATE_DIR"
+    echo 'Firewall-UI полностью удалён: панель, настройки, данные, сертификаты и собственные правила.'
+  else
+    echo "Firewall-UI удалён. Настройки и сертификаты сохранены в $CONFIG_DIR, данные — в $STATE_DIR."
+  fi
+  systemctl daemon-reload
+  systemctl reset-failed "${SERVICE}.service" firewall-ui-cert-renew.service >/dev/null 2>&1 || true
 }
 
 menu() {
@@ -218,7 +274,8 @@ menu() {
     echo "6) Update"
     echo "7) Change username/password"
     echo "8) Roll back previous binary"
-    echo "9) Uninstall"
+    echo "9) Удалить с выбором сохранения данных"
+    echo "10) Полностью удалить Firewall-UI"
     echo "0) Exit"
     read -r -p "Select: " choice
     case "$choice" in
@@ -231,6 +288,7 @@ menu() {
       7) change_credentials ;;
       8) rollback_binary ;;
       9) uninstall_service; exit 0 ;;
+      10) uninstall_service --purge; exit 0 ;;
       0) exit 0 ;;
       *) echo "Unknown option." ;;
     esac
@@ -259,13 +317,13 @@ case "${1:-}" in
     rollback_binary
     ;;
   uninstall)
-    uninstall_service
+    uninstall_service "${2:-}"
     ;;
   ""|menu)
     menu
     ;;
   *)
-    echo "Usage: firewall-ui [start|stop|restart|status|logs|update|rollback|credentials|uninstall]"
+    echo "Usage: firewall-ui [start|stop|restart|status|logs|update|rollback|credentials|uninstall [--purge]]"
     exit 2
     ;;
 esac

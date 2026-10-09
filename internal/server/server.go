@@ -167,7 +167,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		totpEnabled := s.RuntimeConfig.TOTPEnabled
 		s.mu.Unlock()
-		reply(w, http.StatusOK, map[string]any{"csrf": sess.csrf, "username": s.Username, "totpEnabled": totpEnabled}, nil)
+		reply(w, http.StatusOK, map[string]any{"csrf": sess.csrf, "username": s.username(), "totpEnabled": totpEnabled}, nil)
 		return
 	}
 	if r.URL.Path == "/api/logout" && r.Method == http.MethodPost {
@@ -215,6 +215,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
 	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 	now := time.Now()
 

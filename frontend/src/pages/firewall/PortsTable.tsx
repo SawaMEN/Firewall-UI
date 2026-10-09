@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, Grid, Input, Select, Space, Switch, Table, Tag, Typography } from 'antd';
+import { Alert, Button, Card, Grid, Input, Popconfirm, Select, Space, Switch, Table, Tag, Typography } from 'antd';
 import { PlusOutlined, ReloadOutlined, StopOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 
@@ -36,6 +36,7 @@ type FirewallRule = {
   exists: boolean;
   owned: boolean;
 };
+type AdvancedRule = { id: string; action: string; portStart?: number; portEnd?: number; protocol: string };
 type ManualRule = { port: number; protocol: string; label?: string };
 type FirewallStatus = {
   enabled: boolean;
@@ -51,6 +52,8 @@ export function PortsTable() {
   const { i18n } = useTranslation();
   const ru = i18n.language.startsWith('ru');
   const [snapshot, setSnapshot] = useState<Snapshot>({ ports: [], containers: [], updatedAt: '' });
+  const [advanced, setAdvanced] = useState<AdvancedRule[]>([]);
+  const [diagnostics, setDiagnostics] = useState(false);
   const [firewall, setFirewall] = useState<FirewallStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [acting, setActing] = useState('');
@@ -63,9 +66,10 @@ export function PortsTable() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [portsResult, firewallResult] = await Promise.all([
+      const [portsResult, firewallResult, advancedResult] = await Promise.all([
         HttpUtil.get<Snapshot>('/api/ports'),
         HttpUtil.get<FirewallStatus>('/panel/api/server/firewall/status'),
+        HttpUtil.get<AdvancedRule[]>('/api/firewall/advanced'),
       ]);
       if (portsResult.success && portsResult.obj) {
         setSnapshot(portsResult.obj);
@@ -74,6 +78,7 @@ export function PortsTable() {
         setError(portsResult.msg);
       }
       if (firewallResult.success && firewallResult.obj) setFirewall(firewallResult.obj);
+      if (advancedResult.success && advancedResult.obj) setAdvanced(advancedResult.obj);
     } catch {
       setError(ru ? 'Не удалось получить список портов' : 'Failed to read ports');
     } finally {
@@ -110,11 +115,6 @@ export function PortsTable() {
     return map;
   }, [firewall]);
 
-  const manualSet = useMemo(
-    () => new Set((firewall?.manualRules || []).map((rule) => key(rule.port, rule.protocol))),
-    [firewall],
-  );
-
   const containerMap = useMemo(() => {
     const map = new Map<string, ContainerPort[]>();
     for (const item of snapshot.containers || []) {
@@ -124,24 +124,33 @@ export function PortsTable() {
     return map;
   }, [snapshot.containers]);
 
-  async function toggleManual(port: Port) {
+  async function setPortAccess(port: Port, closed: boolean) {
     const k = key(port.port, port.protocol);
-    const remove = manualSet.has(k);
     setActing(k);
     try {
-      const result = await HttpUtil.post<FirewallStatus>(
-        remove ? '/panel/api/server/firewall/rules/delete' : '/panel/api/server/firewall/rules/add',
-        { port: port.port, protocol: port.protocol, label: port.processes[0]?.name || 'Service' },
-        { silentSuccess: true },
-      );
-      if (result.success && result.obj) setFirewall(result.obj);
-    } finally {
-      setActing('');
-    }
+      const result = await HttpUtil.post<{ rules: AdvancedRule[] }>('/api/firewall/port', { port: port.port, protocol: port.protocol, closed }, { silentSuccess: true });
+      if (result.success && result.obj) { setAdvanced(result.obj.rules); await load(); }
+    } finally { setActing(''); }
   }
 
+  const closedSet = useMemo(() => new Set(advanced.filter((rule) => rule.id === `close-port-${rule.portStart}-${rule.protocol}` && rule.action === 'deny').map((rule) => key(rule.portStart || 0, rule.protocol))), [advanced]);
+  const grouped = useMemo(() => {
+    if (diagnostics) return snapshot.ports;
+    const map = new Map<string, Port>();
+    for (const port of snapshot.ports) {
+      if (!port.listening || !port.processes.length) continue;
+      const k = `${port.family}-${port.address}-${port.protocol}-${port.port}`;
+      const old = map.get(k);
+      if (old) {
+        const owners = new Map([...old.processes, ...port.processes].map((owner) => [owner.pid, owner]));
+        map.set(k, { ...old, processes: [...owners.values()] });
+      } else map.set(k, { ...port, processes: [...port.processes] });
+    }
+    return [...map.values()];
+  }, [snapshot.ports, diagnostics]);
+
   const query = search.trim().toLowerCase();
-  const filtered = snapshot.ports.filter((port) => {
+  const filtered = grouped.filter((port) => {
     if (listening && !port.listening) return false;
     if (protocol !== 'all' && port.protocol !== protocol) return false;
     const containers = containerMap.get(key(port.port, port.protocol)) || [];
@@ -178,7 +187,8 @@ export function PortsTable() {
             { value: 'udp', label: 'UDP' },
           ]}
         />
-        <Space><Switch checked={listening} onChange={setListening} /><span>{ru ? 'Только слушающие' : 'Listening only'}</span></Space>
+        <Space><Switch checked={diagnostics} onChange={(value) => { setDiagnostics(value); setListening(!value); }} /><span>{ru ? 'Все сокеты (диагностика)' : 'All sockets (diagnostics)'}</span></Space>
+        <Space><Switch checked={listening} disabled={!diagnostics} onChange={setListening} /><span>{ru ? 'Только слушающие' : 'Listening only'}</span></Space>
         <Space><Switch checked={live} onChange={setLive} /><span>{ru ? 'Live' : 'Live'}</span></Space>
         <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
           {ru ? 'Обновить' : 'Refresh'}
@@ -244,27 +254,24 @@ export function PortsTable() {
               if (port.loopback || !port.listening) return <Tag>{ru ? 'Локальный' : 'Local'}</Tag>;
               const k = key(port.port, port.protocol);
               const rule = ruleMap.get(k);
-              const manual = manualSet.has(k);
+              const closed = closedSet.has(k);
+              const protectedPort = ['panel', 'session', 'ssh'].includes(rule?.source || '');
               return (
                 <Space>
-                  <Tag color={!firewall?.enabled ? 'warning' : rule?.exists ? 'success' : 'error'}>
+                  <Tag color={!firewall?.enabled ? 'warning' : closed ? 'error' : rule?.exists ? 'success' : 'default'}>
                     {!firewall?.enabled
                       ? (ru ? 'НЕ ФИЛЬТРУЕТСЯ' : 'UNFILTERED')
-                      : rule?.exists
+                      : closed ? (ru ? 'ЗАПРЕЩЁН' : 'DENIED') : rule?.exists
                         ? (rule.source === 'service' ? 'AUTO' : 'OPEN')
-                        : 'CLOSED'}
+                        : (ru ? 'НЕ ОПРЕДЕЛЕНО' : 'UNKNOWN')}
                   </Tag>
-                  {manual || !rule?.exists ? (
-                    <Button
-                      size="small"
-                      danger={manual}
-                      icon={manual ? <StopOutlined /> : <PlusOutlined />}
-                      loading={acting === k}
-                      onClick={() => void toggleManual(port)}
-                    >
-                      {manual ? (ru ? 'Убрать' : 'Remove') : (ru ? 'Разрешить' : 'Allow')}
-                    </Button>
-                  ) : null}
+                  {protectedPort ? <Tag>{ru ? 'Защищён' : 'Protected'}</Tag> : (
+                    <Popconfirm title={closed ? (ru ? 'Открыть порт?' : 'Open port?') : (ru ? 'Закрыть доступ к порту? Процесс продолжит работать.' : 'Block access to this port? The process will keep running.')} onConfirm={() => void setPortAccess(port, !closed)}>
+                      <Button size="small" danger={!closed} disabled={!firewall?.enabled} icon={closed ? <PlusOutlined /> : <StopOutlined />} loading={acting === k}>
+                        {closed ? (ru ? 'Открыть' : 'Open') : (ru ? 'Закрыть порт' : 'Close port')}
+                      </Button>
+                    </Popconfirm>
+                  )}
                 </Space>
               );
             },
@@ -274,8 +281,8 @@ export function PortsTable() {
 
       <Typography.Text type="secondary">
         {ru
-          ? 'Список поступает из серверного кэша через SSE и не сканирует /proc на каждый запрос. Docker/Podman публикации сопоставляются с host-портами.'
-          : 'The table is fed from a server-side cache over SSE instead of rescanning /proc per request. Docker/Podman published ports are mapped to host sockets.'}
+          ? 'По умолчанию показаны слушающие TCP и привязанные UDP-сокеты с процессом-владельцем; одинаковые адреса и порты объединены. В диагностике доступны временные соединения и сокеты без владельца. Наличие сокета не означает доступность из интернета. Закрытие блокирует новые входящие соединения; процесс и уже установленные соединения продолжают работать.'
+          : 'The default view shows owned TCP listeners and bound UDP sockets, grouped by address and port. Diagnostics includes temporary connections and sockets without an owner. A socket does not prove internet reachability. Closing blocks new incoming connections; processes and existing connections keep running.'}
       </Typography.Text>
     </Card>
   );

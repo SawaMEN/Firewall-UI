@@ -28,7 +28,19 @@ func removeManagedLegacyRules(ctx context.Context, backend firewallBackend) erro
 
 func disableManagedBackendSafe(ctx context.Context, backend firewallBackend) error {
 	if backend.name == "ufw" || backend.name == "firewalld" {
-		return removeManagedLegacyRules(ctx, backend)
+		if err := removeManagedLegacyRules(ctx, backend); err != nil {
+			return err
+		}
+		rules, err := loadAdvancedFirewallRules()
+		if err != nil {
+			return err
+		}
+		for _, rule := range rules {
+			if err := applyLegacyAdvancedRule(ctx, backend, rule, false); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	return disableManagedBackend(ctx, backend)
 }

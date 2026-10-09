@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.1
+
+- Add username/password changes in web settings, current-password/2FA verification, atomic persistence and session revocation.
+- Group listening sockets by endpoint; move temporary and ownerless sockets to optional diagnostics.
+- Stop automatically opening sockets without a process owner.
+- Add explicit close/reopen actions in port and firewall tables, with priority over auto-open rules and panel/SSH protection.
+
+- Add `firewall-ui uninstall --purge` and a Russian full-removal menu option.
+- Remove owned firewall rules, including inactive UFW policy, without disabling the system firewall.
+- Track installer-created firewalld access rules separately from existing administrator ports.
+- Stop the panel and certificate renewal before removal; preserve files on cleanup failure.
+- Purge installation, credentials, state, local certificates and renewal units.
+
 ## 1.2.0
 
 - Accept simple nonempty passwords; replace minimum-length enforcement with recommendations.

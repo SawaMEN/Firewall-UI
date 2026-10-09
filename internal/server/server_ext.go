@@ -61,6 +61,10 @@ func (s *Server) handleExtendedAPI(w http.ResponseWriter, r *http.Request, sess 
 	switch r.URL.Path {
 	case "/api/ports/stream":
 		s.streamPorts(w, r)
+	case "/api/security/credentials":
+		s.credentials(w, r)
+	case "/api/firewall/port":
+		s.setPortAccess(w, r)
 	case "/api/dashboard":
 		s.dashboard(w, r)
 	case "/api/security/totp/setup":
@@ -113,6 +117,16 @@ func (s *Server) streamPorts(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	ch, cancel := s.PortMonitor.Subscribe()
 	defer cancel()
+	cookie, _ := r.Cookie("firewall_ui_session")
+	validSession := func() bool {
+		if cookie == nil {
+			return false
+		}
+		s.mu.Lock()
+		session, ok := s.sessions[cookie.Value]
+		s.mu.Unlock()
+		return ok && time.Now().Before(session.expires)
+	}
 	keepAlive := time.NewTicker(20 * time.Second)
 	defer keepAlive.Stop()
 	for {
@@ -123,10 +137,16 @@ func (s *Server) streamPorts(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
+			if !validSession() {
+				return
+			}
 			raw, _ := json.Marshal(snapshot)
 			_, _ = fmt.Fprintf(w, "event: ports\ndata: %s\n\n", raw)
 			flusher.Flush()
 		case <-keepAlive.C:
+			if !validSession() {
+				return
+			}
 			_, _ = fmt.Fprint(w, ": keepalive\n\n")
 			flusher.Flush()
 		}
@@ -262,7 +282,7 @@ func (s *Server) setupTOTP(w http.ResponseWriter, r *http.Request) {
 	s.audit(r, "totp.setup", true, "", nil)
 	reply(w, http.StatusOK, map[string]string{
 		"secret": secret,
-		"uri":    security.ProvisioningURI(secret, s.Username, "Firewall-UI"),
+		"uri":    security.ProvisioningURI(secret, s.username(), "Firewall-UI"),
 	}, nil)
 }
 
@@ -656,7 +676,7 @@ func (s *Server) beginRollbackWithConfig(before service.FirewallBackup, oldCfg a
 		}
 		if s.Audit != nil {
 			_ = s.Audit.Append(audit.Entry{
-				User:     s.Username,
+				User:     s.username(),
 				Action:   "firewall.rollback",
 				Success:  restoreErr == nil,
 				Message:  message,
@@ -694,7 +714,7 @@ func (s *Server) audit(r *http.Request, action string, success bool, message str
 	}
 	host, _, _ := net.SplitHostPort(r.RemoteAddr)
 	_ = s.Audit.Append(audit.Entry{
-		User:     s.Username,
+		User:     s.username(),
 		RemoteIP: host,
 		Action:   action,
 		Success:  success,

@@ -10,4 +10,5 @@ test:
 	bash tests/installer.sh
 	bash tests/manager.sh
 	bash tests/access.sh
+	bash tests/uninstall.sh
 	cd frontend && npm run typecheck

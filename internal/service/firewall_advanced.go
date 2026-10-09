@@ -38,6 +38,9 @@ func (s *FirewallService) AdvancedRules() ([]FirewallAdvancedRule, error) {
 }
 
 func (s *FirewallService) AddAdvancedRuleSafe(ctx context.Context, rule FirewallAdvancedRule, safetyPort int) ([]FirewallAdvancedRule, error) {
+	if strings.HasPrefix(rule.ID, "close-port-") {
+		return nil, errors.New("use the port access action for reserved close rules")
+	}
 	firewallMu.Lock()
 	defer firewallMu.Unlock()
 	if err := validateAdvancedRule(&rule); err != nil {
@@ -339,6 +342,17 @@ func advancedIPTablesArgs(rule FirewallAdvancedRule, ipv6 bool) ([]string, bool)
 }
 
 func applyLegacyAdvancedRule(ctx context.Context, backend firewallBackend, rule FirewallAdvancedRule, add bool) error {
+	if add && isClosePortRule(rule) {
+		desired, err := (&FirewallService{}).managedDesiredRules(false, rememberedFirewallSafetyPort())
+		if err != nil {
+			return err
+		}
+		for _, safety := range desired {
+			if isFirewallSafetyRule(safety) && safety.Port == rule.PortStart && safety.Protocol == rule.Protocol {
+				return errors.New("a protected panel or SSH port cannot be closed")
+			}
+		}
+	}
 	if backend.name == "ufw" {
 		if rule.IPVersion != "any" && rule.SourceCIDR == "" {
 			return errors.New("UFW requires a source CIDR/IP for an IPv4-only or IPv6-only advanced rule")
@@ -347,6 +361,9 @@ func applyLegacyAdvancedRule(ctx context.Context, backend firewallBackend, rule 
 			return deleteUFWManagedRules(ctx, backend.binary, "Firewall-UI advanced "+rule.ID, "")
 		}
 		args := []string{rule.Action}
+		if isClosePortRule(rule) {
+			args = []string{"insert", "1", rule.Action}
+		}
 		if rule.Interface != "" {
 			args = append(args, "in", "on", rule.Interface)
 		}
@@ -373,6 +390,9 @@ func applyLegacyAdvancedRule(ctx context.Context, backend firewallBackend, rule 
 		return errors.New("firewalld advanced rules with an interface are not supported; assign the interface to a zone or use nftables/iptables/UFW")
 	}
 	rich := firewalldRichRule(rule)
+	if !add {
+		return removeFirewalldRichRule(ctx, backend, rich)
+	}
 	flag := "--add-rich-rule=" + rich
 	if !add {
 		flag = "--remove-rich-rule=" + rich
@@ -394,6 +414,9 @@ func applyLegacyAdvancedRule(ctx context.Context, backend firewallBackend, rule 
 
 func firewalldRichRule(rule FirewallAdvancedRule) string {
 	parts := []string{"rule"}
+	if isClosePortRule(rule) {
+		parts = append(parts, `priority="-1000"`)
+	}
 	if rule.IPVersion == "ipv4" {
 		parts = append(parts, `family="ipv4"`)
 	} else if rule.IPVersion == "ipv6" {

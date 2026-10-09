@@ -352,7 +352,7 @@ func (s *FirewallService) desiredRules(auto bool, safetyPort int) ([]FirewallRul
 			return nil, err
 		}
 		for _, p := range ports {
-			if !p.Listening || p.Loopback {
+			if !p.Listening || p.Loopback || len(p.Processes) == 0 {
 				continue
 			}
 			names := []string{}

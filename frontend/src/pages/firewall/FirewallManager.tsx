@@ -163,6 +163,14 @@ export function FirewallManager() {
     }
   }
 
+  async function setPortAccess(port: number, protocol: string, closed: boolean) {
+    setAction(`port-${port}-${protocol}`);
+    try {
+      const result = await HttpUtil.post('/api/firewall/port', { port, protocol, closed });
+      if (result.success) await load();
+    } finally { setAction(''); }
+  }
+
   async function addAdvanced() {
     setAction('advanced-add');
     try {
@@ -268,10 +276,18 @@ export function FirewallManager() {
               width: 180,
               render: (_, rule) => (
                 <Space>
-                  <Tag color={rule.exists ? 'success' : 'warning'}>{rule.exists ? 'OPEN' : 'MISSING'}</Tag>
+                  <Tag color={advanced.some((item) => item.id === `close-port-${rule.port}-${rule.protocol}`) ? 'error' : rule.exists ? 'success' : 'warning'}>{advanced.some((item) => item.id === `close-port-${rule.port}-${rule.protocol}`) ? (ru ? 'ЗАПРЕЩЁН' : 'DENIED') : rule.exists ? 'OPEN' : 'MISSING'}</Tag>
                   {rule.exists ? <Tag>{rule.owned ? 'Firewall-UI' : 'External'}</Tag> : null}
                 </Space>
               ),
+            },
+            {
+              title: '', width: 150,
+              render: (_, rule) => {
+                if (!rule.port || ['panel', 'session', 'ssh'].includes(rule.source)) return <Tag>{ru ? 'Защищён' : 'Protected'}</Tag>;
+                const closed = advanced.some((item) => item.id === `close-port-${rule.port}-${rule.protocol}`);
+                return <Popconfirm title={closed ? (ru ? 'Открыть порт?' : 'Open port?') : (ru ? 'Закрыть доступ к порту?' : 'Close access to the port?')} onConfirm={() => void setPortAccess(rule.port!, rule.protocol, !closed)}><Button size="small" danger={!closed} disabled={!status.enabled} loading={action === `port-${rule.port}-${rule.protocol}`}>{closed ? (ru ? 'Открыть' : 'Open') : (ru ? 'Закрыть порт' : 'Close port')}</Button></Popconfirm>;
+              },
             },
           ]}
         />

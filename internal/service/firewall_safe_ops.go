@@ -164,6 +164,17 @@ func (s *FirewallService) SetManagedEnabledSafe(ctx context.Context, enabled boo
 				return FirewallManagedStatus{}, err
 			}
 		}
+		if backend.name == "ufw" || backend.name == "firewalld" {
+			advanced, err := loadAdvancedFirewallRules()
+			if err != nil {
+				return FirewallManagedStatus{}, err
+			}
+			for _, rule := range advanced {
+				if err := applyLegacyAdvancedRule(ctx, backend, rule, true); err != nil {
+					return FirewallManagedStatus{}, err
+				}
+			}
+		}
 		if err := setFirewallManagedEnabledPreference(true); err != nil {
 			return FirewallManagedStatus{}, err
 		}
