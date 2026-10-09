@@ -396,6 +396,10 @@ cleanup() {
   return "$result"
 }
 
+require_installer_root() {
+  [[ ${EUID:-$(id -u)} -eq 0 ]] || { echo 'Запустите установщик от root.' >&2; return 1; }
+}
+
 select_installer_action() {
   INSTALL_ACTION=install
   [[ "${INSTALL_INTERACTIVE:-0}" == 1 ]] || return 0
@@ -439,7 +443,7 @@ main() {
     '') ;;
     *) echo 'Неизвестный параметр.' >&2; return 1;;
   esac
-  [[ ${EUID:-$(id -u)} -eq 0 ]] || { echo 'Запустите установщик от root.' >&2; return 1; }
+  require_installer_root || return 1
   INSTALL_INTERACTIVE=0
   if [[ "${FIREWALL_UI_NONINTERACTIVE:-0}" != 1 ]] && { exec 3<>/dev/tty; } 2>/dev/null; then INSTALL_INTERACTIVE=1; fi
   if [[ -z "${1:-}" ]]; then select_installer_action || return 1; fi

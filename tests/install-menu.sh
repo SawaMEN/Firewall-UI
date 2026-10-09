@@ -15,6 +15,7 @@ for selection in '1 install' '2 configure' '3 reset-password' '4 uninstall' '0 e
 done
 # Reset and purge dispatch before package installation, UFW detection or updates.
 FIREWALL_UI_NONINTERACTIVE=1
+require_installer_root() { :; } # All service/file operations below use isolated mocks.
 check_system() { echo 'Unexpected system preflight'; return 1; }
 fetch_repo_file() {
   cat > "$2" <<'SCRIPT'
