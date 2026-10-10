@@ -110,6 +110,11 @@ jobs:
           FIREWALL_UI_USERNAME=ci-console FIREWALL_UI_PASSWORD=1 python3 tests/docker_host.py
           sudo -E bash deploy/firewall-ui-docker restart
           FIREWALL_UI_USERNAME=ci-console FIREWALL_UI_PASSWORD=1 python3 tests/docker_host.py
+          # Use the same IP/HTTPS wizard as native installation, then return to HTTP.
+          sudo -E env FIREWALL_UI_ACCESS_MODE=ip FIREWALL_UI_PUBLIC_HOST=127.0.0.1 FIREWALL_UI_TLS_MODE=selfsigned bash install.sh --compose-configure
+          FIREWALL_UI_USERNAME=ci-console FIREWALL_UI_PASSWORD=1 FIREWALL_UI_TEST_HTTPS=1 python3 tests/docker_host.py
+          sudo -E env FIREWALL_UI_ACCESS_MODE=local bash install.sh --compose-configure
+          FIREWALL_UI_USERNAME=ci-console FIREWALL_UI_PASSWORD=1 python3 tests/docker_host.py
           docker run --rm --network host --privileged --mount type=volume,src=firewall-ui-installer-ci_firewall-ui-data,dst=/var/lib/firewall-ui --entrypoint sh firewall-ui:stable -c '
             printf "{\"firewallPingEnabled\":\"false\"}" > /var/lib/firewall-ui/state.json
             printf "1\n" > /proc/sys/net/ipv4/icmp_echo_ignore_all

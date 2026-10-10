@@ -231,7 +231,12 @@ allow_access_port() {
         line="${line%% comment *}"
         if [[ "$line" == "ufw allow $port/tcp" || "$line" == "ufw allow proto tcp to any port $port" || "$line" == "ufw allow to any port $port proto tcp" ]]; then found=1; fi
       done <<< "$added"
-      if (( !found )); then ufw allow "$port/tcp" comment 'Firewall-UI access'; fi;;
+      if (( !found )); then
+        ufw allow "$port/tcp" comment 'Firewall-UI access' || return 1
+        install -d -m 0700 "$STATE_DIR"
+        printf '%s\n' "$port" >> "$STATE_DIR/access-ufw"
+        chmod 0600 "$STATE_DIR/access-ufw"
+      fi;;
     firewalld)
       zone="$(firewall-cmd --get-default-zone)"
       [[ "$zone" =~ ^[A-Za-z0-9_-]+$ ]] || return 1
@@ -481,7 +486,7 @@ installer_settings_menu() {
   local choice
   while true; do
     installer_heading 'Настройки'
-    installer_item 1 'Адрес, порт и сертификат' 'Мастер подключения и HTTPS; для Docker — адрес и порт'
+    installer_item 1 'Адрес, порт и сертификат' 'Локальный доступ, домен или IP; выбор сертификата HTTPS'
     installer_item 2 'Изменить логин и пароль'
     installer_item 0 'Назад'
     ask choice 'Выберите настройку' 0 || return 1
@@ -535,7 +540,13 @@ installer_connection_info() {
     host="$(sed -n 's/^FIREWALL_UI_DOCKER_HOST=//p' "$docker_dir/docker.env" | head -n 1)"
     port="$(sed -n 's/^FIREWALL_UI_DOCKER_PORT=//p' "$docker_dir/docker.env" | head -n 1)"
     [[ "$host" != 0.0.0.0 ]] || host='<IP-сервера>'
-    printf 'Docker: %s:%s (параметры установщика)\n' "$host" "$port"
+    local public_host docker_cert docker_scheme=http
+    public_host="$(sed -n 's/^FIREWALL_UI_PUBLIC_HOST=//p' "$docker_dir/docker.env" | head -n 1)"
+    docker_cert="$(sed -n 's/^FIREWALL_UI_TLS_CERT=//p' "$docker_dir/docker.env" | head -n 1)"
+    [[ -z "$public_host" ]] || host="$public_host"
+    [[ "$host" != *:* ]] || host="[$host]"
+    [[ -z "$docker_cert" ]] || docker_scheme=https
+    printf 'Docker: %s://%s:%s/ (параметры установщика)\n' "$docker_scheme" "$host" "$port"
     echo 'Адрес и HTTPS, изменённые в веб-панели, проверяйте в её настройках.'
   fi
 }

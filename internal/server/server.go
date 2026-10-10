@@ -146,7 +146,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cookie, err := r.Cookie("firewall_ui_session")
+	cookie, err := r.Cookie(s.sessionCookieName(r))
 	if err != nil {
 		reply(w, http.StatusUnauthorized, nil, fmt.Errorf("authentication required"))
 		return
@@ -218,6 +218,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.manage(w, r)
 }
 
+// Cookies are shared by all ports on a host. Keep HTTP and HTTPS sessions
+// separate so an old Secure cookie cannot prevent a later local HTTP login.
+func (s *Server) sessionCookieName(r *http.Request) string {
+	transport := "http"
+	if s.SecureCookies || r.TLS != nil {
+		transport = "https"
+	}
+	return fmt.Sprintf("firewall_ui_session_%d_%s", s.Port, transport)
+}
+
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
@@ -279,7 +289,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     "firewall_ui_session",
+		Name:     s.sessionCookieName(r),
 		Value:    id,
 		Path:     "/",
 		MaxAge:   43200,

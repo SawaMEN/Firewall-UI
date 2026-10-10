@@ -42,7 +42,12 @@ export async function request<T>(
     window.dispatchEvent(new Event('session-expired'));
   }
   const result: Response<T> = await res.json();
-  if (!result.success && path !== '/api/session') {
+  if (!result.success && path === '/api/login') {
+    void message.error(result.msg === 'invalid credentials'
+      ? 'Неверный логин или пароль'
+      : result.msg || 'Не удалось войти');
+  }
+  if (!result.success && path !== '/api/session' && path !== '/api/login' && res.status !== 401) {
     void message.error(result.msg || 'Ошибка запроса');
   }
 

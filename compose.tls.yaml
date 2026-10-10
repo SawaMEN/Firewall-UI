@@ -1,0 +1,9 @@
+services:
+  firewall-ui:
+    volumes:
+      - type: bind
+        source: ${FIREWALL_UI_DOCKER_ACCESS_DIR:?Set certificate directory}
+        target: ${FIREWALL_UI_DOCKER_ACCESS_DIR:?Set certificate directory}
+        read_only: true
+        bind:
+          create_host_path: false

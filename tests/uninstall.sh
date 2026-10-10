@@ -105,3 +105,20 @@ cleanup_access_rules
 [[ "$(cat "$FIXTURE/removals")" == *'--permanent --zone=public --remove-port=8443/tcp'* ]]
 [[ "$(cat "$FIXTURE/removals")" != *$'\n--zone=public --remove-port'* ]]
 echo 'Uninstall preservation, purge, failure recovery and firewall ownership passed'
+
+# Host allowances created by the shared Docker wizard are removed only while owned.
+(
+ mkdir -p "$STATE_DIR"
+ printf '8443\n9443\n' > "$STATE_DIR/access-ufw"
+ ufw() {
+   printf '%s\n' "$*" >> "$FIXTURE/ufw-owned-commands"
+   if [[ "$*" == 'show added' ]]; then
+     printf "ufw allow 8443/tcp comment 'Firewall-UI access'\nufw allow 9443/tcp comment 'administrator'\n"
+   fi
+ }
+ cleanup_access_rules
+ [[ ! -f "$STATE_DIR/access-ufw" ]]
+ [[ "$(cat "$FIXTURE/ufw-owned-commands")" == *'--force delete allow 8443/tcp'* ]]
+ [[ "$(cat "$FIXTURE/ufw-owned-commands")" != *'delete allow 9443/tcp'* ]]
+)
+echo 'Owned host UFW access cleanup and administrator-rule preservation passed'

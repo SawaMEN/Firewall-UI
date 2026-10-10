@@ -237,6 +237,22 @@ reset_password() (
 )
 
 cleanup_access_rules() {
+  # The Docker wizard opens host UFW ports too; remove only recorded allowances
+  # whose ownership comment still matches (an administrator may have changed it).
+  if [[ -f "$STATE_DIR/access-ufw" ]]; then
+    local owned_port added line
+    added="$(ufw show added)" || return 1
+    while read -r owned_port; do
+      [[ "$owned_port" =~ ^[0-9]{1,5}$ ]] && ((10#$owned_port >= 1 && 10#$owned_port <= 65535)) || return 1
+      while IFS= read -r line; do
+        if [[ "$line" == "ufw allow $owned_port/tcp comment 'Firewall-UI access'" || "$line" == "ufw allow $owned_port/tcp comment \"Firewall-UI access\"" ]]; then
+          ufw --force delete allow "$owned_port/tcp" || return 1
+          break
+        fi
+      done <<< "$added"
+    done < "$STATE_DIR/access-ufw"
+    rm -f -- "$STATE_DIR/access-ufw" || return 1
+  fi
   [[ -f "$STATE_DIR/access-rules" ]] || return 0
   local layer zone port
   while read -r layer zone port; do

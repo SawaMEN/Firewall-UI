@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io/fs"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"testing"
 	"testing/fstest"
@@ -100,5 +101,36 @@ func TestRootAndSPAAssets(t *testing.T) {
 	s.ServeHTTP(w, httptest.NewRequest("GET", "/assets/missing.js", nil))
 	if w.Code != 404 {
 		t.Fatal("missing asset became HTML")
+	}
+}
+
+func TestHTTPSAndHTTPLoginCookiesCoexist(t *testing.T) {
+	tlsApp := New("admin", "1", 8088, fstest.MapFS{})
+	tlsServer := httptest.NewTLSServer(tlsApp)
+	defer tlsServer.Close()
+	httpServer := httptest.NewServer(New("admin", "1", 8088, fstest.MapFS{}))
+	defer httpServer.Close()
+	client := tlsServer.Client()
+	client.Jar, _ = cookiejar.New(nil)
+	for _, base := range []string{tlsServer.URL, httpServer.URL, tlsServer.URL, httpServer.URL} {
+		response, err := client.Post(base+"/api/login", "application/json", bytes.NewBufferString(`{"username":"admin","password":"1"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != 200 {
+			t.Fatalf("login: %d", response.StatusCode)
+		}
+		response, err = client.Get(base + "/api/session")
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != 200 {
+			t.Fatalf("cookie not returned: %d", response.StatusCode)
+		}
+	}
+	if New("admin", "1", 8088, fstest.MapFS{}).sessionCookieName(httptest.NewRequest("GET", "/", nil)) == New("admin", "1", 8089, fstest.MapFS{}).sessionCookieName(httptest.NewRequest("GET", "/", nil)) {
+		t.Fatal("different panel ports share a cookie name")
 	}
 }

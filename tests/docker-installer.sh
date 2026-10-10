@@ -181,3 +181,29 @@ echo 'Failed Docker startup and runtime rollback/retry passed'
  [[ "$(cat "$FIXTURE/volume/environment")" == *'FIREWALL_UI_USERNAME="console-user"'* ]]
  [[ "$(cat "$FIXTURE/volume/environment")" == *'FIREWALL_UI_PASSWORD="console$pass"'* ]]
 )
+
+# Native and Compose share domain/IP certificate choices and HTTPS runtime flags.
+(
+ DOCKER_DIR="$FIXTURE/tls-wizard"
+ mkdir -p "$DOCKER_DIR/source"
+ cp "$TASK_ROOT/install.sh" "$DOCKER_DIR/source/install.sh"
+ cp "$TASK_ROOT/compose.tls.yaml" "$DOCKER_DIR/source/compose.tls.yaml"
+ printf admin > "$DOCKER_DIR/username"; printf 1 > "$DOCKER_DIR/password"
+ unset FIREWALL_UI_DOCKER_HOST FIREWALL_UI_PORT
+ DOCKER_INTERACTIVE=1
+ printf '2\npanel.example.com\n3\n9443\nn\nn\n' > "$FIXTURE/tls-answers"; exec 3<>"$FIXTURE/tls-answers"
+ docker_select_settings
+ cert="$(docker_read_setting FIREWALL_UI_TLS_CERT '')"
+ openssl x509 -in "$cert" -noout -checkhost panel.example.com
+ [[ "$(docker_read_setting FIREWALL_UI_PUBLIC_HOST '')" == panel.example.com ]]
+ [[ "$(docker_show_access)" == *https://panel.example.com:9443/* ]]
+ : > "$FIXTURE/commands"
+ docker_apply_runtime_settings
+ [[ "$(cat "$FIXTURE/commands")" == *compose.tls.yaml* && "$(cat "$FIXTURE/commands")" == *'-secure-cookies=true'* ]]
+ [[ "$(cat "$FIXTURE/commands")" == *'-public-host panel.example.com'* ]]
+ # Switching back to local access explicitly clears all TLS/public-address fields.
+ printf '1\n8088\nn\n' > "$FIXTURE/tls-answers"; exec 3<>"$FIXTURE/tls-answers"
+ docker_select_settings
+ [[ -z "$(docker_read_setting FIREWALL_UI_TLS_CERT '')" && -z "$(docker_read_setting FIREWALL_UI_PUBLIC_HOST '')" ]]
+)
+echo 'Shared Compose HTTPS wizard, certificate mount and local-mode reset passed'

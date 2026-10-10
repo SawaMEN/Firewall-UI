@@ -492,6 +492,7 @@ export default function SettingsPage() {
             <input
               ref={restoreInput}
               type="file"
+              style={{ display: 'none' }}
               accept="application/json,.json"
               hidden
               onChange={(event) => {

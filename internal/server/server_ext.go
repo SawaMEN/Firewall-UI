@@ -136,7 +136,7 @@ func (s *Server) streamPorts(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	ch, cancel := s.PortMonitor.Subscribe()
 	defer cancel()
-	cookie, _ := r.Cookie("firewall_ui_session")
+	cookie, _ := r.Cookie(s.sessionCookieName(r))
 	validSession := func() bool {
 		if cookie == nil {
 			return false

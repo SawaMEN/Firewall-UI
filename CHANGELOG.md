@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.24
+
+- Scope session cookies by panel port and transport; verify the browser returned the session before mounting protected pages and explain blocked cookies.
+- Reuse the native Russian domain/IP/HTTPS wizard in Compose, including PEM import, self-signed certificates, ACME renewal and owned host access-rule cleanup.
+- Refine cyberpunk button variants, card corners and table backgrounds to avoid unwanted surfaces and seams.
+- Verify browser login and mobile/desktop rendering, plus Docker HTTPS-to-HTTP reconfiguration on amd64/arm64.
+
 ## 1.2.23
 
 - Exclude unrelated Compose services and volumes from installation/running status and native-install conflict checks.

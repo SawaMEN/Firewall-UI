@@ -45,9 +45,15 @@ docker_compose_mode() {
     env_file="$DOCKER_DIR/docker.env.previous"
   fi
   local -a files=(-f "$source/$file")
+  # Keep existing certificates readable while -save-config loads the previous
+  # TLS configuration, including transitions back to local HTTP.
+  if [[ -f "$source/compose.tls.yaml" && ( -n "$(docker_read_setting FIREWALL_UI_TLS_CERT '')" || -d "$DOCKER_DIR/access" ) ]]; then
+    files+=(-f "$source/compose.tls.yaml")
+  fi
   if [[ "$(docker_read_setting FIREWALL_UI_DOCKER_PORTS 0)" == 1 ]]; then
     files+=(-f "$source/compose.docker-ports.yaml")
   fi
+  FIREWALL_UI_DOCKER_ACCESS_DIR="$DOCKER_DIR/access" \
   FIREWALL_UI_USERNAME="$(cat "$DOCKER_DIR/username")" \
   FIREWALL_UI_PASSWORD="$(cat "$DOCKER_DIR/password")" \
     docker compose --project-name "$DOCKER_PROJECT" --project-directory "$source" \
@@ -96,25 +102,80 @@ docker_require_engine() {
   docker compose version >/dev/null 2>&1 || docker_install_plugin compose || return 1
 }
 
-docker_select_settings() {
-  local choice ports port host
-  host="${FIREWALL_UI_DOCKER_HOST:-$(docker_read_setting FIREWALL_UI_DOCKER_HOST 127.0.0.1)}"
-  echo '1) Локальный доступ / SSH-туннель'
-  echo '2) Прямой доступ по IP сервера'
-  choice=1; [[ "$host" != 0.0.0.0 ]] || choice=2
-  docker_ask choice 'Способ доступа' "$choice"
-  case "$choice" in 1) host=127.0.0.1;; 2) host=0.0.0.0;; *) echo 'Неизвестный способ доступа.' >&2; return 1;; esac
-  port="${FIREWALL_UI_PORT:-$(docker_read_setting FIREWALL_UI_DOCKER_PORT 8088)}"
-  docker_ask port 'Порт панели' "$port"
-  [[ "$port" =~ ^[0-9]+$ && ${#port} -le 5 && "$port" != 0* ]] && ((port >= 1 && port <= 65535)) || { echo 'Порт должен быть от 1 до 65535.' >&2; return 1; }
+docker_select_settings() (
+  # Run the same wizard as native installation in an isolated shell.
+  local installer="$DOCKER_DIR/source/install.sh" ports choice
+  [[ -f "$installer" ]] || { echo 'Не найден общий мастер настройки.' >&2; return 1; }
+  source "$installer"
+  CONFIG_DIR="$DOCKER_DIR/access"; STATE_DIR="$DOCKER_DIR/access/state"
+  INSTALL_INTERACTIVE="$DOCKER_INTERACTIVE"
+  SAVED_PANEL_PORT="$(docker_read_setting FIREWALL_UI_DOCKER_PORT 8088)"
+  SAVED_PUBLIC_HOST="$(docker_read_setting FIREWALL_UI_PUBLIC_HOST '')"
+  SAVED_TLS_CERT="$(docker_read_setting FIREWALL_UI_TLS_CERT '')"
+  SAVED_TLS_KEY="$(docker_read_setting FIREWALL_UI_TLS_KEY '')"
+  # Read actual panel settings, which may have been changed through the web UI.
+  if [[ -f "$DOCKER_DIR/deployment" && -f "$DOCKER_DIR/source/compose.yaml" ]]; then
+    local config
+    config="$(docker_compose run --rm --no-deps -T --entrypoint cat firewall-ui /etc/firewall-ui/config.json 2>/dev/null)" || config=''
+    if [[ -n "$config" ]]; then
+      SAVED_PANEL_PORT="$(printf '%s' "$config" | sed -n 's/.*"listenPort":[[:space:]]*\([0-9][0-9]*\).*/\1/p')"
+      SAVED_PUBLIC_HOST="$(printf '%s' "$config" | sed -n 's/.*"publicHost":[[:space:]]*"\([^" ]*\)".*/\1/p')"
+      SAVED_TLS_CERT="$(printf '%s' "$config" | sed -n 's/.*"tlsCert":[[:space:]]*"\([^" ]*\)".*/\1/p')"
+      SAVED_TLS_KEY="$(printf '%s' "$config" | sed -n 's/.*"tlsKey":[[:space:]]*"\([^" ]*\)".*/\1/p')"
+    fi
+  fi
+  [[ -z "${FIREWALL_UI_DOCKER_HOST:-}" ]] || FIREWALL_UI_LISTEN_HOST="$FIREWALL_UI_DOCKER_HOST"
+  choose_access || return 1
+  prepare_tls || return 1
+  if [[ "$TLS_MODE" == existing && -n "$TLS_CERT" && "$TLS_CERT" != "$CONFIG_DIR/"* ]]; then
+    local imported
+    install -d -m 0700 "$CONFIG_DIR/tls"
+    imported="$(mktemp -d "$CONFIG_DIR/tls/import-XXXXXX")"
+    cp -L -- "$TLS_CERT" "$imported/fullchain.pem" || return 1
+    cp -L -- "$TLS_KEY" "$imported/privkey.pem" || return 1
+    chmod 0600 "$imported/privkey.pem"
+    TLS_CERT="$imported/fullchain.pem"; TLS_KEY="$imported/privkey.pem"
+    echo 'PEM-файлы скопированы в защищённый каталог Docker-панели.'
+  fi
   ports="${FIREWALL_UI_DOCKER_PORTS:-$(docker_read_setting FIREWALL_UI_DOCKER_PORTS 0)}"
   choice=n; [[ "$ports" != 1 ]] || choice=y
   docker_ask choice 'Показывать опубликованные Docker-порты? Это подключит Docker socket (y/n)' "$choice"
   case "$choice" in y|Y) ports=1;; n|N) ports=0;; *) echo 'Введите y или n.' >&2; return 1;; esac
   printf 'host\n' > "$DOCKER_DIR/deployment"
-  printf 'FIREWALL_UI_DOCKER_HOST=%s\nFIREWALL_UI_DOCKER_PORT=%s\nFIREWALL_UI_DOCKER_PORTS=%s\n' \
-    "$host" "$port" "$ports" > "$DOCKER_DIR/docker.env"
+  printf 'FIREWALL_UI_DOCKER_HOST=%s\nFIREWALL_UI_DOCKER_PORT=%s\nFIREWALL_UI_DOCKER_PORTS=%s\nFIREWALL_UI_PUBLIC_HOST=%s\nFIREWALL_UI_TLS_CERT=%s\nFIREWALL_UI_TLS_KEY=%s\nFIREWALL_UI_TLS_MODE=%s\nFIREWALL_UI_OPEN_PORTS=%s\n' \
+    "$PANEL_HOST" "$((10#$PANEL_PORT))" "$ports" "$PUBLIC_HOST" "$TLS_CERT" "$TLS_KEY" "$TLS_MODE" "$OPEN_PORTS" > "$DOCKER_DIR/docker.env"
+)
+
+# Host-side ACME keeps the whole certificate tree mounted, including renewed links.
+docker_setup_renewal() {
+  local service=firewall-ui-docker-cert-renew
+  if [[ "$(docker_read_setting FIREWALL_UI_TLS_MODE '')" != letsencrypt ]]; then
+    systemctl disable --now "$service.timer" >/dev/null 2>&1 || true
+    return 0
+  fi
+  local manager="${DOCKER_MANAGER//\%/%%}"
+  manager="${manager//\\/\\\\}"; manager="${manager//\"/\\\"}"
+  printf '[Unit]\nDescription=Renew Firewall-UI Docker certificate\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nType=oneshot\nExecStart=/usr/bin/env bash "%s" renew-certificates\nUMask=0077\n' "$manager" > /etc/systemd/system/$service.service
+  printf '[Unit]\nDescription=Firewall-UI Docker certificate renewal\n\n[Timer]\nOnCalendar=*-*-* 00,12:00:00\nRandomizedDelaySec=1800\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n' > /etc/systemd/system/$service.timer
+  systemctl daemon-reload && systemctl enable --now "$service.timer"
 }
+
+docker_renew_certificates() {
+  docker_existing_installation || return 1
+  local hook
+  printf -v hook '%q restart' "$DOCKER_MANAGER"
+  certbot renew --quiet --config-dir "$DOCKER_DIR/access/acme" \
+    --work-dir "$DOCKER_DIR/access/state/acme" --logs-dir "$DOCKER_DIR/access/state/acme-logs" --deploy-hook "$hook"
+}
+
+docker_cleanup_access() (
+  [[ -f "$DOCKER_DIR/access/state/access-rules" || -f "$DOCKER_DIR/access/state/access-ufw" ]] || return 0
+  local helper="$DOCKER_DIR/source/firewall-manager"
+  [[ -f "$helper" ]] || { echo 'Для очистки правил доступа нужен сохранённый инструмент Firewall-UI.' >&2; return 1; }
+  source "$helper"
+  STATE_DIR="$DOCKER_DIR/access/state"
+  cleanup_access_rules
+)
 
 docker_initial_credentials() {
   local user="${FIREWALL_UI_USERNAME:-admin}"
@@ -131,9 +192,10 @@ docker_download_source() (
   local stage file
   stage="$(mktemp -d "$DOCKER_DIR/.download-XXXXXX")"; trap 'rm -rf -- "$stage"' EXIT
   mkdir "$stage/source"
-  for file in compose.yaml compose.docker-ports.yaml install.sh; do
-    if [[ -n "${FIREWALL_UI_DOCKER_SOURCE:-}" ]]; then cp "$FIREWALL_UI_DOCKER_SOURCE/$file" "$stage/source/$file" || return 1
-    else curl -fLsS --retry 3 "https://raw.githubusercontent.com/SawaMEN/Firewall-UI/main/$file" -o "$stage/source/$file" || return 1; fi
+  for file in compose.yaml compose.docker-ports.yaml compose.tls.yaml install.sh deploy/firewall-ui; do
+    local target="$file"; [[ "$file" != deploy/firewall-ui ]] || target=firewall-manager
+    if [[ -n "${FIREWALL_UI_DOCKER_SOURCE:-}" ]]; then cp "$FIREWALL_UI_DOCKER_SOURCE/$file" "$stage/source/$target" || return 1
+    else curl -fLsS --retry 3 "https://raw.githubusercontent.com/SawaMEN/Firewall-UI/main/$file" -o "$stage/source/$target" || return 1; fi
   done
   rm -rf -- "$DOCKER_DIR/source.previous"
   if [[ -d "$DOCKER_DIR/source" ]]; then mv "$DOCKER_DIR/source" "$DOCKER_DIR/source.previous"; fi
@@ -180,9 +242,15 @@ docker_write_volume_credentials() {
 }
 
 docker_apply_runtime_settings() {
+  local bind cert secure=false
+  bind="$(docker_read_setting FIREWALL_UI_DOCKER_HOST 127.0.0.1)"
+  [[ "$bind" != *:* ]] || bind="[$bind]"
+  cert="$(docker_read_setting FIREWALL_UI_TLS_CERT '')"
+  [[ -z "$cert" ]] || secure=true
   docker_compose run --rm --no-deps -T firewall-ui -save-config \
-    -listen "$(docker_read_setting FIREWALL_UI_DOCKER_HOST 127.0.0.1):$(docker_read_setting FIREWALL_UI_DOCKER_PORT 8088)" \
-    -public-host '' -external-port 0 -tls-cert '' -tls-key '' -secure-cookies=false
+    -listen "$bind:$(docker_read_setting FIREWALL_UI_DOCKER_PORT 8088)" \
+    -public-host "$(docker_read_setting FIREWALL_UI_PUBLIC_HOST '')" -external-port 0 \
+    -tls-cert "$cert" -tls-key "$(docker_read_setting FIREWALL_UI_TLS_KEY '')" -secure-cookies="$secure"
 }
 
 docker_runtime_backup() {
@@ -220,10 +288,13 @@ docker_wait_for_service() {
 }
 
 docker_show_access() {
-  local port; port="$(docker_read_setting FIREWALL_UI_DOCKER_PORT 8088)"
-  if [[ "$(docker_read_setting FIREWALL_UI_DOCKER_HOST 127.0.0.1)" == 0.0.0.0 ]]; then
-    echo "Панель: http://<IP-сервера>:$port"
-  else echo "Панель: http://127.0.0.1:$port (локальный доступ / SSH-туннель)"; fi
+  local host port scheme=http
+  port="$(docker_read_setting FIREWALL_UI_DOCKER_PORT 8088)"
+  host="$(docker_read_setting FIREWALL_UI_PUBLIC_HOST "$(docker_read_setting FIREWALL_UI_DOCKER_HOST 127.0.0.1)")"
+  [[ "$host" != 0.0.0.0 && "$host" != :: ]] || host='<IP-сервера>'
+  [[ "$host" != *:* ]] || host="[$host]"
+  [[ -z "$(docker_read_setting FIREWALL_UI_TLS_CERT '')" ]] || scheme=https
+  echo "Панель: $scheme://$host:$port/"
   echo "Управление: firewall-ui-docker; настройки сохранены в $DOCKER_DIR."
 }
 
@@ -270,14 +341,18 @@ docker_install() (
     fi
     rm -f -- "$DOCKER_DIR/docker.env.previous"
     rm -rf -- "$stage"
-    if ((first && !succeeded && !runtime_saved)); then rm -rf -- "$DOCKER_DIR"; fi
+    if ((first && !succeeded && !runtime_saved)); then
+      if docker_cleanup_access; then rm -rf -- "$DOCKER_DIR"
+      else echo 'Правила доступа не очищены; каталог сохранён для повторного удаления.' >&2; fi
+    fi
     return "$result"
   }
   trap rollback EXIT
   [[ ! -f "$DOCKER_DIR/deployment" ]] || old_mode="$(cat "$DOCKER_DIR/deployment")"
   if ((first)); then docker_initial_credentials || return 1; fi
+  # Refresh shared configuration code before presenting the wizard.
+  docker_download_source || return 1
   if ((first)) || [[ "$action" == configure || "$old_mode" != host ]]; then docker_select_settings || return 1; fi
-  if [[ "$action" != configure || ! -d "$DOCKER_DIR/source" ]]; then docker_download_source || return 1; fi
   docker_compose config --quiet || return 1
   old_image="$(docker image inspect firewall-ui:stable --format '{{.Id}}' 2>/dev/null || true)"
   docker_download_image || return 1
@@ -296,6 +371,15 @@ docker_install() (
   docker_wait_for_service || return 1
   install -m 0755 "${BASH_SOURCE[0]}" "$DOCKER_MANAGER" || return 1
   install -m 0700 "$DOCKER_DIR/source/install.sh" "$DOCKER_DIR/install.sh" || return 1
+  if ((first)) || [[ "$action" == configure ]]; then
+    docker_setup_renewal || return 1
+    (
+      source "$DOCKER_DIR/source/install.sh"
+      STATE_DIR="$DOCKER_DIR/access/state"
+      OPEN_PORTS="$(docker_read_setting FIREWALL_UI_OPEN_PORTS 0)"
+      allow_access_port "$(docker_read_setting FIREWALL_UI_DOCKER_PORT 8088)"
+    ) || return 1
+  fi
   if ((runtime_saved)); then docker_runtime_backup clear || return 1; fi
   rm -rf -- "$DOCKER_DIR/source.previous"
   succeeded=1
@@ -377,6 +461,14 @@ docker_cleanup_image() {
 }
 
 docker_uninstall() (
+  local renew=firewall-ui-docker-cert-renew
+  if [[ -f /etc/systemd/system/$renew.timer || -f /etc/systemd/system/$renew.service ]]; then
+    systemctl disable --now "$renew.timer" "$renew.service" >/dev/null 2>&1 || {
+      systemctl is-active --quiet "$renew.timer" "$renew.service" && return 1
+    }
+    rm -f /etc/systemd/system/$renew.timer /etc/systemd/system/$renew.service || return 1
+    systemctl daemon-reload || return 1
+  fi
   local containers='' volumes='' volume role
   if command -v docker >/dev/null 2>&1; then
     docker info >/dev/null 2>&1 || { systemctl start docker || return 1; }
@@ -402,6 +494,7 @@ docker_uninstall() (
       --entrypoint /usr/local/bin/firewall-ui firewall-ui:stable -cleanup-firewall; then
       echo 'Не удалось очистить правила и запрет пинга. Данные сохранены.' >&2; return 1
     fi
+    docker_cleanup_access || return 1
     for cid in $containers; do docker rm -f "$cid" >/dev/null || return 1; done
     for volume in $volumes; do docker volume rm "$volume" >/dev/null || return 1; done
     containers="$(docker_owned_containers)" || return 1
@@ -413,6 +506,7 @@ docker_uninstall() (
   if [[ -d "$DOCKER_DIR" && ! -f "$DOCKER_DIR/.installer-managed" && -n "$(find "$DOCKER_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
     echo "Каталог $DOCKER_DIR не отмечен как установка Firewall-UI; его содержимое сохранено." >&2; return 1
   fi
+  docker_cleanup_access || return 1
   rm -rf -- "$DOCKER_DIR" || return 1
   rm -f -- "$DOCKER_MANAGER" || return 1
   if command -v docker >/dev/null 2>&1; then
@@ -436,6 +530,7 @@ docker_main() {
   case "${1:-}" in
     install|update) docker_install install;; configure) docker_install configure;;
     credentials) docker_change_credentials;;
+    renew-certificates) docker_renew_certificates;;
     reset-password) docker_reset_password;; uninstall) docker_uninstall;;
     start) docker_require_exclusive && docker_existing_installation && docker_compose up -d --no-build && docker_wait_for_service;;
     stop) docker_existing_installation && docker_compose stop;;

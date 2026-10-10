@@ -62,8 +62,17 @@ function Application() {
     try {
       const result = await request<Session>('/api/login', values);
       if (result.success && result.obj) {
-        setCSRF(result.obj.csrf);
-        setAuthenticated(true);
+        // Mount protected pages only after the browser returns the cookie.
+        const session = await request<Session>('/api/session');
+        if (session.success && session.obj) {
+          setCSRF(session.obj.csrf);
+          setAuthenticated(true);
+        } else {
+          setCSRF('');
+          void message.error(ru
+            ? 'Браузер не сохранил сессию. Если включён Secure cookie, откройте панель по HTTPS. Проверьте, что cookie разрешены.'
+            : 'The browser did not save the session. Use HTTPS when Secure cookie is enabled and allow cookies.');
+        }
       }
     } catch {
       void message.error(ru ? 'Не удалось связаться с сервером' : 'Server unavailable');
