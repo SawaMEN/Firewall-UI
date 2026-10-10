@@ -212,8 +212,13 @@ docker_download_image() (
     archive="$FIREWALL_UI_DOCKER_IMAGE_ARCHIVE"; expected="${FIREWALL_UI_DOCKER_IMAGE_SHA256:-}"
   else
     case "$(uname -m)" in x86_64|amd64) arch=amd64;; aarch64|arm64) arch=arm64;; *) return 1;; esac
-    curl -fLsS --retry 3 --connect-timeout 15 https://github.com/SawaMEN/Firewall-UI/releases/latest/download/docker-update.json -o "$stage/update.json" || return 1
-    block="$(sed -n "/\"$arch\"[[:space:]]*:/,/^[[:space:]]*}/p" "$stage/update.json")"
+    curl -fLsS --retry 3 --connect-timeout 15 https://github.com/SawaMEN/Firewall-UI/releases/latest/download/update.json -o "$stage/update.json" || return 1
+    block="$(sed -n "/\"docker-$arch\"[[:space:]]*:/,/^[[:space:]]*}/p" "$stage/update.json")"
+    # Releases through 1.3.1 used a separate image manifest.
+    if [[ -z "$block" ]]; then
+      curl -fLsS --retry 3 --connect-timeout 15 https://github.com/SawaMEN/Firewall-UI/releases/latest/download/docker-update.json -o "$stage/update.json" || return 1
+      block="$(sed -n "/\"$arch\"[[:space:]]*:/,/^[[:space:]]*}/p" "$stage/update.json")"
+    fi
     url="$(printf '%s\n' "$block" | sed -n 's/.*"url":[[:space:]]*"\([^" ]*\)".*/\1/p' | head -n 1)"
     expected="$(printf '%s\n' "$block" | sed -n 's/.*"sha256":[[:space:]]*"\([0-9A-Fa-f]*\)".*/\1/p' | head -n 1)"
     [[ "$url" =~ ^https://github.com/SawaMEN/Firewall-UI/releases/download/v[0-9.]+/firewall-ui-docker-linux-${arch}\.tar\.gz$ ]] || { echo 'Неверный адрес готового образа.' >&2; return 1; }

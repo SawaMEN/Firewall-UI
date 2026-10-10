@@ -77,7 +77,7 @@ jobs:
           fi
           python3 scripts/release-manifest.py stable "$STABLE_VERSION" "$TAG"
           gh release create "$TAG" --target "$BUILD_COMMIT" --title "Firewall-UI $STABLE_VERSION" --generate-notes \
-            dist-stable/firewall-ui-linux-amd64 dist-stable/firewall-ui-linux-arm64 dist-stable/update.json release-images/*.tar.gz release-images/docker-update.json
+            dist-stable/firewall-ui-linux-amd64 dist-stable/firewall-ui-linux-arm64 dist-stable/update.json release-images/*.tar.gz
       - name: Verify public ready-image download
         if: steps.builds.outputs.ready == 'true'
         run: |

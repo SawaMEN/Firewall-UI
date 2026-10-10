@@ -50,7 +50,7 @@ jobs:
           restore-keys: |
             go-${{ runner.os }}-tests-${{ hashFiles('go.mod') }}-
       - name: Check shell scripts
-        run: bash -n install.sh deploy/firewall-ui deploy/firewall-ui-docker scripts/build-release.sh && bash tests/installer.sh && bash tests/manager.sh && bash tests/access.sh && bash tests/uninstall.sh && bash tests/install-menu.sh && bash tests/docker-installer.sh
+        run: bash -n install.sh deploy/firewall-ui deploy/firewall-ui-docker scripts/build-release.sh && bash tests/installer.sh && bash tests/manager.sh && bash tests/access.sh && bash tests/uninstall.sh && bash tests/install-menu.sh && bash tests/docker-installer.sh && python3 tests/release-manifest.py
       - name: Check Go formatting
         run: |
           if [[ -n "$(gofmt -l ./cmd ./internal)" ]]; then

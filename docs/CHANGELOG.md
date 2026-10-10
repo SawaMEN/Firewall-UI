@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.2
+
+- Shorten the Russian README, document sudo installation and show binary/Docker choices in one installation section.
+- Publish one update.json with binary and Docker image URLs/checksums; preserve native manifest compatibility and read older image manifests when needed.
+
 ## 1.3.1
 
 - Stop attaching the duplicate installer to releases; retain checksum manifests used by native and Compose updates.
