@@ -375,7 +375,7 @@ docker_install() (
   # Refresh shared configuration code before presenting the wizard.
   docker_download_source || return 1
   if ((first)) || [[ "$action" == configure || "$old_mode" != host ]]; then docker_select_settings || return 1; fi
-  if ((first)) || [[ "$action" == configure ]]; then docker_choose_auto_update || return 1; fi
+  if ((first)) || [[ "$action" == configure || ! -f "$DOCKER_DIR/auto-update" ]]; then docker_choose_auto_update || return 1; fi
   docker_prepare_host_firewall || return 1
   docker_compose config --quiet || return 1
   old_image="$(docker image inspect firewall-ui:stable --format '{{.Id}}' 2>/dev/null || true)"
