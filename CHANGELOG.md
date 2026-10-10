@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.16
+
+- Unify installer actions, display installed/running variants, ask for Docker Compose on installation/update, and purge both variants with one action. Route settings and password reset to the installed variant automatically.
+
 ## 1.2.15
 
 - Remove Docker network proxy deployment, its installer options and namespace switching; use direct host networking with local or IP access.

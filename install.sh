@@ -408,33 +408,92 @@ require_installer_root() {
   [[ ${EUID:-$(id -u)} -eq 0 ]] || { echo 'Запустите установщик от root.' >&2; return 1; }
 }
 
+installer_detect_installations() {
+  NATIVE_INSTALLED=0; COMPOSE_INSTALLED=0
+  local docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}"
+  if [[ -e "$INSTALL_DIR/firewall-ui" || -e "$SERVICE_FILE" || -d "$CONFIG_DIR" || -d "$STATE_DIR" ]]; then NATIVE_INSTALLED=1; fi
+  if [[ -d "$docker_dir" || -e "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/firewall-ui-docker}" ]]; then COMPOSE_INSTALLED=1; fi
+  if command -v docker >/dev/null 2>&1; then
+    if [[ -n "$(docker ps -aq --filter "label=com.docker.compose.project=${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}" 2>/dev/null)" ]]; then COMPOSE_INSTALLED=1; fi
+  fi
+}
+
+installer_status() {
+  installer_detect_installations
+  local native='не установлена' compose='не установлен' state
+  if ((NATIVE_INSTALLED)); then
+    native='установлена, остановлена'
+    if systemctl is-active --quiet firewall-ui.service 2>/dev/null; then native='установлена, запущена'; fi
+    [[ -x "$INSTALL_DIR/firewall-ui" ]] || native='остались файлы установки'
+  fi
+  if ((COMPOSE_INSTALLED)); then
+    compose='установлен, остановлен'
+    if command -v docker >/dev/null 2>&1; then
+      state="$(docker ps --filter "label=com.docker.compose.project=${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}" --filter status=running --format '{{.Names}}' 2>/dev/null)" || true
+      [[ -z "$state" ]] || compose='установлен, запущен'
+    fi
+  fi
+  printf 'Обычная установка: %s\nDocker Compose: %s\n' "$native" "$compose"
+}
+
+installer_select_target() {
+  local action="$1" choice default=n
+  installer_detect_installations
+  if [[ "$action" != install ]]; then
+    if ((NATIVE_INSTALLED && !COMPOSE_INSTALLED)); then return 0; fi
+    if ((COMPOSE_INSTALLED && !NATIVE_INSTALLED)); then INSTALL_ACTION="docker-$action"; return 0; fi
+    if ((!NATIVE_INSTALLED && !COMPOSE_INSTALLED)); then echo 'Firewall-UI ещё не установлен.' >&2; return 1; fi
+  fi
+  if ((!NATIVE_INSTALLED && COMPOSE_INSTALLED)); then default=y; fi
+  while true; do
+    ask choice 'Использовать Docker Compose? (y — Docker Compose, n — обычная установка)' "$default" || return 1
+    case "$choice" in
+      y|Y) INSTALL_ACTION="docker-$action"; return 0;;
+      n|N) INSTALL_ACTION="$action"; return 0;;
+      *) echo 'Введите y или n.' >&2; [[ "${INSTALL_INTERACTIVE:-0}" == 1 ]] || return 1;;
+    esac
+  done
+}
+
 select_installer_action() {
   INSTALL_ACTION=install
-  [[ "${INSTALL_INTERACTIVE:-0}" == 1 ]] || return 0
-  echo 'Firewall-UI — меню установщика'
-  echo '1) Установить / обновить'
-  echo '2) Настроить доступ: домен / IP / сертификат'
-  echo '3) Сбросить пароль (сохранить логин)'
-  echo '4) Полностью удалить Firewall-UI'
-  echo '5) Установить / обновить версию через Docker Compose'
-  echo '6) Настройки Docker Compose: адрес и порт'
-  echo '7) Сбросить пароль версии Docker Compose'
-  echo '8) Полностью удалить версию через Docker Compose'
-  echo '0) Выход'
+  [[ "${INSTALL_INTERACTIVE:-0}" == 1 ]] || { installer_select_target install; return; }
   local choice
-  ask choice 'Выберите действие' 1 || return 1
-  case "$choice" in
-    1) INSTALL_ACTION=install;;
-    2) INSTALL_ACTION=configure;;
-    3) INSTALL_ACTION=reset-password;;
-    4) INSTALL_ACTION=uninstall;;
-    5) INSTALL_ACTION=docker-install;;
-    6) INSTALL_ACTION=docker-configure;;
-    7) INSTALL_ACTION=docker-reset-password;;
-    8) INSTALL_ACTION=docker-uninstall;;
-    0) INSTALL_ACTION=exit;;
-    *) echo 'Неизвестный пункт меню.' >&2; return 1;;
-  esac
+  while true; do
+    echo
+    echo 'Firewall-UI — установка и обслуживание'
+    installer_status
+    echo
+    echo '1) Установить / обновить (выбрать обычную установку или Docker Compose)'
+    echo '2) Настроить доступ'
+    echo '3) Сбросить пароль'
+    echo '4) Полностью удалить оба варианта и их данные'
+    echo '5) Показать состояние'
+    echo '6) Посмотреть журнал'
+    echo '0) Выход'
+    ask choice 'Выберите действие' 1 || return 1
+    case "$choice" in
+      1) INSTALL_ACTION=install; installer_select_target install; return;;
+      2) INSTALL_ACTION=configure; installer_select_target configure; return;;
+      3) INSTALL_ACTION=reset-password; installer_select_target reset-password; return;;
+      4) INSTALL_ACTION=uninstall; return 0;;
+      5) installer_status;;
+      6) INSTALL_ACTION=logs; installer_select_target logs; return;;
+      0) INSTALL_ACTION=exit; return 0;;
+      *) echo 'Неизвестный пункт меню.' >&2;;
+    esac
+  done
+}
+
+installer_uninstall_all() {
+  installer_detect_installations
+  local result=0
+  if ((!NATIVE_INSTALLED && !COMPOSE_INSTALLED)); then echo 'Firewall-UI не установлен.'; return 0; fi
+  # Try both variants even if one fails; retain failure status and diagnostics.
+  if ((COMPOSE_INSTALLED)); then run_installer_docker_action uninstall || result=1; fi
+  if ((NATIVE_INSTALLED)); then run_installer_manager_action uninstall --purge || result=1; fi
+  if ((result)); then echo 'Удаление завершено не полностью. Исправьте указанные ошибки и повторите пункт 4.' >&2; return 1; fi
+  echo 'Все установленные варианты Firewall-UI полностью удалены.'
 }
 
 run_installer_manager_action() (
@@ -478,12 +537,14 @@ main() {
   require_installer_root || return 1
   INSTALL_INTERACTIVE=0
   if [[ "${FIREWALL_UI_NONINTERACTIVE:-0}" != 1 ]] && { exec 3<>/dev/tty; } 2>/dev/null; then INSTALL_INTERACTIVE=1; fi
-  if [[ -z "${1:-}" ]]; then select_installer_action || return 1; fi
+  if [[ -z "${1:-}" ]]; then select_installer_action || return 1
+  elif [[ "$INSTALL_ACTION" == configure || "$INSTALL_ACTION" == reset-password ]]; then installer_select_target "$INSTALL_ACTION" || return 1; fi
   case "$INSTALL_ACTION" in
     exit) return 0;;
     docker-*) run_installer_docker_action "${INSTALL_ACTION#docker-}"; return;;
     reset-password) run_installer_manager_action reset-password; return;;
-    uninstall) run_installer_manager_action uninstall --purge; return;;
+    uninstall) installer_uninstall_all; return;;
+    logs) run_installer_manager_action logs; return;;
     configure) FIREWALL_UI_RECONFIGURE=1;;
   esac
   check_system

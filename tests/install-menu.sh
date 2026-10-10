@@ -4,15 +4,29 @@ TASK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FIXTURE="$(mktemp -d)"
 trap 'rm -rf -- "$FIXTURE"' EXIT
 source "$TASK_ROOT/install.sh"
+INSTALL_DIR="$FIXTURE/native"; CONFIG_DIR="$FIXTURE/config"; STATE_DIR="$FIXTURE/state"
+SERVICE_FILE="$FIXTURE/service"; MANAGER="$FIXTURE/native-manager"
+export FIREWALL_UI_DOCKER_DIR="$FIXTURE/compose" FIREWALL_UI_DOCKER_MANAGER="$FIXTURE/compose-manager"
+systemctl() { return 1; }
+docker() { return 0; }
+mkdir -p "$INSTALL_DIR"; printf '#!/bin/sh\nexit 0\n' > "$INSTALL_DIR/firewall-ui"; chmod +x "$INSTALL_DIR/firewall-ui"
 INSTALL_INTERACTIVE=1
-for selection in '1 install' '2 configure' '3 reset-password' '4 uninstall' '5 docker-install' '6 docker-configure' '7 docker-reset-password' '8 docker-uninstall' '0 exit'; do
+for selection in '1 install' '2 configure' '3 reset-password' '4 uninstall' '6 logs' '0 exit'; do
   read -r answer expected <<< "$selection"
-  printf '%s\n' "$answer" > "$FIXTURE/answer"
+  printf '%s\nn\n' "$answer" > "$FIXTURE/answer"
   exec 3<>"$FIXTURE/answer"
   select_installer_action
   [[ "$INSTALL_ACTION" == "$expected" ]]
   exec 3>&-
 done
+printf '1\ny\n' > "$FIXTURE/answer"; exec 3<>"$FIXTURE/answer"
+select_installer_action
+[[ "$INSTALL_ACTION" == docker-install ]]
+printf '5\n0\n' > "$FIXTURE/answer"; exec 3<>"$FIXTURE/answer"
+select_installer_action > "$FIXTURE/status"
+[[ "$(cat "$FIXTURE/status")" == *'Обычная установка: установлена, остановлена'* ]]
+[[ "$(cat "$FIXTURE/status")" == *'Docker Compose: не установлен'* ]]
+exec 3>&-
 # Reset and purge dispatch before package installation, UFW detection or updates.
 FIREWALL_UI_NONINTERACTIVE=1
 require_installer_root() { :; } # All service/file operations below use isolated mocks.
@@ -34,6 +48,22 @@ main --docker-uninstall
 [[ "$(cat "$FIXTURE/actions")" == $'reset-password\nuninstall --purge\ndocker install\ndocker configure\ndocker reset-password\ndocker uninstall' ]]
 for action in --compose --compose-configure --compose-reset-password --compose-uninstall; do main "$action"; done
 [[ "$(tail -n 4 "$FIXTURE/actions")" == $'docker install\ndocker configure\ndocker reset-password\ndocker uninstall' ]]
+# A single purge removes both variants, even if the first reports failure.
+mkdir -p "$FIREWALL_UI_DOCKER_DIR"
+: > "$FIXTURE/actions"
+main --uninstall
+[[ "$(cat "$FIXTURE/actions")" == $'docker uninstall\nuninstall --purge' ]]
+run_installer_docker_action() { printf 'docker %s\n' "$1" >> "$TASK_MENU_LOG"; return 1; }
+: > "$FIXTURE/actions"
+if main --uninstall; then echo 'Ignored partial removal'; exit 1; fi
+[[ "$(cat "$FIXTURE/actions")" == $'docker uninstall\nuninstall --purge' ]]
+# Settings/reset automatically select Compose when it is the only installation.
+rm -rf "$INSTALL_DIR"
+run_installer_docker_action() { printf 'docker %s\n' "$1" >> "$TASK_MENU_LOG"; }
+: > "$FIXTURE/actions"
+main --reset-password
+main --configure
+[[ "$(cat "$FIXTURE/actions")" == $'docker reset-password\ndocker configure' ]]
 source "$TASK_ROOT/deploy/firewall-ui"
 require_root() { :; }
 BIN="$FIXTURE/binary"; ENV_FILE="$FIXTURE/environment"
