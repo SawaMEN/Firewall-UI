@@ -427,15 +427,22 @@ installer_detect_installations() {
   local docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}"
   if [[ -e "$INSTALL_DIR/firewall-ui" || -e "$SERVICE_FILE" ]] || installer_directory_has_data "$INSTALL_DIR" || installer_directory_has_data "$CONFIG_DIR" || installer_directory_has_data "$STATE_DIR"; then NATIVE_INSTALLED=1; fi
   if installer_directory_has_data "$docker_dir" || [[ -e "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/firewall-ui-docker}" ]]; then COMPOSE_INSTALLED=1; fi
-  if command -v docker >/dev/null 2>&1; then
-    if [[ -n "$(docker ps -aq --filter "label=com.docker.compose.project=${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}" 2>/dev/null)$(docker volume ls -q --filter "label=com.docker.compose.project=${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}" 2>/dev/null)" ]]; then COMPOSE_INSTALLED=1; fi
+  if (( !COMPOSE_INSTALLED )) && command -v docker >/dev/null 2>&1; then
+    local containers volumes volume role project="${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}"
+    containers="$(docker ps -aq --filter "label=com.docker.compose.project=$project" --filter label=com.docker.compose.service=firewall-ui 2>/dev/null)" || containers=''
+    if [[ -n "$containers" ]]; then COMPOSE_INSTALLED=1; return 0; fi
+    volumes="$(docker volume ls -q --filter "label=com.docker.compose.project=$project" 2>/dev/null)" || volumes=''
+    for volume in $volumes; do
+      role="$(docker volume inspect --format '{{index .Labels "com.docker.compose.volume"}}' "$volume" 2>/dev/null)" || continue
+      case "$role" in firewall-ui-config|firewall-ui-data) COMPOSE_INSTALLED=1; break;; esac
+    done
   fi
 }
 
 installer_require_native_exclusive() {
   command -v docker >/dev/null 2>&1 || return 0
   local running
-  running="$(docker ps --filter "label=com.docker.compose.project=${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}" --filter status=running --format '{{.Names}}' 2>/dev/null)" || {
+  running="$(docker ps --filter "label=com.docker.compose.project=${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}" --filter label=com.docker.compose.service=firewall-ui --filter status=running --format '{{.Names}}' 2>/dev/null)" || {
     if installer_directory_has_data "${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}"; then
       echo 'Не удалось проверить Docker-панель. Проверьте Docker Engine перед обычной установкой.' >&2
       return 1
@@ -597,7 +604,7 @@ installer_status() {
   if ((COMPOSE_INSTALLED)); then
     compose='установлен, остановлен'
     if command -v docker >/dev/null 2>&1; then
-      state="$(docker ps --filter "label=com.docker.compose.project=${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}" --filter status=running --format '{{.Names}}' 2>/dev/null)" || true
+      state="$(docker ps --filter "label=com.docker.compose.project=${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}" --filter label=com.docker.compose.service=firewall-ui --filter status=running --format '{{.Names}}' 2>/dev/null)" || true
       [[ -z "$state" ]] || compose='установлен, запущен'
     fi
   fi

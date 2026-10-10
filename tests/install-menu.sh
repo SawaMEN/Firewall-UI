@@ -82,6 +82,23 @@ installer_detect_installations
 main --uninstall
 [[ ! -d "$INSTALL_DIR" && ! -d "$CONFIG_DIR" && ! -d "$STATE_DIR" && ! -d "$FIREWALL_UI_DOCKER_DIR" ]]
 
+# Foreign resources with the same project label must not count as installed.
+(
+ docker() {
+   case "$1 ${2:-}" in
+     'ps -aq') [[ "$*" == *'label=com.docker.compose.service=firewall-ui'* ]] || echo foreign-container;;
+     'volume ls') echo retained-volume;;
+     'volume inspect') echo "${MOCK_VOLUME_ROLE:-unrelated}";;
+   esac
+   return 0
+ }
+ installer_detect_installations
+ [[ "$COMPOSE_INSTALLED" == 0 ]]
+ MOCK_VOLUME_ROLE=firewall-ui-data
+ installer_detect_installations
+ [[ "$COMPOSE_INSTALLED" == 1 ]]
+)
+
 # Settings/service submenus support back and preserve the numeric variant choice.
 mkdir -p "$INSTALL_DIR"; touch "$INSTALL_DIR/firewall-ui"
 INSTALL_INTERACTIVE=1

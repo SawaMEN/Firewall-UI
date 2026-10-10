@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.23
+
+- Exclude unrelated Compose services and volumes from installation/running status and native-install conflict checks.
+- Verify that retaining an unrelated project volume after complete removal does not leave the panel marked as installed.
+
 ## 1.2.22
 
 - Remove repeated status, connection and password-reset menu entries; keep state and connection details in the main header.
