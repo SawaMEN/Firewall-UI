@@ -74,15 +74,10 @@ cp "$FIXTURE/volume/environment" "$FIXTURE/web-before"
 docker_install install
 cmp "$FIXTURE/web-before" "$FIXTURE/volume/environment"
 [[ "$(cat "$FIXTURE/commands")" != *'-save-config'* ]]
-# Existing retired network deployments migrate without losing web credentials.
-printf 'proxy\n' > "$DOCKER_DIR/deployment"
-touch "$DOCKER_DIR/source/compose.proxy.yaml"
-printf 'FIREWALL_UI_PROXY_NETWORK=retired\n' >> "$DOCKER_DIR/docker.env"
+# Repeated updates preserve runtime credentials and use current Compose layout.
 : > "$FIXTURE/commands"
 docker_install install
 [[ "$(cat "$DOCKER_DIR/deployment")" == host ]]
-[[ "$(cat "$DOCKER_DIR/docker.env")" != *PROXY_NETWORK* ]]
-[[ "$(cat "$FIXTURE/commands")" == *'source.previous/compose.proxy.yaml'* ]]
 [[ ! -e "$DOCKER_DIR/source.previous" ]]
 cmp "$FIXTURE/web-before" "$FIXTURE/volume/environment"
 # Reset uses the current web username, not the original bootstrap username.
@@ -209,7 +204,6 @@ echo 'Failed Docker startup and runtime rollback/retry passed'
  mkdir -p "$DOCKER_DIR/source"
  cp "$TASK_ROOT/install.sh" "$DOCKER_DIR/source/install.sh"
  cp "$TASK_ROOT/deploy/firewall-ui" "$DOCKER_DIR/source/firewall-manager"
- cp "$TASK_ROOT/deploy/docker/compose.tls.yaml" "$DOCKER_DIR/source/compose.tls.yaml"
  printf admin > "$DOCKER_DIR/username"; printf 1 > "$DOCKER_DIR/password"
  unset FIREWALL_UI_DOCKER_HOST FIREWALL_UI_PORT
  DOCKER_INTERACTIVE=1
@@ -228,7 +222,7 @@ echo 'Failed Docker startup and runtime rollback/retry passed'
  docker_select_settings
  [[ -z "$(docker_read_setting FIREWALL_UI_TLS_CERT '')" && -z "$(docker_read_setting FIREWALL_UI_PUBLIC_HOST '')" ]]
 )
-echo 'Shared Compose HTTPS wizard, certificate mount and local-mode reset passed'
+echo 'Shared Compose HTTPS wizard and local-mode reset passed'
 
 # The real source downloader maps repository paths to stable installed filenames.
 (
@@ -238,7 +232,7 @@ echo 'Shared Compose HTTPS wizard, certificate mount and local-mode reset passed
  source "$TASK_ROOT/deploy/firewall-ui-docker"
  DOCKER_DIR="$FIXTURE/layout-download"
  docker_download_source
- for file in compose.yaml compose.docker-ports.yaml compose.tls.yaml install.sh firewall-manager; do
+ for file in compose.yaml compose.docker-ports.yaml install.sh firewall-manager; do
    [[ -s "$DOCKER_DIR/source/$file" ]]
  done
  [[ ! -d "$DOCKER_DIR/source/deploy" ]]

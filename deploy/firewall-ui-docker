@@ -43,38 +43,22 @@ docker_password() {
   DOCKER_PASSWORD="$value"
 }
 
-docker_compose_mode() {
-  local mode="$1"; shift
-  local source="$DOCKER_DIR/source" file=compose.yaml env_file="$DOCKER_DIR/docker.env"
-  # Retain only stop/removal/rollback support for an already installed old layout.
-  if [[ "$mode" != host && -f "$source/compose.$mode.yaml" ]]; then
-    file="compose.$mode.yaml"
-  elif [[ "$mode" != host && -f "$DOCKER_DIR/source.previous/compose.$mode.yaml" ]]; then
-    source="$DOCKER_DIR/source.previous"; file="compose.$mode.yaml"
-  fi
-  if [[ "$mode" != host && -f "$DOCKER_DIR/docker.env.previous" ]]; then
-    env_file="$DOCKER_DIR/docker.env.previous"
-  fi
-  local -a files=(-f "$source/$file")
-  # Keep existing certificates readable while -save-config loads the previous
-  # TLS configuration, including transitions back to local HTTP.
-  if [[ "$DOCKER_DIR" == "$LEGACY_DOCKER_DIR" && -f "$source/compose.tls.yaml" && -d "$DOCKER_DIR/access" ]]; then
-    files+=(-f "$source/compose.tls.yaml")
-  fi
+# New deployments use only the host-network Compose layout.
+# One-time migration handles installations that still use Docker volumes.
+docker_compose() {
+  local source="$DOCKER_DIR/source"
+  local -a files=(-f "$source/compose.yaml")
   if [[ "$(docker_read_setting FIREWALL_UI_DOCKER_PORTS 0)" == 1 ]]; then
     files+=(-f "$source/compose.docker-ports.yaml")
   fi
   FIREWALL_UI_DOCKER_INSTALL_DIR="$DOCKER_DIR" \
-  FIREWALL_UI_DOCKER_ACCESS_DIR="$DOCKER_CONFIG_DIR" \
   FIREWALL_UI_CONFIG_DIR="$DOCKER_CONFIG_DIR" \
   FIREWALL_UI_STATE_DIR="$DOCKER_STATE_DIR" \
   FIREWALL_UI_USERNAME="$(cat "$DOCKER_DIR/username")" \
   FIREWALL_UI_PASSWORD="$(cat "$DOCKER_DIR/password")" \
     docker compose --project-name "$DOCKER_PROJECT" --project-directory "$source" \
-    --env-file "$env_file" "${files[@]}" "$@"
+    --env-file "$DOCKER_DIR/docker.env" "${files[@]}" "$@"
 }
-
-docker_compose() { docker_compose_mode "$(cat "$DOCKER_DIR/deployment")" "$@"; }
 
 docker_install_plugin() (
   set -Eeuo pipefail
@@ -210,7 +194,7 @@ docker_download_source() (
   local stage file
   stage="$(mktemp -d "$DOCKER_DIR/.download-XXXXXX")"; trap 'rm -rf -- "$stage"' EXIT
   mkdir "$stage/source"
-  for file in deploy/docker/compose.yaml deploy/docker/compose.docker-ports.yaml deploy/docker/compose.tls.yaml install.sh deploy/firewall-ui; do
+  for file in deploy/docker/compose.yaml deploy/docker/compose.docker-ports.yaml install.sh deploy/firewall-ui; do
     local target="${file##*/}"; [[ "$file" != deploy/firewall-ui ]] || target=firewall-manager
     if [[ -n "${FIREWALL_UI_DOCKER_SOURCE:-}" ]]; then cp "$FIREWALL_UI_DOCKER_SOURCE/$file" "$stage/source/$target" || return 1
     else curl -fLsS --retry 3 --connect-timeout 15 --max-time 60 "https://raw.githubusercontent.com/SawaMEN/Firewall-UI/${FIREWALL_UI_DOCKER_SOURCE_REF:-main}/$file" -o "$stage/source/$target" || return 1; fi
@@ -238,11 +222,7 @@ docker_download_image() (
       curl -fLsS --retry 3 --connect-timeout 15 --max-time 60 "$endpoint" -o "$stage/update.json" || return 1
     fi
     block="$(sed -n "/\"docker-$arch\"[[:space:]]*:/,/^[[:space:]]*}/p" "$stage/update.json")"
-    # Releases through 1.3.1 used a separate image manifest.
-    if [[ -z "$block" ]]; then
-      curl -fLsS --retry 3 --connect-timeout 15 https://github.com/SawaMEN/Firewall-UI/releases/latest/download/docker-update.json -o "$stage/update.json" || return 1
-      block="$(sed -n "/\"$arch\"[[:space:]]*:/,/^[[:space:]]*}/p" "$stage/update.json")"
-    fi
+    [[ -n "$block" ]] || { echo 'В манифесте отсутствует Docker-образ для данной архитектуры.' >&2; return 1; }
     url="$(printf '%s\n' "$block" | sed -n 's/.*"url":[[:space:]]*"\([^" ]*\)".*/\1/p' | head -n 1)"
     expected="$(printf '%s\n' "$block" | sed -n 's/.*"sha256":[[:space:]]*"\([0-9A-Fa-f]*\)".*/\1/p' | head -n 1)"
     [[ "$url" =~ ^https://github.com/SawaMEN/Firewall-UI/releases/download/(v[0-9.]+|dev)/firewall-ui-docker-linux-${arch}\.tar\.gz$ ]] || { echo 'Неверный адрес готового образа.' >&2; return 1; }
@@ -414,7 +394,6 @@ docker_install() (
   done
   [[ ! -f "$DOCKER_MANAGER" ]] || cp -p "$DOCKER_MANAGER" "$stage/docker-manager"
   [[ ! -f "$PUBLIC_MANAGER" ]] || cp -p "$PUBLIC_MANAGER" "$stage/public-manager"
-  [[ ! -f "$DOCKER_DIR/docker.env" ]] || cp -p "$DOCKER_DIR/docker.env" "$DOCKER_DIR/docker.env.previous"
   rollback() {
     local result=$?
     if (( !succeeded )); then
@@ -439,14 +418,14 @@ docker_install() (
         FIREWALL_UI_DOCKER_DIR="$LEGACY_DOCKER_DIR" bash "$DOCKER_MANAGER" start ||
           echo 'Не удалось запустить прежнюю Docker-панель.' >&2
       elif ((stopped)) && [[ -n "$old_mode" ]]; then
-        if docker_compose_mode "$old_mode" up -d --no-build; then
+        if docker_compose up -d --no-build; then
           docker_wait_for_service || echo 'Предыдущая Docker-панель не прошла проверку запуска.' >&2
         else echo 'Не удалось запустить предыдущую панель Docker Compose.' >&2; fi
       fi
       docker_update_status failed 'Обновление Docker не завершено. Предыдущая версия и настройки сохранены.' || true
       echo 'Установка Docker Compose не завершена. Настройки сохранены для повторной попытки.' >&2
     fi
-    rm -f -- "$DOCKER_DIR/docker.env.previous" "$DOCKER_DIR/.image-sha256.pending"
+    rm -f -- "$DOCKER_DIR/.image-sha256.pending"
     rm -rf -- "$stage"
     if ((first && !succeeded && !runtime_saved)); then
       if docker_cleanup_access; then rm -rf -- "$DOCKER_DIR"
@@ -482,7 +461,7 @@ docker_install() (
   docker_update_status installing
   if [[ -n "$old_mode" ]]; then
     stopped=1
-    docker_compose_mode "$old_mode" stop || return 1
+    docker_compose stop || return 1
   fi
   if ((first)) || [[ "$action" == configure || "$old_mode" != host ]]; then
     docker_runtime_backup save || return 1
