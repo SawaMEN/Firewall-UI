@@ -111,3 +111,19 @@ func TestMutationsRejectPendingRollbackBeforeChangingState(t *testing.T) {
 		}
 	}
 }
+
+func TestRequestDecoderRejectsNonObjectsAndUnknownFields(t *testing.T) {
+	for _, body := range []string{"null", "[]", "true", "42", `"text"`, `{"unknown":true}`, `{"enabled":true} {}`} {
+		for _, decoder := range []func(http.ResponseWriter, *http.Request, any) error{
+			decode,
+			func(w http.ResponseWriter, r *http.Request, v any) error { return decodeJSONLimit(w, r, v, 4096) },
+		} {
+			var target struct {
+				Enabled bool `json:"enabled"`
+			}
+			if err := decoder(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/test", bytes.NewBufferString(body)), &target); err == nil {
+				t.Fatalf("accepted invalid request %q", body)
+			}
+		}
+	}
+}

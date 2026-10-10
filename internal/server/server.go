@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -99,16 +98,7 @@ func reply(w http.ResponseWriter, status int, obj any, err error) {
 }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, 4096)
-	d := json.NewDecoder(r.Body)
-	d.DisallowUnknownFields()
-	if err := d.Decode(v); err != nil {
-		return err
-	}
-	if err := d.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("request must contain one JSON object")
-	}
-	return nil
+	return decodeJSONLimit(w, r, v, 4096)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

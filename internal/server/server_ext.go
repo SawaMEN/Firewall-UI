@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -677,12 +678,18 @@ func (s *Server) audit(r *http.Request, action string, success bool, message str
 func decodeJSONLimit(w http.ResponseWriter, r *http.Request, target any, limit int64) error {
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
+	var raw json.RawMessage
+	if err := decoder.Decode(&raw); err != nil {
 		return err
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return fmt.Errorf("request must contain one JSON object")
 	}
-	return nil
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || raw[0] != '{' {
+		return fmt.Errorf("request must contain a JSON object")
+	}
+	object := json.NewDecoder(bytes.NewReader(raw))
+	object.DisallowUnknownFields()
+	return object.Decode(target)
 }

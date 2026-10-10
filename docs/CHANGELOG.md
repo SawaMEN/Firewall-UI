@@ -8,7 +8,7 @@
 - Fix Docker channel selection, configuration locking and same-second retry diagnostics.
 - Share concurrent update checks, allow explicit refresh and report the running build until restart.
 - Correct explicit network-address risk counts and stop disconnected port streams on write errors.
-- Reject null configuration and unreadable oversized log records; share bounded, corruption-tolerant recent-log reading.
+- Reject non-object API requests, null configuration and unreadable oversized log records; share bounded, corruption-tolerant recent-log reading.
 - Add focused regression coverage and desktop/mobile loader geometry checks.
 
 ## 1.3.4
