@@ -62,25 +62,10 @@ body {
   box-shadow: none;
 }
 
-.panel-loading {
-  min-height: 180px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
 .settings-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(160px, 0.7fr);
   gap: 2px 20px;
-}
-
-.settings-status-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 36px;
-  margin: 2px 0 18px;
 }
 
 .login-shell {
