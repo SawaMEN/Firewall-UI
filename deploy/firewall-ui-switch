@@ -3,7 +3,8 @@
 # Sourced by install.sh. All functions run as root.
 switch_docker_volumes() {
   SWITCH_CONFIG_VOLUME=''; SWITCH_DATA_VOLUME=''
-  local volume role project="${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}"
+  local volume role volumes project="${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}"
+  volumes="$(docker volume ls -q --filter "label=com.docker.compose.project=$project")" || return 1
   while IFS= read -r volume; do
     [[ -n "$volume" ]] || continue
     role="$(docker volume inspect --format '{{index .Labels "com.docker.compose.volume"}}' "$volume")" || return 1
@@ -11,7 +12,7 @@ switch_docker_volumes() {
       firewall-ui-config) [[ -z "$SWITCH_CONFIG_VOLUME" ]] || return 1; SWITCH_CONFIG_VOLUME="$volume";;
       firewall-ui-data) [[ -z "$SWITCH_DATA_VOLUME" ]] || return 1; SWITCH_DATA_VOLUME="$volume";;
     esac
-  done < <(docker volume ls -q --filter "label=com.docker.compose.project=$project")
+  done <<< "$volumes"
   [[ -n "$SWITCH_CONFIG_VOLUME" && -n "$SWITCH_DATA_VOLUME" ]] || {
     echo 'Не найдены оба тома Firewall-UI Docker. Миграция отменена.' >&2; return 1;
   }
@@ -42,15 +43,16 @@ switch_rewrite_file() {
 }
 
 switch_stop_docker() {
-  local container project="${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}"
+  local container containers project="${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}"
+  containers="$(docker ps -q --filter "label=com.docker.compose.project=$project" --filter label=com.docker.compose.service=firewall-ui)" || return 1
   while IFS= read -r container; do
     [[ -n "$container" ]] || continue
     docker stop --time 15 "$container" >/dev/null || return 1
-  done < <(docker ps -q --filter "label=com.docker.compose.project=$project" --filter label=com.docker.compose.service=firewall-ui)
+  done <<< "$containers"
 }
 
 switch_remove_docker() {
-  local container volume project="${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}"
+  local container containers volume project="${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}"
   switch_stop_docker || return 1
   for unit in firewall-ui-docker-update.timer firewall-ui-docker-cert-renew.timer; do
     systemctl disable --now "$unit" >/dev/null 2>&1 || true
@@ -59,9 +61,10 @@ switch_remove_docker() {
     rm -f "/etc/systemd/system/$unit" || return 1
   done
   systemctl daemon-reload || return 1
+  containers="$(docker ps -aq --filter "label=com.docker.compose.project=$project" --filter label=com.docker.compose.service=firewall-ui)" || return 1
   while IFS= read -r container; do
     [[ -z "$container" ]] || docker rm -f "$container" >/dev/null || return 1
-  done < <(docker ps -aq --filter "label=com.docker.compose.project=$project" --filter label=com.docker.compose.service=firewall-ui)
+  done <<< "$containers"
   switch_docker_volumes || return 1
   for volume in "$SWITCH_CONFIG_VOLUME" "$SWITCH_DATA_VOLUME"; do
     docker volume rm "$volume" >/dev/null || return 1
