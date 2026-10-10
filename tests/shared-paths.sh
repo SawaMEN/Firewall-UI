@@ -26,14 +26,16 @@ docker_owned_volumes() { printf 'config-volume\ndata-volume\n'; }
 docker_owned_containers() { echo panel; }
 docker() {
   if [[ "$1 $2" == "volume inspect" ]]; then
+    local last
+    for last; do :; done
     case "$*" in
       *Mountpoint*)
-        case "$4" in
+        case "$last" in
           config-volume) echo "$FIXTURE/volume-config";;
           data-volume) echo "$FIXTURE/volume-data";;
         esac;;
       *)
-        case "$4" in
+        case "$last" in
           config-volume) echo firewall-ui-config;;
           data-volume) echo firewall-ui-data;;
         esac;;
