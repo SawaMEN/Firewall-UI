@@ -146,17 +146,17 @@ func detectOwnedNativeFirewallBackend(ctx context.Context) (firewallBackend, boo
 }
 
 func detectManagedFirewallBackend(ctx context.Context) (firewallBackend, error) {
-	legacy, legacyErr := detectFirewallBackend(ctx)
-	if legacyErr == nil {
-		if on, _ := legacy.enabled(ctx); on {
-			return legacy, nil
+	system, systemErr := detectFirewallBackend(ctx)
+	if systemErr == nil {
+		if on, _ := system.enabled(ctx); on {
+			return system, nil
 		}
 	}
 	if native, ok := detectOwnedNativeFirewallBackend(ctx); ok {
 		return native, nil
 	}
-	if legacyErr == nil {
-		return legacy, nil
+	if systemErr == nil {
+		return system, nil
 	}
 
 	if path, err := exec.LookPath("nft"); err == nil {

@@ -2,10 +2,10 @@ package service
 
 import "context"
 
-// removeManagedLegacyRules removes only rules that were created by Firewall-UI.
+// removeManagedSystemRules removes only rules that were created by Firewall-UI.
 // It deliberately leaves UFW/firewalld themselves running so disabling the
 // panel feature cannot disable unrelated administrator firewall policy.
-func removeManagedLegacyRules(ctx context.Context, backend firewallBackend) error {
+func removeManagedSystemRules(ctx context.Context, backend firewallBackend) error {
 	existing, err := listFirewallRules(ctx, backend)
 	if err != nil {
 		return err
@@ -28,7 +28,7 @@ func removeManagedLegacyRules(ctx context.Context, backend firewallBackend) erro
 
 func disableManagedBackendSafe(ctx context.Context, backend firewallBackend) error {
 	if backend.name == "ufw" || backend.name == "firewalld" {
-		if err := removeManagedLegacyRules(ctx, backend); err != nil {
+		if err := removeManagedSystemRules(ctx, backend); err != nil {
 			return err
 		}
 		rules, err := loadAdvancedFirewallRules()
@@ -36,7 +36,7 @@ func disableManagedBackendSafe(ctx context.Context, backend firewallBackend) err
 			return err
 		}
 		for _, rule := range rules {
-			if err := applyLegacyAdvancedRule(ctx, backend, rule, false); err != nil {
+			if err := applySystemAdvancedRule(ctx, backend, rule, false); err != nil {
 				return err
 			}
 		}

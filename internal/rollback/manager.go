@@ -72,14 +72,3 @@ func (m *Manager) Confirm(token string) bool {
 	}
 	return true
 }
-
-func (m *Manager) CancelAll() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for token, item := range m.entries {
-		if item.timer != nil {
-			item.timer.Stop()
-		}
-		delete(m.entries, token)
-	}
-}

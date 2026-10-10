@@ -170,7 +170,7 @@ func (s *FirewallService) SetManagedEnabledSafe(ctx context.Context, enabled boo
 				return FirewallManagedStatus{}, err
 			}
 			for _, rule := range advanced {
-				if err := applyLegacyAdvancedRule(ctx, backend, rule, true); err != nil {
+				if err := applySystemAdvancedRule(ctx, backend, rule, true); err != nil {
 					return FirewallManagedStatus{}, err
 				}
 			}
@@ -180,7 +180,7 @@ func (s *FirewallService) SetManagedEnabledSafe(ctx context.Context, enabled boo
 		}
 	} else {
 		// Persist the disabled intent first. Native rules are runtime-owned and
-		// legacy backends remove only Firewall-UI-owned rules while leaving the host
+		// system backends remove only Firewall-UI-owned rules while leaving the host
 		// firewall service and administrator policy untouched.
 		if err := setFirewallManagedEnabledPreference(false); err != nil {
 			return FirewallManagedStatus{}, err

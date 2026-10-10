@@ -88,7 +88,7 @@ func (s *FirewallService) RestoreBackup(ctx context.Context, backup FirewallBack
 	}
 	if on && (backend.name == "ufw" || backend.name == "firewalld") {
 		for _, rule := range currentAdvanced {
-			_ = applyLegacyAdvancedRule(ctx, backend, rule, false)
+			_ = applySystemAdvancedRule(ctx, backend, rule, false)
 		}
 	}
 
@@ -132,7 +132,7 @@ func (s *FirewallService) RestoreBackup(ctx context.Context, backup FirewallBack
 	}
 	if backend.name == "ufw" || backend.name == "firewalld" {
 		for _, rule := range backup.AdvancedRules {
-			if err := applyLegacyAdvancedRule(ctx, backend, rule, true); err != nil {
+			if err := applySystemAdvancedRule(ctx, backend, rule, true); err != nil {
 				return err
 			}
 		}

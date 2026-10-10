@@ -58,7 +58,7 @@ sha256_file() {
 
 fetch_repo_file() {
   local path="$1" destination="$2"
-  if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/$path" && ( "$path" != install.sh || -f "$SCRIPT_DIR/Dockerfile" ) ]]; then
+  if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/$path" && ( "$path" != install.sh || -f "$SCRIPT_DIR/deploy/docker/Dockerfile" ) ]]; then
     install -m 0644 "$SCRIPT_DIR/$path" "$destination"
   else curl -fLsS --retry 3 --connect-timeout 15 "${RAW_BASE}/$path" -o "$destination"; fi
 }
@@ -779,7 +779,7 @@ run_installer_docker_action() (
     command -v curl >/dev/null || pkg_install curl ca-certificates
     fetch_repo_file deploy/firewall-ui-docker "$stage/docker-manager"
   fi
-  if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/Dockerfile" ]]; then
+  if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/deploy/docker/Dockerfile" ]]; then
     export FIREWALL_UI_DOCKER_SOURCE="$SCRIPT_DIR"
   fi
   bash "$stage/docker-manager" "$@"

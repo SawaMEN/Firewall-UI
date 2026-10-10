@@ -206,7 +206,7 @@ echo 'Failed Docker startup and runtime rollback/retry passed'
  mkdir -p "$DOCKER_DIR/source"
  cp "$TASK_ROOT/install.sh" "$DOCKER_DIR/source/install.sh"
  cp "$TASK_ROOT/deploy/firewall-ui" "$DOCKER_DIR/source/firewall-manager"
- cp "$TASK_ROOT/compose.tls.yaml" "$DOCKER_DIR/source/compose.tls.yaml"
+ cp "$TASK_ROOT/deploy/docker/compose.tls.yaml" "$DOCKER_DIR/source/compose.tls.yaml"
  printf admin > "$DOCKER_DIR/username"; printf 1 > "$DOCKER_DIR/password"
  unset FIREWALL_UI_DOCKER_HOST FIREWALL_UI_PORT
  DOCKER_INTERACTIVE=1
@@ -226,3 +226,18 @@ echo 'Failed Docker startup and runtime rollback/retry passed'
  [[ -z "$(docker_read_setting FIREWALL_UI_TLS_CERT '')" && -z "$(docker_read_setting FIREWALL_UI_PUBLIC_HOST '')" ]]
 )
 echo 'Shared Compose HTTPS wizard, certificate mount and local-mode reset passed'
+
+# The real source downloader maps repository paths to stable installed filenames.
+(
+ DOCKER_DIR="$FIXTURE/layout-download"; mkdir -p "$DOCKER_DIR"
+ export FIREWALL_UI_DOCKER_SOURCE="$TASK_ROOT"
+ # Re-source to exercise the production function instead of the earlier mock.
+ source "$TASK_ROOT/deploy/firewall-ui-docker"
+ DOCKER_DIR="$FIXTURE/layout-download"
+ docker_download_source
+ for file in compose.yaml compose.docker-ports.yaml compose.tls.yaml install.sh firewall-manager; do
+   [[ -s "$DOCKER_DIR/source/$file" ]]
+ done
+ [[ ! -d "$DOCKER_DIR/source/deploy" ]]
+)
+echo 'Organized Docker source paths and saved installer filenames passed'

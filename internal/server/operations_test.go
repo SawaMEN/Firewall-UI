@@ -46,3 +46,34 @@ func TestBackupRuntimeRestartChanges(t *testing.T) {
 		t.Fatal("hot update channel change requires restart")
 	}
 }
+
+func TestOverviewCoverageUsesFullRangesAndExactProtocols(t *testing.T) {
+	ports := []service.Port{
+		{Port: 65000, Protocol: "tcp", Listening: true},
+		{Port: 65000, Protocol: "udp", Listening: true},
+		{Port: 8081, Protocol: "udp", Listening: true},
+		{Port: 9000, Protocol: "tcp", Listening: true},
+		{Port: 9001, Protocol: "tcp", Listening: true},
+		{Port: 443, Protocol: "tcp", Listening: false},
+	}
+	basic := []service.FirewallRule{
+		{PortRange: "8080-8082", Protocol: "udp", Exists: true},
+		{Port: 9001, Protocol: "tcp", Exists: false},
+	}
+	advanced := []service.FirewallAdvancedRule{
+		{Action: "allow", Protocol: "tcp", PortStart: 10000, PortEnd: 65535},
+		{Action: "deny", Protocol: "tcp", PortStart: 9000, PortEnd: 9000},
+	}
+	covered := coveredListeningPorts(ports, true, basic, advanced)
+	if len(covered) != 2 || !covered["65000/tcp"] || !covered["8081/udp"] {
+		t.Fatalf("range or protocol coverage is incorrect: %v", covered)
+	}
+	if len(coveredListeningPorts(ports, false, basic, advanced)) != 0 {
+		t.Fatal("disabled firewall reports covered ports")
+	}
+	advanced = []service.FirewallAdvancedRule{{Action: "allow", Protocol: "any", PortStart: 64000, PortEnd: 65535}}
+	covered = coveredListeningPorts(ports, true, nil, advanced)
+	if len(covered) != 2 || !covered["65000/tcp"] || !covered["65000/udp"] {
+		t.Fatalf("ANY range does not cover both protocols: %v", covered)
+	}
+}

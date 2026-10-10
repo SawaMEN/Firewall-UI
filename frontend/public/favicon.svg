@@ -1,5 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="7" fill="#101522"/>
-  <path d="M16 3 27 7v9c0 6-5 10-11 13C10 26 5 22 5 16V7Z" fill="#152c3d" stroke="#62e8f5" stroke-width="2" stroke-linejoin="round"/>
-  <path d="M10 11h12v10H10zm0 5h12m-6-5v5m-3 0v5m6-5v5" fill="none" stroke="#c3adff" stroke-width="1.5" stroke-linejoin="round"/>
+  <defs>
+    <clipPath id="shield"><path d="M16 1.5 30 6v10c0 7-6 11-14 15C8 27 2 23 2 16V6Z"/></clipPath>
+  </defs>
+  <path d="M16 1.5 30 6v10c0 7-6 11-14 15C8 27 2 23 2 16V6Z" fill="#25465c"/>
+  <g clip-path="url(#shield)" fill="none" stroke="#cbb7ff" stroke-width="1.8">
+    <path d="M1 8h30M1 15h30M1 22h30M1 29h30M10 1v7m12-7v7M4 8v7m12-7v7m12-7v7M10 15v7m12-7v7M4 22v7m12-7v7m12-7v7"/>
+  </g>
+  <path d="M16 1.5 30 6v10c0 7-6 11-14 15C8 27 2 23 2 16V6Z" fill="none" stroke="#62e8f5" stroke-width="2" stroke-linejoin="round"/>
 </svg>

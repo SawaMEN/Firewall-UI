@@ -1,7 +1,6 @@
 frontend/node_modules/
 internal/webassets/dist/*
 !internal/webassets/dist/.keep
-/firewall-ui
 /dist/
 *.log
 .env
@@ -10,4 +9,4 @@ internal/webassets/dist/*
 /release-assets/
 
 .env.*
-!.env.example
+!deploy/docker/.env.example

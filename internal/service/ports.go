@@ -74,9 +74,13 @@ func ReadPorts(root string) ([]Port, error) {
 		}
 	}
 	owners := map[string][]Process{}
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return nil, err
+	var entries []os.DirEntry
+	var err error
+	if len(wanted) > 0 {
+		entries, err = os.ReadDir(root)
+		if err != nil {
+			return nil, err
+		}
 	}
 	for _, entry := range entries {
 		pid, err := strconv.Atoi(entry.Name())

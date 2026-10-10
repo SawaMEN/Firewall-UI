@@ -194,8 +194,8 @@ docker_download_source() (
   local stage file
   stage="$(mktemp -d "$DOCKER_DIR/.download-XXXXXX")"; trap 'rm -rf -- "$stage"' EXIT
   mkdir "$stage/source"
-  for file in compose.yaml compose.docker-ports.yaml compose.tls.yaml install.sh deploy/firewall-ui; do
-    local target="$file"; [[ "$file" != deploy/firewall-ui ]] || target=firewall-manager
+  for file in deploy/docker/compose.yaml deploy/docker/compose.docker-ports.yaml deploy/docker/compose.tls.yaml install.sh deploy/firewall-ui; do
+    local target="${file##*/}"; [[ "$file" != deploy/firewall-ui ]] || target=firewall-manager
     if [[ -n "${FIREWALL_UI_DOCKER_SOURCE:-}" ]]; then cp "$FIREWALL_UI_DOCKER_SOURCE/$file" "$stage/source/$target" || return 1
     else curl -fLsS --retry 3 "https://raw.githubusercontent.com/SawaMEN/Firewall-UI/main/$file" -o "$stage/source/$target" || return 1; fi
   done

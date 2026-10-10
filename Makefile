@@ -8,7 +8,8 @@ frontend: frontend/node_modules/.firewall-ui-installed
 	cd frontend && npm run build
 
 build: frontend
-	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o firewall-ui ./cmd/firewall-ui
+	mkdir -p dist
+	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/firewall-ui ./cmd/firewall-ui
 
 # Independent groups can run concurrently with make -j3 test.
 test: test-go test-frontend test-shell

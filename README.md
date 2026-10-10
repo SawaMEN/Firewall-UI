@@ -2,7 +2,7 @@
 
 Веб-панель для управления файрволлом Linux. Показывает занятые порты и процессы, позволяет настраивать правила доступа.
 
-[Релизы](https://github.com/SawaMEN/Firewall-UI/releases) · [Сообщить об ошибке](https://github.com/SawaMEN/Firewall-UI/issues)
+[Релизы](https://github.com/SawaMEN/Firewall-UI/releases) · [История изменений](docs/CHANGELOG.md) · [Сообщить об ошибке](https://github.com/SawaMEN/Firewall-UI/issues)
 
 ## Возможности
 
@@ -92,4 +92,4 @@ ssh -L 8088:127.0.0.1:8088 user@server
 
 ## Лицензия
 
-[GPL-3.0](LICENSE). Сведения об исходном проекте и заимствованиях — в [NOTICE.md](NOTICE.md).
+[GPL-3.0](LICENSE). Сведения об исходном проекте и заимствованиях — в [NOTICE.md](docs/NOTICE.md).

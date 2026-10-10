@@ -9,9 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"path/filepath"
 	"reflect"
-	"strings"
 	"time"
 
 	"github.com/SawaMEN/Firewall-UI/internal/appconfig"
@@ -209,25 +207,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	covered := map[string]bool{}
-	if status.Enabled {
-		for _, rule := range status.Rules {
-			if !rule.Exists {
-				continue
-			}
-			if rule.Port > 0 {
-				covered[fmt.Sprintf("%d/%s", rule.Port, rule.Protocol)] = true
-			}
-		}
-		for _, rule := range advanced {
-			if rule.Action != "allow" || rule.PortStart == 0 {
-				continue
-			}
-			for port := rule.PortStart; port <= rule.PortEnd && port-rule.PortStart < 2048; port++ {
-				covered[fmt.Sprintf("%d/%s", port, rule.Protocol)] = true
-			}
-		}
-	}
+	covered := coveredListeningPorts(snapshot.Ports, status.Enabled, status.Rules, advanced)
 
 	listening, public, risky := summarizePorts(snapshot.Ports, covered)
 	reply(w, http.StatusOK, dashboardResponse{
@@ -653,17 +633,4 @@ func decodeJSONLimit(w http.ResponseWriter, r *http.Request, target any, limit i
 		return fmt.Errorf("request must contain one JSON object")
 	}
 	return nil
-}
-
-func defaultDataPaths(statePath string) (auditPath, historyPath string) {
-	dir := filepath.Dir(statePath)
-	return filepath.Join(dir, "audit.jsonl"), filepath.Join(dir, "history.jsonl")
-}
-
-func trimAddress(address string) string {
-	host, _, err := net.SplitHostPort(address)
-	if err == nil {
-		return host
-	}
-	return strings.Trim(address, "[]")
 }

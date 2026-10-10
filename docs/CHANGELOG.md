@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.0
+
+- Enlarge the shield favicon, fill it with visible masonry and keep the outside transparent.
+- Consolidate Docker assets under deploy/docker and documentation under docs; keep build output in dist.
+- Remove uncalled backend helpers and clarify current UFW/firewalld adapters.
+- Limit Docker build context to production sources.
+- Match overview rules against observed ports using merged intervals instead of expanding ranges; include full ranges and ANY protocol rules.
+- Skip process-descriptor scans when all socket inodes are ownerless.
+
 ## 1.2.26
 
 - Add a shield and firewall favicon.

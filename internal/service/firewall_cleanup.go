@@ -33,7 +33,7 @@ func (s *FirewallService) CleanupOwnedRules(ctx context.Context) error {
 		}
 	}
 	if backend, err := detectFirewallBackend(ctx); err == nil && backend.name == "firewalld" {
-		if err := removeManagedLegacyRules(ctx, backend); err != nil {
+		if err := removeManagedSystemRules(ctx, backend); err != nil {
 			return err
 		}
 		advanced, err := loadAdvancedFirewallRules()

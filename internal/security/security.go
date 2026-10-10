@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
 )
 
@@ -78,12 +77,4 @@ func NormalizeCIDRs(values []string) []string {
 		return nil
 	}
 	return out
-}
-
-func ParseRollbackSeconds(raw string, fallback int) int {
-	value, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil || value < 15 || value > 300 {
-		return fallback
-	}
-	return value
 }

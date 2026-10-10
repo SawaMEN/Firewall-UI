@@ -224,7 +224,7 @@ func (s *FirewallService) applyAdvancedChangeLocked(ctx context.Context, rule Fi
 	if backend.name == "nftables" || backend.name == "iptables" {
 		return s.syncManagedSafeLocked(ctx, backend, safetyPort)
 	}
-	return applyLegacyAdvancedRule(ctx, backend, rule, add)
+	return applySystemAdvancedRule(ctx, backend, rule, add)
 }
 
 func isFirewallSafetyRule(rule FirewallRule) bool {
@@ -308,7 +308,7 @@ func advancedIPTablesArgs(rule FirewallAdvancedRule, ipv6 bool) ([]string, bool)
 	return args, true
 }
 
-func applyLegacyAdvancedRule(ctx context.Context, backend firewallBackend, rule FirewallAdvancedRule, add bool) error {
+func applySystemAdvancedRule(ctx context.Context, backend firewallBackend, rule FirewallAdvancedRule, add bool) error {
 	if add && isClosePortRule(rule) {
 		desired, err := (&FirewallService{}).managedDesiredRules(false, rememberedFirewallSafetyPort())
 		if err != nil {
