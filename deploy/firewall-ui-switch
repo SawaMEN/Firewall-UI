@@ -65,11 +65,13 @@ switch_remove_docker() {
   while IFS= read -r container; do
     [[ -z "$container" ]] || docker rm -f "$container" >/dev/null || return 1
   done <<< "$containers"
-  switch_docker_volumes || return 1
-  for volume in "$SWITCH_CONFIG_VOLUME" "$SWITCH_DATA_VOLUME"; do
-    docker volume rm "$volume" >/dev/null || return 1
+  local volumes role
+  volumes="$(docker volume ls -q --filter "label=com.docker.compose.project=$project")" || return 1
+  for volume in $volumes; do
+    role="$(docker volume inspect --format '{{index .Labels "com.docker.compose.volume"}}' "$volume")" || return 1
+    case "$role" in firewall-ui-config|firewall-ui-data) docker volume rm "$volume" >/dev/null || return 1;; esac
   done
-  rm -rf -- "${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}" || return 1
+  rm -rf -- "${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui}" || return 1
   rm -f -- "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}" "${FIREWALL_UI_LEGACY_DOCKER_MANAGER:-/usr/local/bin/firewall-ui-docker}" || return 1
   docker image rm firewall-ui:stable firewall-ui:local >/dev/null 2>&1 || true
   # /usr/local/bin/fw-ui now belongs to the freshly installed native variant.
@@ -79,7 +81,8 @@ switch_remove_native() {
   systemctl disable --now firewall-ui.service firewall-ui-cert-renew.timer >/dev/null 2>&1 || true
   rm -f -- "$SERVICE_FILE" /etc/systemd/system/firewall-ui-cert-renew.service /etc/systemd/system/firewall-ui-cert-renew.timer || return 1
   systemctl daemon-reload || return 1
-  rm -rf -- "$INSTALL_DIR" "$CONFIG_DIR" "$STATE_DIR" || return 1
+  # These directories are used by both variants. Do not delete on switch.
+  rm -rf -- "$INSTALL_DIR" || return 1
   # fw-ui is managed by the newly installed Docker variant.
 }
 
@@ -102,119 +105,108 @@ switch_docker_environment() {
 
 switch_native_to_docker() (
   set -Eeuo pipefail
-  local docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}" old_active=0 old_enabled=0 stage succeeded=0 committed=0 imported=0
+  local docker_dir="\${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui}" stage old_active=0 old_enabled=0 prepared=0 succeeded=0 mode cert
   [[ -f "$CONFIG_DIR/config.json" && -f "$CONFIG_DIR/environment" ]] || {
-    echo 'Не найдены конфигурация или учётные данные обычной версии.' >&2; return 1;
+    echo 'Не найдены настройки или учётные данные обычной версии.' >&2; return 1;
   }
-  [[ ! -e "$docker_dir/deployment" ]] || { echo 'Docker-версия уже существует.' >&2; return 1; }
+  [[ ! -e "$docker_dir/deployment" ]] || { echo 'Docker уже установлен.' >&2; return 1; }
   stage="$(mktemp -d)"; chmod 0700 "$stage"
-  [[ ! -f "$MANAGER" ]] || cp -p "$MANAGER" "$stage/native-manager"
+  [[ ! -f "$MANAGER" ]] || cp -p "$MANAGER" "$stage/manager"
+  [[ ! -f "$SERVICE_FILE" ]] || cp -p "$SERVICE_FILE" "$stage/service"
   systemctl is-active --quiet firewall-ui.service && old_active=1 || true
   systemctl is-enabled --quiet firewall-ui.service && old_enabled=1 || true
   rollback() {
     local result=$?
-    if ((committed && !succeeded)); then
-      echo 'Новая Docker-панель работает, но старые файлы удалены не полностью. Они оставлены для проверки.' >&2
-    elif ((!succeeded)); then
-      echo 'Переключение не завершено. Восстанавливаем обычную версию.' >&2
-      if ((imported)); then
-        switch_remove_docker || echo 'Не удалось очистить новую Docker-установку; исходные данные сохранены.' >&2
+    if ((!succeeded)); then
+      echo 'Переключение на Docker не завершено; восстанавливаем обычную панель.' >&2
+      if ((prepared)); then
+        switch_stop_docker || true
+        switch_remove_docker || echo 'Новые Docker-файлы сохранены для проверки.' >&2
       fi
-      # Even failure while removing the old files must be reversible.
-      if [[ -d "$stage/install" ]]; then
-        mkdir -p "$INSTALL_DIR"; cp -a "$stage/install/." "$INSTALL_DIR/" || true
-      fi
-      if [[ -d "$stage/config" ]]; then
-        install -d -m 0700 "$CONFIG_DIR"; cp -a "$stage/config/." "$CONFIG_DIR/" || true
-      fi
-      if [[ -d "$stage/data" ]]; then
-        install -d -m 0700 "$STATE_DIR"; cp -a "$stage/data/." "$STATE_DIR/" || true
-      fi
-      if [[ -f "$stage/native-service" ]]; then cp -p "$stage/native-service" "$SERVICE_FILE"; fi
-      for unit in firewall-ui-cert-renew.service firewall-ui-cert-renew.timer; do
-        if [[ -f "$stage/$unit" ]]; then cp -p "$stage/$unit" "/etc/systemd/system/$unit"; fi
-      done
-      if [[ -f "$stage/native-manager" ]]; then cp -p "$stage/native-manager" "$MANAGER"; fi
+      [[ ! -f "$stage/manager" ]] || cp -p "$stage/manager" "$MANAGER"
+      [[ ! -f "$stage/service" ]] || cp -p "$stage/service" "$SERVICE_FILE"
       systemctl daemon-reload || true
       if ((old_enabled)); then systemctl enable firewall-ui.service >/dev/null 2>&1 || true; fi
-      if ((old_active)); then systemctl restart firewall-ui.service || echo 'Не удалось перезапустить прежнюю службу.' >&2; fi
+      if ((old_active)); then systemctl restart firewall-ui.service || true; fi
     fi
     rm -rf -- "$stage"
     return "$result"
   }
   trap rollback EXIT
   systemctl stop firewall-ui.service || return 1
-  mkdir "$stage/config" "$stage/data" "$stage/install"
-  if [[ -d "$INSTALL_DIR" ]]; then cp -a "$INSTALL_DIR/." "$stage/install/" || return 1; fi
-  [[ ! -f "$SERVICE_FILE" ]] || cp -p "$SERVICE_FILE" "$stage/native-service"
-  for unit in firewall-ui-cert-renew.service firewall-ui-cert-renew.timer; do
-    [[ ! -f "/etc/systemd/system/$unit" ]] || cp -p "/etc/systemd/system/$unit" "$stage/$unit"
-  done
-  cp -a "$CONFIG_DIR/." "$stage/config/" || return 1
-  if [[ -d "$STATE_DIR" ]]; then cp -a "$STATE_DIR/." "$stage/data/" || return 1; fi
-  # Bootstrap the new image with disposable credentials. The saved credentials
-  # and full application state are imported before exposing the final panel.
   FIREWALL_UI_SWITCH_PREPARE=1 FIREWALL_UI_NONINTERACTIVE=1 FIREWALL_UI_ACCESS_MODE=local \
-  FIREWALL_UI_USERNAME=admin FIREWALL_UI_PASSWORD="$(od -An -N20 -tx1 /dev/urandom | tr -d ' \n')" \
+    FIREWALL_UI_USERNAME=admin FIREWALL_UI_PASSWORD="$(od -An -N20 -tx1 /dev/urandom | tr -d ' \n')" \
     run_installer_docker_action install || return 1
-  imported=1
-  switch_stop_docker || return 1
-  switch_docker_volumes || return 1
-  find "$SWITCH_CONFIG_MOUNT" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + || return 1
-  find "$SWITCH_DATA_MOUNT" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + || return 1
-  cp -a "$stage/config/." "$SWITCH_CONFIG_MOUNT/" || return 1
-  cp -a "$stage/data/." "$SWITCH_DATA_MOUNT/" || return 1
-  # Access-rule ownership is tracked outside the Docker data volume.
-  mkdir -p "$docker_dir/access/state"
-  for file in access-ufw access-rules; do
-    if [[ -f "$stage/data/$file" ]]; then
-      cp -p "$stage/data/$file" "$docker_dir/access/state/$file" || return 1
-    fi
-  done
-  local cfg="$SWITCH_CONFIG_MOUNT/config.json" cert key mode=existing
-  cert="$(switch_config_string "$cfg" tlsCert)"
-  key="$(switch_config_string "$cfg" tlsKey)"
-  if [[ -n "$cert" && -n "$key" ]]; then
-    mkdir -p "$docker_dir/access/tls/migrated"
-    if [[ "$cert" == "$CONFIG_DIR/acme/"* && "$key" == "$CONFIG_DIR/acme/"* ]]; then
-      mkdir -p "$docker_dir/access/acme"
-      cp -a "$stage/config/acme/." "$docker_dir/access/acme/" || return 1
-      switch_rewrite_file "$cfg" "$CONFIG_DIR/acme/" "$docker_dir/access/acme/"
-      mode=letsencrypt
-    else
-      cp -L -- "$cert" "$docker_dir/access/tls/migrated/fullchain.pem" || return 1
-      cp -L -- "$key" "$docker_dir/access/tls/migrated/privkey.pem" || return 1
-      chmod 0600 "$docker_dir/access/tls/migrated/privkey.pem"
-      switch_rewrite_file "$cfg" "$cert" "$docker_dir/access/tls/migrated/fullchain.pem"
-      switch_rewrite_file "$cfg" "$key" "$docker_dir/access/tls/migrated/privkey.pem"
-    fi
-  else mode=''; fi
-  # Keep installer metadata in sync with settings that may have been changed in the UI.
-  switch_docker_environment "$docker_dir/docker.env" "$cfg" "$mode" || return 1
-  # The temporary bootstrap may have created a local configuration. Its entire
-  # replacement is complete; verify startup before removing the old installation.
-  # Start for the first time, with imported state and the correct TLS mounts.
+  prepared=1
+  cert="$(switch_config_string "$CONFIG_DIR/config.json" tlsCert)"
+  mode=existing
+  [[ -n "$cert" ]] || mode=''
+  [[ "$cert" != "$CONFIG_DIR/acme/"* ]] || mode=letsencrypt
+  switch_docker_environment "$docker_dir/docker.env" "$CONFIG_DIR/config.json" "$mode" || return 1
   (
-    source "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}"
+    source "\${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}"
     docker_compose up -d --no-build
     docker_wait_for_service
     docker_setup_updates
+    docker_setup_renewal
     docker_update_status success
-    docker_remove_legacy_manager
   ) || return 1
-  if [[ "$mode" == letsencrypt ]]; then
-    ( source "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}"; docker_setup_renewal ) || return 1
-  fi
-  committed=1
   switch_remove_native || return 1
   succeeded=1
-  echo 'Обычная версия заменена на Docker. Настройки и данные перенесены.'
+  echo 'Обычная версия заменена на Docker без изменения путей настроек и сертификатов.'
+)
+
+# Modern Docker uses the same host data as the native service.
+switch_docker_to_native_bind() (
+  set -Eeuo pipefail
+  local docker_dir="\${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui}" stage started=0 succeeded=0 previously_running=0 timer_active=0 renew_active=0
+  [[ -f "$docker_dir/.installer-managed" && -f "$CONFIG_DIR/config.json" && -f "$CONFIG_DIR/environment" ]] || return 1
+  [[ ! -e "$SERVICE_FILE" && ! -e "$INSTALL_DIR/firewall-ui" ]] || {
+    echo 'Файлы обычной службы уже существуют. Переключение остановлено.' >&2; return 1;
+  }
+  stage="$(mktemp -d)"; chmod 0700 "$stage"
+  [[ ! -f "$MANAGER" ]] || cp -p "$MANAGER" "$stage/docker-manager"
+  [[ -z "$(docker ps -q --filter "label=com.docker.compose.project=\${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}" --filter label=com.docker.compose.service=firewall-ui)" ]] || previously_running=1
+  systemctl is-active --quiet firewall-ui-docker-update.timer && timer_active=1 || true
+  systemctl is-active --quiet firewall-ui-docker-cert-renew.timer && renew_active=1 || true
+  rollback() {
+    local result=$?
+    if ((!succeeded)); then
+      if ((started)); then
+        systemctl disable --now firewall-ui.service firewall-ui-cert-renew.timer >/dev/null 2>&1 || true
+        rm -rf -- "$INSTALL_DIR"
+        rm -f -- "$SERVICE_FILE" /etc/systemd/system/firewall-ui-cert-renew.service /etc/systemd/system/firewall-ui-cert-renew.timer
+        systemctl daemon-reload || true
+      fi
+      [[ ! -f "$stage/docker-manager" ]] || cp -p "$stage/docker-manager" "$MANAGER"
+      if ((previously_running)); then
+        "\${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}" start || true
+      fi
+      if ((timer_active)); then systemctl enable --now firewall-ui-docker-update.timer >/dev/null 2>&1 || true; fi
+      if ((renew_active)); then systemctl enable --now firewall-ui-docker-cert-renew.timer >/dev/null 2>&1 || true; fi
+    fi
+    rm -rf -- "$stage"
+    return "$result"
+  }
+  trap rollback EXIT
+  systemctl stop firewall-ui-docker-update.timer firewall-ui-docker-cert-renew.timer >/dev/null 2>&1 || true
+  switch_stop_docker || return 1
+  started=1
+  INSTALL_INTERACTIVE=0 installer_native_install || return 1
+  systemctl is-active --quiet firewall-ui.service || return 1
+  switch_remove_docker || return 1
+  succeeded=1
+  echo 'Docker заменён обычной версией; настройки и сертификаты остались на прежних путях.'
 )
 
 switch_docker_to_native() (
   set -Eeuo pipefail
-  local docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}" stage succeeded=0 committed=0 old_running=0 native_started=0 native_attempted=0 copied=0
+  local docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui}" stage succeeded=0 committed=0 old_running=0 native_started=0 native_attempted=0 copied=0
   local docker_update_active=0 docker_renew_active=0
+  if [[ "$docker_dir" != /opt/firewall-ui-docker && -f "$docker_dir/.installer-managed" ]]; then
+    switch_docker_to_native_bind
+    return $?
+  fi
   [[ -f "$docker_dir/deployment" && -f "$docker_dir/.installer-managed" ]] || {
     echo 'Docker-версия не распознана. Данные не изменены.' >&2; return 1;
   }
