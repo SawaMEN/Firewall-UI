@@ -127,7 +127,7 @@ switch_native_to_docker() (
   if [[ -d "$STATE_DIR" ]]; then cp -a "$STATE_DIR/." "$stage/data/" || return 1; fi
   # Bootstrap the new image with disposable credentials. The saved credentials
   # and full application state are imported before exposing the final panel.
-  FIREWALL_UI_NONINTERACTIVE=1 FIREWALL_UI_ACCESS_MODE=local \
+  FIREWALL_UI_SWITCH_PREPARE=1 FIREWALL_UI_NONINTERACTIVE=1 FIREWALL_UI_ACCESS_MODE=local \
   FIREWALL_UI_USERNAME=admin FIREWALL_UI_PASSWORD="$(od -An -N20 -tx1 /dev/urandom | tr -d ' \n')" \
     run_installer_docker_action install || return 1
   imported=1
@@ -166,11 +166,14 @@ switch_native_to_docker() (
   switch_docker_environment "$docker_dir/docker.env" "$cfg" "$mode" || return 1
   # The temporary bootstrap may have created a local configuration. Its entire
   # replacement is complete; verify startup before removing the old installation.
-  # Recreate to apply a newly required TLS bind mount; 'restart' keeps old mounts.
+  # Start for the first time, with imported state and the correct TLS mounts.
   (
     source "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}"
-    docker_compose up -d --force-recreate --no-build
+    docker_compose up -d --no-build
     docker_wait_for_service
+    docker_setup_updates
+    docker_update_status success
+    docker_remove_legacy_manager
   ) || return 1
   if [[ "$mode" == letsencrypt ]]; then
     ( source "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}"; docker_setup_renewal ) || return 1
