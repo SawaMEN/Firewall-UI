@@ -51,6 +51,8 @@ export TASK_MENU_LOG="$FIXTURE/actions"
 main --reset-password
 main --uninstall
 run_installer_docker_action() { printf 'docker %s\n' "$1" >> "$TASK_MENU_LOG"; }
+# This block verifies argument dispatch; switching itself has isolated tests.
+installer_install_target() { if [[ "$1" == docker ]]; then run_installer_docker_action install; else installer_native_install; fi; }
 main --docker
 main --docker-configure
 main --docker-reset-password
