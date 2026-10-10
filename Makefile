@@ -29,7 +29,7 @@ test-shell:
 	bash tests/access.sh
 	bash tests/uninstall.sh
 	bash tests/install-menu.sh
-	bash tests/switch-install.sh
+	bash tests/switch-install.sh && bash tests/shared-paths.sh
 	bash tests/docker-installer.sh
 	bash tests/docker-updates.sh
 	python3 tests/release-manifest.py
