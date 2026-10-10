@@ -5,7 +5,7 @@ FIXTURE="$(mktemp -d)"
 trap 'rm -rf -- "$FIXTURE"' EXIT
 source "$TASK_ROOT/install.sh"
 INSTALL_INTERACTIVE=1
-for selection in '1 install' '2 configure' '3 reset-password' '4 uninstall' '0 exit'; do
+for selection in '1 install' '2 configure' '3 reset-password' '4 uninstall' '5 docker-install' '6 docker-configure' '7 docker-reset-password' '8 docker-uninstall' '0 exit'; do
   read -r answer expected <<< "$selection"
   printf '%s\n' "$answer" > "$FIXTURE/answer"
   exec 3<>"$FIXTURE/answer"
@@ -26,7 +26,12 @@ SCRIPT
 export TASK_MENU_LOG="$FIXTURE/actions"
 main --reset-password
 main --uninstall
-[[ "$(cat "$FIXTURE/actions")" == $'reset-password\nuninstall --purge' ]]
+run_installer_docker_action() { printf 'docker %s\n' "$1" >> "$TASK_MENU_LOG"; }
+main --docker
+main --docker-configure
+main --docker-reset-password
+main --docker-uninstall
+[[ "$(cat "$FIXTURE/actions")" == $'reset-password\nuninstall --purge\ndocker install\ndocker configure\ndocker reset-password\ndocker uninstall' ]]
 source "$TASK_ROOT/deploy/firewall-ui"
 require_root() { :; }
 BIN="$FIXTURE/binary"; ENV_FILE="$FIXTURE/environment"

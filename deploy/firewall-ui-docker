@@ -1,0 +1,383 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+DOCKER_DIR="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}"
+DOCKER_MANAGER="${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/firewall-ui-docker}"
+DOCKER_PROJECT="${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}"
+DOCKER_INTERACTIVE=0
+
+# Credentials are plain private files, never sourced as shell code or expanded
+# through Compose dotenv interpolation. This also accepts passwords with $/'/\.
+docker_read_setting() {
+  local key="$1" fallback="$2" value
+  value="$(sed -n "s/^${key}=//p" "$DOCKER_DIR/docker.env" 2>/dev/null | head -n 1)" || true
+  printf '%s' "${value:-$fallback}"
+}
+
+docker_ask() {
+  local name="$1" prompt="$2" fallback="$3" reply=''
+  if [[ "$DOCKER_INTERACTIVE" == 1 ]]; then
+    read -r -p "$prompt [$fallback]: " reply <&3 || return 1
+  fi
+  printf -v "$name" '%s' "${reply:-$fallback}"
+}
+
+docker_password() {
+  local value="${FIREWALL_UI_PASSWORD:-}"
+  if [[ "$DOCKER_INTERACTIVE" == 1 ]]; then
+    read -r -s -p 'Пароль (любая непустая длина): ' value <&3 || return 1
+    echo
+  fi
+  [[ -n "$value" && "$value" != *$'\r'* && "$value" != *$'\n'* ]] || { echo 'Укажите непустой пароль без перевода строки.' >&2; return 1; }
+  DOCKER_PASSWORD="$value"
+}
+
+docker_compose_mode() {
+  local mode="$1"; shift
+  local file=compose.yaml
+  [[ "$mode" != proxy ]] || file=compose.proxy.yaml
+  local -a files=(-f "$DOCKER_DIR/source/$file")
+  if [[ "$(docker_read_setting FIREWALL_UI_DOCKER_PORTS 0)" == 1 ]]; then
+    files+=(-f "$DOCKER_DIR/source/compose.docker-ports.yaml")
+  fi
+  FIREWALL_UI_USERNAME="$(cat "$DOCKER_DIR/username")" \
+  FIREWALL_UI_PASSWORD="$(cat "$DOCKER_DIR/password")" \
+    docker compose --project-name "$DOCKER_PROJECT" --project-directory "$DOCKER_DIR/source" \
+    --env-file "$DOCKER_DIR/docker.env" "${files[@]}" "$@"
+}
+
+docker_compose() { docker_compose_mode "$(cat "$DOCKER_DIR/deployment")" "$@"; }
+
+docker_install_plugin() (
+  set -Eeuo pipefail
+  local plugin="$1" version arch asset stage expected actual base
+  case "$(uname -m)" in x86_64|amd64) arch=amd64;; aarch64|arm64) arch=arm64;; *) return 1;; esac
+  if [[ "$plugin" == compose ]]; then
+    version=v5.6.0
+    [[ "$arch" != amd64 ]] || arch=x86_64
+    [[ "$arch" != arm64 ]] || arch=aarch64
+    asset="docker-compose-linux-$arch"
+  else version=v0.38.0; asset="buildx-${version}.linux-$arch"; fi
+  stage="$(mktemp -d)"; trap 'rm -rf -- "$stage"' EXIT
+  base="https://github.com/docker/$plugin/releases/download/$version"
+  curl -fLsS --retry 3 "$base/checksums.txt" -o "$stage/checksums"
+  curl -fLsS --retry 3 "$base/$asset" -o "$stage/plugin"
+  expected="$(awk -v name="$asset" '$NF == name || $NF == "*" name {print $1}' "$stage/checksums")"
+  actual="$(sha256sum "$stage/plugin" | awk '{print $1}')"
+  [[ "$expected" =~ ^[0-9A-Fa-f]{64}$ && "${expected,,}" == "$actual" ]] || { echo 'Контрольная сумма Docker-плагина не совпадает.' >&2; return 1; }
+  install -d /usr/local/lib/docker/cli-plugins
+  install -m 0755 "$stage/plugin" "/usr/local/lib/docker/cli-plugins/docker-$plugin"
+)
+
+docker_require_engine() {
+  [[ "$(uname -s)" == Linux ]] || { echo 'Для управления файрволлом хоста нужен Linux.' >&2; return 1; }
+  case "$(uname -m)" in x86_64|amd64|aarch64|arm64) ;; *) echo 'Поддерживаются amd64 и arm64.' >&2; return 1;; esac
+  if ! command -v docker >/dev/null; then
+    echo 'Docker не найден. Устанавливаем Docker Engine...'
+    if command -v pacman >/dev/null; then pacman -S --needed --noconfirm docker docker-compose docker-buildx
+    elif command -v apt-get >/dev/null; then apt-get update; DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io curl ca-certificates
+    elif command -v dnf >/dev/null; then dnf install -y moby-engine curl ca-certificates
+    elif command -v zypper >/dev/null; then zypper --non-interactive install docker curl ca-certificates
+    else echo 'Установите Docker Engine: https://docs.docker.com/engine/install/' >&2; return 1; fi
+  fi
+  if ! docker info >/dev/null 2>&1; then
+    systemctl enable --now docker
+    docker info >/dev/null || return 1
+  fi
+  [[ "$(docker info --format '{{json .SecurityOptions}}')" != *rootless* ]] || { echo 'Нужен обычный Docker Engine, не rootless: панель управляет файрволлом хоста.' >&2; return 1; }
+  if ! command -v curl >/dev/null; then echo 'Установите curl и ca-certificates.' >&2; return 1; fi
+  docker compose version >/dev/null 2>&1 || docker_install_plugin compose || return 1
+  docker buildx version >/dev/null 2>&1 || docker_install_plugin buildx || return 1
+}
+
+docker_select_settings() {
+  local mode="${FIREWALL_UI_DOCKER_MODE:-}" choice domain network proxy_container ports port external
+  if [[ -z "$mode" ]]; then
+    [[ ! -f "$DOCKER_DIR/deployment" ]] || mode="$(cat "$DOCKER_DIR/deployment")"
+    mode="${mode:-host}"
+    echo '1) Локальный доступ / SSH-туннель'
+    echo '2) Домен и HTTPS через прокси в Docker-сети'
+    choice=1; [[ "$mode" != proxy ]] || choice=2
+    docker_ask choice 'Способ доступа' "$choice"
+    case "$choice" in 1) mode=host;; 2) mode=proxy;; *) echo 'Неизвестный способ доступа.' >&2; return 1;; esac
+  fi
+  [[ "$mode" == host || "$mode" == proxy ]] || return 1
+  port="${FIREWALL_UI_PORT:-$(docker_read_setting FIREWALL_UI_DOCKER_PORT 8088)}"
+  docker_ask port 'Порт панели' "$port"
+  [[ "$port" =~ ^[0-9]+$ && ${#port} -le 5 && "$port" != 0* ]] && ((port >= 1 && port <= 65535)) || { echo 'Порт должен быть от 1 до 65535.' >&2; return 1; }
+  domain=''; network=proxy; external=0
+  if [[ "$mode" == proxy ]]; then
+    domain="${FIREWALL_UI_PUBLIC_HOST:-$(docker_read_setting FIREWALL_UI_PUBLIC_HOST '')}"
+    docker_ask domain 'Домен панели без https:// и порта' "$domain"
+    [[ "$domain" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$ && "$domain" == *.* ]] || { echo 'Укажите доменное имя.' >&2; return 1; }
+    echo 'Docker-сети:'; docker network ls --format '{{.Name}}'
+    network="${FIREWALL_UI_PROXY_NETWORK:-$(docker_read_setting FIREWALL_UI_PROXY_NETWORK proxy)}"
+    docker_ask network 'Общая Docker-сеть с прокси' "$network"
+    [[ "$network" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || { echo 'Некорректное имя Docker-сети.' >&2; return 1; }
+    docker network inspect "$network" >/dev/null 2>&1 || docker network create "$network" >/dev/null
+    proxy_container="${FIREWALL_UI_PROXY_CONTAINER:--}"
+    docker_ask proxy_container 'Контейнер прокси для подключения к сети (Enter — пропустить)' "$proxy_container"
+    if [[ "$proxy_container" != - ]]; then
+      if ! docker inspect --format '{{range $name, $value := .NetworkSettings.Networks}}{{println $name}}{{end}}' "$proxy_container" | grep -Fxq "$network"; then
+        docker network connect "$network" "$proxy_container" || return 1
+      fi
+    fi
+    external="${FIREWALL_UI_EXTERNAL_PORT:-$(docker_read_setting FIREWALL_UI_EXTERNAL_PORT 443)}"
+    [[ "$external" != 0 ]] || external=443
+    docker_ask external 'Внешний HTTPS-порт прокси' "$external"
+    [[ "$external" =~ ^[0-9]+$ && ${#external} -le 5 && "$external" != 0* ]] && ((external >= 1 && external <= 65535)) || return 1
+  fi
+  ports="${FIREWALL_UI_DOCKER_PORTS:-$(docker_read_setting FIREWALL_UI_DOCKER_PORTS 0)}"
+  choice=n; [[ "$ports" != 1 ]] || choice=y
+  docker_ask choice 'Показывать опубликованные Docker-порты? Это подключит Docker socket (y/n)' "$choice"
+  case "$choice" in y|Y) ports=1;; n|N) ports=0;; *) echo 'Введите y или n.' >&2; return 1;; esac
+  printf '%s\n' "$mode" > "$DOCKER_DIR/deployment"
+  printf 'FIREWALL_UI_PROXY_NETWORK=%s\nFIREWALL_UI_PUBLIC_HOST=%s\nFIREWALL_UI_DOCKER_PORT=%s\nFIREWALL_UI_EXTERNAL_PORT=%s\nFIREWALL_UI_DOCKER_PORTS=%s\n' \
+    "$network" "$domain" "$port" "$external" "$ports" > "$DOCKER_DIR/docker.env"
+}
+
+docker_initial_credentials() {
+  local user="${FIREWALL_UI_USERNAME:-admin}"
+  docker_ask user 'Логин панели' "$user"
+  [[ -n "$user" && "$user" != *$'\n'* && "$user" != *$'\r'* ]] || return 1
+  docker_password || return 1
+  printf '%s' "$user" > "$DOCKER_DIR/username"
+  printf '%s' "$DOCKER_PASSWORD" > "$DOCKER_DIR/password"
+  unset DOCKER_PASSWORD
+}
+
+docker_download_source() (
+  set -Eeuo pipefail
+  local stage
+  stage="$(mktemp -d "$DOCKER_DIR/.download-XXXXXX")"; trap 'rm -rf -- "$stage"' EXIT
+  mkdir "$stage/source"
+  if [[ -n "${FIREWALL_UI_DOCKER_SOURCE:-}" ]]; then
+    tar --exclude=.git --exclude=node_modules --exclude=internal/webassets/dist --exclude=.env --exclude='.env.*' \
+      -cf "$stage/source.tar" -C "$FIREWALL_UI_DOCKER_SOURCE" .
+    tar -xf "$stage/source.tar" -C "$stage/source" || return 1
+  else
+    curl -fLsS --retry 3 https://github.com/SawaMEN/Firewall-UI/archive/refs/heads/main.tar.gz -o "$stage/source.tar.gz" || return 1
+    tar -xzf "$stage/source.tar.gz" --strip-components=1 -C "$stage/source" || return 1
+  fi
+  [[ -f "$stage/source/Dockerfile" && -f "$stage/source/compose.proxy.yaml" ]] || return 1
+  rm -rf -- "$DOCKER_DIR/source.previous"
+  if [[ -d "$DOCKER_DIR/source" ]]; then mv "$DOCKER_DIR/source" "$DOCKER_DIR/source.previous"; fi
+  mv "$stage/source" "$DOCKER_DIR/source"
+)
+
+docker_write_volume_credentials() {
+  # Reading stdin instead of arguments avoids exposing the password in ps/logs.
+  printf '%s\n%s\n' "$(cat "$DOCKER_DIR/username")" "$(cat "$DOCKER_DIR/password")" |
+    docker_compose run --rm --no-deps -T --entrypoint sh firewall-ui -c '
+      set -eu; umask 077
+      read -r user; read -r password
+      escape() { printf "%s" "$1" | sed '\''s/\\/\\\\/g; s/"/\\"/g'\''; }
+      mkdir -p /etc/firewall-ui
+      stage=$(mktemp /etc/firewall-ui/.credentials-XXXXXX)
+      trap '\''rm -f "$stage"'\'' EXIT
+      printf "FIREWALL_UI_USERNAME=\"%s\"\nFIREWALL_UI_PASSWORD=\"%s\"\n" "$(escape "$user")" "$(escape "$password")" > "$stage"
+      mv "$stage" /etc/firewall-ui/environment
+    '
+}
+
+docker_apply_runtime_settings() {
+  local host=127.0.0.1 secure=false mode
+  mode="$(cat "$DOCKER_DIR/deployment")"
+  if [[ "$mode" == proxy ]]; then host=0.0.0.0; secure=true; fi
+  docker_compose run --rm --no-deps -T firewall-ui -save-config \
+    -listen "$host:$(docker_read_setting FIREWALL_UI_DOCKER_PORT 8088)" \
+    -public-host "$(docker_read_setting FIREWALL_UI_PUBLIC_HOST '')" \
+    -external-port "$(docker_read_setting FIREWALL_UI_EXTERNAL_PORT 0)" -secure-cookies="$secure"
+}
+
+docker_runtime_backup() {
+  local action="$1"
+  docker_compose run --rm --no-deps -T --entrypoint sh firewall-ui -c '
+    set -eu
+    file=/etc/firewall-ui/config.json
+    backup=/etc/firewall-ui/.installer-config.previous
+    absent=/etc/firewall-ui/.installer-config.absent
+    case "$1" in
+      save)
+        rm -f "$backup" "$absent"
+        if [ -f "$file" ]; then cp -p "$file" "$backup"; else touch "$absent"; fi;;
+      restore)
+        if [ -f "$backup" ]; then mv "$backup" "$file"
+        elif [ -f "$absent" ]; then rm -f "$file"; fi
+        rm -f "$absent";;
+      clear) rm -f "$backup" "$absent";;
+    esac
+  ' sh "$action"
+}
+
+docker_wait_for_service() {
+  local cid attempt stable=0
+  cid="$(docker_compose ps -q firewall-ui)"
+  [[ -n "$cid" ]] || return 1
+  for attempt in {1..15}; do
+    if [[ "$(docker inspect --format '{{.State.Running}} {{.State.Restarting}}' "$cid")" == 'true false' ]]; then
+      stable=$((stable+1)); ((stable < 3)) || return 0
+    else stable=0; fi
+    sleep 1
+  done
+  docker_compose logs --tail 30
+  return 1
+}
+
+docker_show_access() {
+  local port; port="$(docker_read_setting FIREWALL_UI_DOCKER_PORT 8088)"
+  if [[ "$(cat "$DOCKER_DIR/deployment")" == proxy ]]; then
+    local domain external
+    domain="$(docker_read_setting FIREWALL_UI_PUBLIC_HOST '')"
+    external="$(docker_read_setting FIREWALL_UI_EXTERNAL_PORT 443)"
+    [[ "$external" == 443 ]] || domain+=":$external"
+    echo "Домен: https://$domain"
+    echo "Назначение прокси: http://firewall-ui.internal:$port"
+    echo 'Сертификат и HTTPS настраиваются на прокси.'
+  else echo "Панель: http://127.0.0.1:$port (локальный доступ / SSH-туннель)"; fi
+  echo "Управление: firewall-ui-docker; настройки сохранены в $DOCKER_DIR."
+}
+
+docker_install() (
+  set -Eeuo pipefail
+  local action="${1:-install}" first=0 old_mode='' stage succeeded=0 stopped=0 runtime_saved=0 old_image=''
+  docker_require_engine || return 1
+  if systemctl is-active --quiet firewall-ui.service 2>/dev/null; then
+    echo 'Остановите обычную панель: systemctl stop firewall-ui. Одновременно используйте один вариант управления файрволлом.' >&2
+    return 1
+  fi
+  umask 077; mkdir -p "$DOCKER_DIR"; chmod 700 "$DOCKER_DIR"
+  printf 'Firewall-UI Docker installer\n' > "$DOCKER_DIR/.installer-managed"
+  [[ -f "$DOCKER_DIR/deployment" ]] || first=1
+  stage="$(mktemp -d "$DOCKER_DIR/.settings-XXXXXX")"
+  local file
+  for file in deployment docker.env username password; do
+    [[ ! -f "$DOCKER_DIR/$file" ]] || cp -p "$DOCKER_DIR/$file" "$stage/$file"
+  done
+  rollback() {
+    local result=$?
+    if (( !succeeded )); then
+      for file in deployment docker.env username password; do
+        if [[ -f "$stage/$file" ]]; then cp -p "$stage/$file" "$DOCKER_DIR/$file"; fi
+      done
+      if [[ -d "$DOCKER_DIR/source.previous" ]]; then rm -rf -- "$DOCKER_DIR/source"; mv "$DOCKER_DIR/source.previous" "$DOCKER_DIR/source"; fi
+      if ((stopped)) && [[ -n "$old_mode" ]]; then
+        [[ -z "$old_image" ]] || docker tag "$old_image" firewall-ui:local || true
+        if ((runtime_saved)); then docker_runtime_backup restore || echo 'Не удалось восстановить конфигурацию в Docker-томе.' >&2; fi
+        docker_compose_mode "$old_mode" up -d --no-build || echo 'Не удалось запустить предыдущую Docker-панель.' >&2
+      fi
+      echo 'Docker-установка не завершена. Настройки сохранены для повторной попытки.' >&2
+    fi
+    rm -rf -- "$stage"
+    return "$result"
+  }
+  trap rollback EXIT
+  [[ ! -f "$DOCKER_DIR/deployment" ]] || old_mode="$(cat "$DOCKER_DIR/deployment")"
+  if ((first)); then docker_initial_credentials || return 1; fi
+  if ((first)) || [[ "$action" == configure ]]; then docker_select_settings || return 1; fi
+  if [[ "$action" != configure || ! -d "$DOCKER_DIR/source" ]]; then docker_download_source || return 1; fi
+  docker_compose config --quiet || return 1
+  old_image="$(docker image inspect firewall-ui:local --format '{{.Id}}' 2>/dev/null || true)"
+  docker_compose build || return 1
+  if [[ -n "$old_mode" ]]; then
+    docker_compose_mode "$old_mode" stop || return 1
+    stopped=1
+  fi
+  if ((first)) || [[ "$action" == configure ]]; then
+    docker_runtime_backup save || return 1
+    runtime_saved=1
+    docker_apply_runtime_settings || return 1
+  fi
+  if ((first)); then docker_write_volume_credentials || return 1; fi
+  docker_compose up -d --no-build || return 1
+  docker_wait_for_service || return 1
+  install -m 0755 "${BASH_SOURCE[0]}" "$DOCKER_MANAGER" || return 1
+  if ((runtime_saved)); then docker_runtime_backup clear || return 1; fi
+  rm -rf -- "$DOCKER_DIR/source.previous"
+  succeeded=1
+  echo 'Docker-версия Firewall-UI готова.'
+  docker_show_access
+)
+
+docker_reset_password() {
+  docker_existing_installation || return 1
+  docker_password || return 1
+  # Keep the username saved by the web panel, including changes made after install.
+  printf '%s\n' "$DOCKER_PASSWORD" | docker_compose run --rm --no-deps -T --entrypoint sh firewall-ui -c '
+    set -eu; umask 077
+    read -r password
+    escape() { printf "%s" "$1" | sed '\''s/\\/\\\\/g; s/"/\\"/g'\''; }
+    mkdir -p /etc/firewall-ui
+    userline=$(sed -n "/^FIREWALL_UI_USERNAME=/p" /etc/firewall-ui/environment 2>/dev/null || true)
+    if [ -z "$userline" ]; then userline="FIREWALL_UI_USERNAME=\"$(escape "$FIREWALL_UI_USERNAME")\""; fi
+    stage=$(mktemp /etc/firewall-ui/.credentials-XXXXXX)
+    trap '\''rm -f "$stage"'\'' EXIT
+    printf "%s\nFIREWALL_UI_PASSWORD=\"%s\"\n" "$userline" "$(escape "$password")" > "$stage"
+    mv "$stage" /etc/firewall-ui/environment
+  ' || return 1
+  printf '%s' "$DOCKER_PASSWORD" > "$DOCKER_DIR/password"
+  unset DOCKER_PASSWORD
+  docker_compose restart || return 1
+  docker_wait_for_service || return 1
+  echo 'Пароль Docker-панели сброшен. Текущий логин сохранён.'
+}
+
+docker_existing_installation() {
+  local file
+  [[ -f "$DOCKER_DIR/.installer-managed" ]] || { echo 'Docker-версия не установлена через этот установщик.' >&2; return 1; }
+  for file in deployment docker.env username password; do
+    [[ -s "$DOCKER_DIR/$file" ]] || { echo "Не найден файл Docker-настроек: $file" >&2; return 1; }
+  done
+  [[ -d "$DOCKER_DIR/source" ]] || return 1
+  [[ "$(cat "$DOCKER_DIR/deployment")" == host || "$(cat "$DOCKER_DIR/deployment")" == proxy ]]
+}
+
+docker_uninstall() {
+  docker_existing_installation || return 1
+  docker_compose stop || return 1
+  if ! docker_compose run --rm --no-deps -T firewall-ui -cleanup-firewall; then
+    echo 'Не удалось очистить правила. Контейнер остановлен; файлы и тома сохранены для повторной попытки.' >&2
+    return 1
+  fi
+  docker_compose down -v --remove-orphans || return 1
+  if ! docker image rm firewall-ui:local >/dev/null 2>&1; then
+    echo 'Образ уже отсутствует или используется другим контейнером; общий Docker-кэш сохранён.'
+  fi
+  rm -rf -- "$DOCKER_DIR" || return 1
+  rm -f -- "$DOCKER_MANAGER" || return 1
+  echo 'Docker-версия полностью удалена: контейнер, настройки, данные и собственные правила. Docker и общая сеть прокси сохранены.'
+}
+
+docker_menu() {
+  local choice
+  while true; do
+    echo 'Firewall-UI — Docker'
+    echo '1) Установить / обновить'
+    echo '2) Настроить доступ и Docker-сеть'
+    echo '3) Состояние'
+    echo '4) Журнал'
+    echo '5) Сбросить пароль'
+    echo '6) Полностью удалить'
+    echo '0) Выход'
+    docker_ask choice 'Выберите действие' 0
+    case "$choice" in
+      1) docker_install install;; 2) docker_install configure;;
+      3) docker_compose ps;; 4) docker_compose logs --tail 100 -f;;
+      5) docker_reset_password;; 6) docker_uninstall; return;; 0) return;;
+      *) echo 'Неизвестный пункт.';;
+    esac
+  done
+}
+
+docker_main() {
+  [[ ${EUID:-$(id -u)} -eq 0 ]] || { echo 'Запустите от root.' >&2; return 1; }
+  [[ "$DOCKER_DIR" == /* && "$DOCKER_DIR" != / && "$DOCKER_DIR" != /opt && "$DOCKER_DIR" != /etc ]] || return 1
+  if [[ "${FIREWALL_UI_NONINTERACTIVE:-0}" != 1 ]] && { exec 3<>/dev/tty; } 2>/dev/null; then DOCKER_INTERACTIVE=1; fi
+  case "${1:-}" in
+    install|update) docker_install install;; configure) docker_install configure;;
+    reset-password) docker_reset_password;; uninstall) docker_uninstall;;
+    status) docker_compose ps;; logs) docker_compose logs --tail 100 -f;;
+    '') docker_menu;; *) echo 'Команды: install|update|configure|status|logs|reset-password|uninstall' >&2; return 1;;
+  esac
+}
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then docker_main "$@"; fi

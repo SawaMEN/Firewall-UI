@@ -416,6 +416,10 @@ select_installer_action() {
   echo '2) Настроить доступ: домен / IP / сертификат'
   echo '3) Сбросить пароль (сохранить логин)'
   echo '4) Полностью удалить Firewall-UI'
+  echo '5) Установить / обновить Docker-версию'
+  echo '6) Настройки Docker: доступ, домен и сеть'
+  echo '7) Сбросить пароль Docker-версии'
+  echo '8) Полностью удалить Docker-версию'
   echo '0) Выход'
   local choice
   ask choice 'Выберите действие' 1 || return 1
@@ -424,6 +428,10 @@ select_installer_action() {
     2) INSTALL_ACTION=configure;;
     3) INSTALL_ACTION=reset-password;;
     4) INSTALL_ACTION=uninstall;;
+    5) INSTALL_ACTION=docker-install;;
+    6) INSTALL_ACTION=docker-configure;;
+    7) INSTALL_ACTION=docker-reset-password;;
+    8) INSTALL_ACTION=docker-uninstall;;
     0) INSTALL_ACTION=exit;;
     *) echo 'Неизвестный пункт меню.' >&2; return 1;;
   esac
@@ -440,14 +448,30 @@ run_installer_manager_action() (
   else bash "$stage/manager" "$@"; fi
 )
 
+run_installer_docker_action() (
+  set -euo pipefail
+  local stage
+  stage="$(mktemp -d)"; trap 'rm -rf -- "$stage"' EXIT
+  command -v curl >/dev/null || pkg_install curl ca-certificates
+  fetch_repo_file deploy/firewall-ui-docker "$stage/docker-manager"
+  if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/Dockerfile" ]]; then
+    export FIREWALL_UI_DOCKER_SOURCE="$SCRIPT_DIR"
+  fi
+  bash "$stage/docker-manager" "$1"
+)
+
 main() {
   INSTALL_ACTION=install
   case "${1:-}" in
-    --help|-h) echo 'Использование: install.sh [--check|--configure|--reset-password|--uninstall]. Без параметров — русское меню. FIREWALL_UI_NONINTERACTIVE=1 — без вопросов.'; return;;
+    --help|-h) echo 'Использование: install.sh [--check|--configure|--reset-password|--uninstall|--docker|--docker-configure|--docker-reset-password|--docker-uninstall]. Без параметров — русское меню. FIREWALL_UI_NONINTERACTIVE=1 — без вопросов.'; return;;
     --check) check_system; return;;
     --configure) INSTALL_ACTION=configure;;
     --reset-password) INSTALL_ACTION=reset-password;;
     --uninstall) INSTALL_ACTION=uninstall;;
+    --docker) INSTALL_ACTION=docker-install;;
+    --docker-configure) INSTALL_ACTION=docker-configure;;
+    --docker-reset-password) INSTALL_ACTION=docker-reset-password;;
+    --docker-uninstall) INSTALL_ACTION=docker-uninstall;;
     '') ;;
     *) echo 'Неизвестный параметр.' >&2; return 1;;
   esac
@@ -457,6 +481,7 @@ main() {
   if [[ -z "${1:-}" ]]; then select_installer_action || return 1; fi
   case "$INSTALL_ACTION" in
     exit) return 0;;
+    docker-*) run_installer_docker_action "${INSTALL_ACTION#docker-}"; return;;
     reset-password) run_installer_manager_action reset-password; return;;
     uninstall) run_installer_manager_action uninstall --purge; return;;
     configure) FIREWALL_UI_RECONFIGURE=1;;
