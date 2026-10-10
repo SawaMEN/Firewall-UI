@@ -138,7 +138,7 @@ jobs:
             if docker exec firewall-ui-distro systemctl list-units --no-pager >/dev/null 2>&1; then break; fi
             sleep 1
           done
-          docker exec firewall-ui-distro bash /opt/checks/tests/linux-distro.sh verify
+          docker exec firewall-ui-distro timeout 180 bash /opt/checks/tests/linux-distro.sh verify
 
   browser:
     needs: [binaries]

@@ -18,7 +18,7 @@ prepare() {
     *) echo "Unknown CI distribution: $ID" >&2; return 1;;
   esac
   # A container has no physical consoles or disks to configure.
-  systemctl mask systemd-remount-fs.service systemd-udevd.service console-getty.service getty.target
+  systemctl mask systemd-remount-fs.service systemd-udevd.service systemd-udevd-control.socket systemd-udevd-kernel.socket systemd-udevd-varlink.socket console-getty.service getty.target systemd-networkd.service systemd-networkd-wait-online.service systemd-networkd-wait-online@.service systemd-resolved.service
 }
 
 verify() {
@@ -33,18 +33,21 @@ verify() {
   export FIREWALL_UI_SHA256
   FIREWALL_UI_SHA256="$(sha256sum "$FIREWALL_UI_BINARY" | awk '{print $1}')"
   export FIREWALL_UI_PORT=18089 FIREWALL_UI_ACCESS_MODE=local
+  echo "Checking native install on $PRETTY_NAME"
   bash "$ROOT/install.sh"
   systemctl is-active --quiet firewall-ui.service
   /usr/local/firewall-ui/firewall-ui -config /etc/firewall-ui/config.json -check-config
   python3 -m http.server 18889 --bind 127.0.0.1 >/tmp/listener.log 2>&1 &
   DISTRO_LISTENER_PID=$!
   trap 'kill "$DISTRO_LISTENER_PID" 2>/dev/null || true' EXIT
+  echo "Checking live API and firewall on $PRETTY_NAME"
   FIREWALL_UI_TEST_BACKEND="$expected" python3 "$ROOT/tests/linux-distro.py" mutate
   # Repeat install must preserve existing configuration, credentials and rules.
   bash "$ROOT/install.sh"
   FIREWALL_UI_TEST_BACKEND="$expected" python3 "$ROOT/tests/linux-distro.py" preserved
   FIREWALL_UI_PASSWORD=changed bash "$ROOT/install.sh" --reset-password
   FIREWALL_UI_PASSWORD=changed FIREWALL_UI_TEST_BACKEND="$expected" python3 "$ROOT/tests/linux-distro.py" preserved
+  echo "Checking full removal on $PRETTY_NAME"
   /usr/local/bin/fw-ui uninstall --purge
   [[ ! -e /usr/local/firewall-ui && ! -e /etc/firewall-ui && ! -e /var/lib/firewall-ui && ! -e /usr/local/bin/fw-ui ]]
   ! systemctl is-active --quiet firewall-ui.service
