@@ -58,7 +58,7 @@ docker_compose_mode() {
   local -a files=(-f "$source/$file")
   # Keep existing certificates readable while -save-config loads the previous
   # TLS configuration, including transitions back to local HTTP.
-  if [[ -f "$source/compose.tls.yaml" && -d "$DOCKER_DIR/access" ]]; then
+  if [[ "$DOCKER_DIR" == "$LEGACY_DOCKER_DIR" && -f "$source/compose.tls.yaml" && -d "$DOCKER_DIR/access" ]]; then
     files+=(-f "$source/compose.tls.yaml")
   fi
   if [[ "$(docker_read_setting FIREWALL_UI_DOCKER_PORTS 0)" == 1 ]]; then
