@@ -2,19 +2,6 @@ name: Docker build
 on:
   push:
     branches: [main]
-    paths:
-      - .dockerignore
-      - deploy/docker/**
-      - deploy/firewall-ui-docker
-      - install.sh
-      - tests/docker-installer.sh
-      - cmd/**
-      - internal/**
-      - frontend/**
-      - go.mod
-      - VERSION
-      - tests/docker_host.py
-      - .github/workflows/docker.yml
   pull_request:
     paths:
       - .dockerignore
