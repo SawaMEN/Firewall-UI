@@ -115,7 +115,11 @@ jobs:
             printf "1\n" > /proc/sys/net/ipv4/icmp_echo_ignore_all
             if [ -f /proc/sys/net/ipv6/icmp/echo_ignore_all ]; then printf "1\n" > /proc/sys/net/ipv6/icmp/echo_ignore_all; fi
           '
-          sudo -E bash install.sh --uninstall
+          docker volume create --label com.docker.compose.project=firewall-ui-installer-ci --label com.docker.compose.volume=unrelated ci-unrelated-volume
+          # Offline removal must use the already installed capable cleanup image.
+          sudo -E env FIREWALL_UI_DOCKER_IMAGE_ARCHIVE=/nonexistent/archive bash install.sh --uninstall
+          docker volume inspect ci-unrelated-volume >/dev/null
+          docker volume rm ci-unrelated-volume
           test "$(sysctl -n net.ipv4.icmp_echo_ignore_all)" = 0
           if [ -f /proc/sys/net/ipv6/icmp/echo_ignore_all ]; then test "$(sysctl -n net.ipv6.icmp.echo_ignore_all)" = 0; fi
           test ! -e "$FIREWALL_UI_DOCKER_DIR"

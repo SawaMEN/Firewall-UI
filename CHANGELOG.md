@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.22
+
+- Remove repeated status, connection and password-reset menu entries; keep state and connection details in the main header.
+- Display combined TCP/UDP groups and protocol choices as `tcp/udp` in desktop/mobile ports and overview.
+- Use current removal helpers with offline fallback and verify native files are removed before reporting success.
+- Reuse capable installed cleanup images for offline Compose removal, preserve unrelated services/volumes and verify owned resources are gone before reporting success.
+- Test offline removal, old-image fallback and unrelated-volume preservation on both Docker architectures.
+
 ## 1.2.21
 
 - Redirect accidental plaintext GET/HEAD requests on the HTTPS port to the configured domain/IP, preserving paths and queries without trusting client Host headers.

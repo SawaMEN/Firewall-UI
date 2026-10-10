@@ -25,10 +25,16 @@ docker() {
  if [[ "$1 ${2:-}" == 'image inspect' && "$*" == *'{{.Id}}'* ]]; then echo previous-image; return 0; fi
  if [[ "$1" == inspect && "$*" == *'.State.Running'* ]]; then echo 'true false'; return; fi
  if [[ "$1" == network && "$2" == inspect ]]; then return 1; fi
- if [[ "$1" == ps && "${MOCK_RESOURCES:-0}" == 1 ]]; then echo fixture-container; return 0; fi
- if [[ "$1 ${2:-}" == 'volume ls' && "${MOCK_RESOURCES:-0}" == 1 ]]; then printf 'fixture-config\nfixture-data\n'; return 0; fi
+ if [[ "$1" == ps && "${MOCK_RESOURCES:-0}" == 1 && "${MOCK_CONTAINER_REMOVED:-0}" == 0 ]]; then echo fixture-container; return 0; fi
+ if [[ "$1 ${2:-}" == 'volume ls' && "${MOCK_RESOURCES:-0}" == 1 ]]; then
+  [[ "${MOCK_VOLUMES_REMOVED:-0}" == 1 ]] || printf 'fixture-config\nfixture-data\n'
+  printf 'foreign-volume\n'; return 0
+ fi
+ if [[ "$1" == rm && "$*" == *fixture-container* ]]; then MOCK_CONTAINER_REMOVED=1; return 0; fi
+ if [[ "$1 ${2:-}" == 'volume rm' && "$*" == *fixture-data* ]]; then MOCK_VOLUMES_REMOVED=1; return 0; fi
+ if [[ "$1" == run && "$*" == *-version* ]]; then echo "${MOCK_LOCAL_VERSION:-1.2.21}"; return 0; fi
  if [[ "$1 ${2:-}" == 'volume inspect' ]]; then
-  case "${@: -1}" in fixture-config) echo firewall-ui-config;; fixture-data) echo firewall-ui-data;; esac
+  case "${@: -1}" in fixture-config) echo firewall-ui-config;; fixture-data) echo firewall-ui-data;; foreign-volume) echo other-service-data;; esac
   return 0
  fi
  if [[ "$1" == run && "$*" == *-cleanup-firewall* ]]; then return "${MOCK_CLEANUP_RESULT:-0}"; fi
@@ -88,10 +94,22 @@ unset MOCK_IMAGE_RESULT
 export MOCK_CLEANUP_RESULT=1
 if docker_uninstall; then echo 'Ignored failed Docker cleanup'; exit 1; fi
 [[ -f "$DOCKER_DIR/password" && -f "$DOCKER_MANAGER" ]]
-export MOCK_CLEANUP_RESULT=0
+export MOCK_CLEANUP_RESULT=0 MOCK_IMAGE_RESULT=1
+: > "$FIXTURE/commands"
 docker_uninstall
 [[ ! -e "$DOCKER_DIR" && ! -e "$DOCKER_MANAGER" ]]
 [[ "$(cat "$FIXTURE/commands")" == *'volume rm fixture-data'* ]]
+[[ "$(cat "$FIXTURE/commands")" != *'volume rm foreign-volume'* ]]
+[[ "$(cat "$FIXTURE/commands")" != *'download image'* ]]
+[[ "$(cat "$FIXTURE/commands")" == *'label=com.docker.compose.service=firewall-ui'* ]]
+unset MOCK_IMAGE_RESULT
+# Old cleanup images must be upgraded; failed download preserves the installation.
+(
+ export MOCK_LOCAL_VERSION=1.2.17 MOCK_IMAGE_RESULT=1
+ mkdir -p "$DOCKER_DIR"; touch "$DOCKER_DIR/.installer-managed"
+ if docker_uninstall; then echo 'Removed with an outdated cleanup image'; exit 1; fi
+ [[ -e "$DOCKER_DIR/.installer-managed" ]]
+)
 echo 'Docker installer settings, literal passwords, update preservation, reset and purge passed'
 
 # Missing metadata and empty leftovers no longer require an installed binary.

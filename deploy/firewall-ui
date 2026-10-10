@@ -349,12 +349,21 @@ uninstall_service() {
   rm -f -- "$MANAGER_PATH" || return 1
   if [[ "$mode" == --purge ]]; then
     rm -rf -- "$CONFIG_DIR" "$STATE_DIR" || return 1
+  fi
+  local path
+  for path in "$INSTALL_DIR" "$MANAGER_PATH" "$UNIT_DIR/${SERVICE}.service" "$UNIT_DIR/firewall-ui-cert-renew.service" "$UNIT_DIR/firewall-ui-cert-renew.timer"; do
+    [[ ! -e "$path" && ! -L "$path" ]] || { echo "Не удалось удалить $path" >&2; return 1; }
+  done
+  if [[ "$mode" == --purge ]]; then
+    [[ ! -e "$CONFIG_DIR" && ! -L "$CONFIG_DIR" && ! -e "$STATE_DIR" && ! -L "$STATE_DIR" ]] || return 1
+  fi
+  systemctl daemon-reload || return 1
+  systemctl reset-failed "${SERVICE}.service" firewall-ui-cert-renew.service >/dev/null 2>&1 || true
+  if [[ "$mode" == --purge ]]; then
     echo 'Firewall-UI полностью удалён: панель, настройки, данные, сертификаты и собственные правила.'
   else
     echo "Firewall-UI удалён. Настройки и сертификаты сохранены в $CONFIG_DIR, данные — в $STATE_DIR."
   fi
-  systemctl daemon-reload
-  systemctl reset-failed "${SERVICE}.service" firewall-ui-cert-renew.service >/dev/null 2>&1 || true
 }
 
 menu() (

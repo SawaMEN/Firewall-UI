@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { formatPortRanges, groupPortsByProcess, groupFirewallRules, summarizePorts } from '../src/pages/firewall/portGroups.ts';
+import { formatProtocols, formatPortRanges, groupPortsByProcess, groupFirewallRules, summarizePorts } from '../src/pages/firewall/portGroups.ts';
 
 const socket = (port, processes, extra = {}) => ({ socketId: String(port), port, processes, protocol: 'tcp', address: '0.0.0.0', family: 'IPv4', state: 'LISTEN', listening: true, loopback: false, ...extra });
 test('ranges use hyphens and never fill gaps or duplicate ports', () => {
@@ -56,4 +56,10 @@ test('large process gaps create separate rows while mixed sockets share a contig
   assert.deepEqual(groups.map(group => summarizePorts(group.ports.map(port => port.port)).range), ['443', '8443', '9000-9002']);
   assert.deepEqual(groups[2].processes.map(owner => owner.pid), [100, 101]);
   assert.equal(groups[2].ports.length, 4);
+});
+
+test('combined protocols use a stable compact label', () => {
+  assert.equal(formatProtocols(['UDP', 'tcp', 'TCP']), 'tcp/udp');
+  assert.equal(formatProtocols(['both', 'udp']), 'tcp/udp');
+  assert.equal(formatProtocols(['tcp']), 'tcp');
 });

@@ -37,6 +37,7 @@ import { usePageVisibility } from '@/hooks/usePageVisibility';
 
 import type { ColumnsType } from 'antd/es/table';
 import {
+  formatProtocols,
   formatPortRanges,
   groupPortsByProcess,
   summarizePorts,
@@ -588,11 +589,7 @@ export function PortsTable() {
           <div className="port-range-cell">
             <span className="port-range">{summary.range}</span>
             <div className="port-range-meta">
-              {[...new Set(group.ports.map((port) => port.protocol))]
-                .sort()
-                .map((proto) => (
-                  <Tag key={proto}>{proto.toUpperCase()}</Tag>
-                ))}
+              <Tag>{formatProtocols(group.ports.map((port) => port.protocol))}</Tag>
               <Typography.Text type="secondary">
                 {ru ? 'Портов' : 'Ports'}: {summary.count}
               </Typography.Text>
@@ -718,7 +715,7 @@ export function PortsTable() {
           onChange={setProtocol}
           aria-label={ru ? 'Протокол' : 'Protocol'}
           options={[
-            { value: 'all', label: 'TCP + UDP' },
+            { value: 'all', label: 'tcp/udp' },
             { value: 'tcp', label: 'TCP' },
             { value: 'udp', label: 'UDP' },
           ]}
@@ -812,15 +809,7 @@ export function PortsTable() {
                         <span className="port-range">{summary.range}</span>
                         <span className="port-range-note">
                           {ru ? 'Портов' : 'Ports'}: {summary.count} ·{' '}
-                          {[
-                            ...new Set(
-                              group.ports.map((port) =>
-                                port.protocol.toUpperCase(),
-                              ),
-                            ),
-                          ]
-                            .sort()
-                            .join(' / ')}
+                          {formatProtocols(group.ports.map((port) => port.protocol))}
                         </span>
                         {summary.sparse ? (
                           <span className="port-range-note">

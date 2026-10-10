@@ -349,12 +349,39 @@ docker_existing_installation() {
   [[ "$(cat "$DOCKER_DIR/deployment")" =~ ^[a-z]+$ ]]
 }
 
+# Project labels alone may include unrelated services or volumes.
+docker_owned_containers() {
+  docker ps -aq --filter "label=com.docker.compose.project=$DOCKER_PROJECT" \
+    --filter label=com.docker.compose.service=firewall-ui
+}
+
+docker_owned_volumes() {
+  local volume role candidates
+  candidates="$(docker volume ls -q --filter "label=com.docker.compose.project=$DOCKER_PROJECT")" || return 1
+  for volume in $candidates; do
+    role="$(docker volume inspect --format '{{index .Labels "com.docker.compose.volume"}}' "$volume")" || return 1
+    case "$role" in firewall-ui-config|firewall-ui-data) printf '%s\n' "$volume";; esac
+  done
+}
+
+docker_cleanup_image() {
+  local version
+  # 1.2.18 introduced complete owned-rule/ping cleanup without recreating state.
+  # Probe without network, privileges, host paths or volumes.
+  version="$(docker run --rm --pull never --network none --entrypoint /usr/local/bin/firewall-ui firewall-ui:stable -version 2>/dev/null)" || version=''
+  if [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+    if ((10#${BASH_REMATCH[1]} > 1 || (10#${BASH_REMATCH[1]} == 1 &&
+      (10#${BASH_REMATCH[2]} > 2 || (10#${BASH_REMATCH[2]} == 2 && 10#${BASH_REMATCH[3]} >= 18))))); then return 0; fi
+  fi
+  docker_download_image
+}
+
 docker_uninstall() (
   local containers='' volumes='' volume role
   if command -v docker >/dev/null 2>&1; then
     docker info >/dev/null 2>&1 || { systemctl start docker || return 1; }
-    containers="$(docker ps -aq --filter "label=com.docker.compose.project=$DOCKER_PROJECT")" || return 1
-    volumes="$(docker volume ls -q --filter "label=com.docker.compose.project=$DOCKER_PROJECT")" || return 1
+    containers="$(docker_owned_containers)" || return 1
+    volumes="$(docker_owned_volumes)" || return 1
   fi
   if [[ -n "$containers$volumes" ]]; then
     # Resource labels allow recovery even when installer metadata was lost.
@@ -362,7 +389,7 @@ docker_uninstall() (
     for cid in $containers; do
       docker stop --time 15 "$cid" >/dev/null || docker kill "$cid" >/dev/null || return 1
     done
-    docker_download_image || { echo 'Не удалось загрузить инструмент очистки; контейнеры остановлены, данные сохранены.' >&2; return 1; }
+    docker_cleanup_image || { echo 'Не удалось загрузить инструмент очистки; контейнеры остановлены, данные сохранены.' >&2; return 1; }
     local -a mounts=()
     for volume in $volumes; do
       role="$(docker volume inspect --format '{{index .Labels "com.docker.compose.volume"}}' "$volume")" || return 1
@@ -371,12 +398,17 @@ docker_uninstall() (
         firewall-ui-data) mounts+=(--mount "type=volume,src=$volume,dst=/var/lib/firewall-ui");;
       esac
     done
-    if ! docker run --rm --network host --pid host --privileged "${mounts[@]}" \
+    if ! docker run --rm --pull never --network host --pid host --privileged "${mounts[@]}" \
       --entrypoint /usr/local/bin/firewall-ui firewall-ui:stable -cleanup-firewall; then
       echo 'Не удалось очистить правила и запрет пинга. Данные сохранены.' >&2; return 1
     fi
     for cid in $containers; do docker rm -f "$cid" >/dev/null || return 1; done
     for volume in $volumes; do docker volume rm "$volume" >/dev/null || return 1; done
+    containers="$(docker_owned_containers)" || return 1
+    volumes="$(docker_owned_volumes)" || return 1
+    [[ -z "$containers$volumes" ]] || {
+      echo 'Остались контейнеры или тома Firewall-UI. Данные установщика сохранены для повторной очистки.' >&2; return 1
+    }
   fi
   if [[ -d "$DOCKER_DIR" && ! -f "$DOCKER_DIR/.installer-managed" && -n "$(find "$DOCKER_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
     echo "Каталог $DOCKER_DIR не отмечен как установка Firewall-UI; его содержимое сохранено." >&2; return 1

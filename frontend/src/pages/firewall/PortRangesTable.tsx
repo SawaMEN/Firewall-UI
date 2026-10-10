@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Collapse, Grid, Pagination, Table, Typography } from 'antd';
 import {
+  formatProtocols,
   groupPortsByProcess,
   summarizePorts,
   type Port,
@@ -30,11 +31,7 @@ export default function PortRangesTable({
         <div>
           <Typography.Text type="secondary">
             {ru ? 'Портов' : 'Ports'}: {extent.count} ·{' '}
-            {[
-              ...new Set(
-                group.ports.map((port) => port.protocol.toUpperCase()),
-              ),
-            ].join(' / ')}
+            {formatProtocols(group.ports.map((port) => port.protocol))}
             {extent.sparse ? (ru ? ' · с пропусками' : ' · with gaps') : ''}
           </Typography.Text>
         </div>

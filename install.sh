@@ -476,14 +476,10 @@ installer_settings_menu() {
     installer_heading 'Настройки'
     installer_item 1 'Адрес, порт и сертификат' 'Мастер подключения и HTTPS; для Docker — адрес и порт'
     installer_item 2 'Изменить логин и пароль'
-    installer_item 3 'Сбросить пароль' 'Текущий логин сохранится'
-    installer_item 4 'Показать параметры подключения'
     installer_item 0 'Назад'
     ask choice 'Выберите настройку' 0 || return 1
     case "$choice" in
       1) INSTALL_ACTION=configure;; 2) INSTALL_ACTION=credentials;;
-      3) INSTALL_ACTION=reset-password;;
-      4) installer_connection_info; installer_pause || return 1; continue;;
       0) INSTALL_ACTION=back; return 0;;
       *) echo 'Введите номер пункта.' >&2; continue;;
     esac
@@ -499,12 +495,11 @@ installer_service_menu() {
     installer_item 1 'Запустить панель'
     installer_item 2 'Остановить панель' 'Правила файрволла сохраняются'
     installer_item 3 'Перезапустить панель'
-    installer_item 4 'Подробное состояние'
     installer_item 0 'Назад'
     ask choice 'Выберите действие' 0 || return 1
     case "$choice" in
       1) INSTALL_ACTION=start;; 2) INSTALL_ACTION=stop;;
-      3) INSTALL_ACTION=restart;; 4) INSTALL_ACTION=status;;
+      3) INSTALL_ACTION=restart;;
       0) INSTALL_ACTION=back; return 0;;
       *) echo 'Введите номер пункта.' >&2; continue;;
     esac
@@ -542,8 +537,6 @@ installer_diagnostics() {
   installer_heading 'Диагностика'
   printf 'Система: %s / %s\n' "$(uname -s)" "$(uname -m)"
   printf 'Файрволл: %s\n' "$(detect_firewall)"
-  installer_status
-  installer_connection_info
   if command -v docker >/dev/null 2>&1; then
     docker version --format 'Docker Engine: {{.Server.Version}}' 2>/dev/null || echo 'Docker Engine недоступен.'
     docker compose version 2>/dev/null || echo 'Docker Compose недоступен.'
@@ -655,10 +648,9 @@ select_installer_action() {
     printf '  %s[4]  Полностью удалить%s\n' "${UI_DANGER:-}" "${UI_RESET:-}"
     printf '       %sОба варианта, данные и собственные правила%s\n' "${UI_MUTED:-}" "${UI_RESET:-}"
     echo
-    installer_item 5 'Показать состояние'
-    installer_item 6 'Последние записи журнала' '100 строк; меню останется открытым'
-    installer_item 7 'Управление службой' 'Запуск, остановка и перезапуск'
-    installer_item 8 'Диагностика'
+    installer_item 5 'Последние записи журнала' '100 строк; меню останется открытым'
+    installer_item 6 'Управление службой' 'Запуск, остановка и перезапуск'
+    installer_item 7 'Диагностика'
     installer_item 0 'Выход'
     ask choice 'Выберите действие' 0 || return 1
     case "$choice" in
@@ -666,10 +658,9 @@ select_installer_action() {
       2) installer_settings_menu || return 1;;
       3) INSTALL_ACTION=reset-password; installer_select_target reset-password || { INSTALL_ACTION=back; };;
       4) INSTALL_ACTION=uninstall; return 0;;
-      5) installer_status; installer_pause || return 1; continue;;
-      6) INSTALL_ACTION=logs; installer_select_target logs || { INSTALL_ACTION=back; };;
-      7) installer_service_menu || return 1;;
-      8) INSTALL_ACTION=diagnostics; return 0;;
+      5) INSTALL_ACTION=logs; installer_select_target logs || { INSTALL_ACTION=back; };;
+      6) installer_service_menu || return 1;;
+      7) INSTALL_ACTION=diagnostics; return 0;;
       0|q|Q) INSTALL_ACTION=exit; return 0;;
       *) echo 'Введите номер пункта.' >&2; continue;;
     esac
@@ -696,7 +687,12 @@ run_installer_manager_action() (
   local stage
   stage="$(mktemp -d)"
   trap 'rm -rf -- "$stage"' EXIT
-  if [[ -x "$MANAGER" ]]; then cp "$MANAGER" "$stage/manager"
+  if [[ "$1" == uninstall ]]; then
+    # A freshly downloaded installer must not delegate cleanup to an old helper.
+    fetch_repo_file deploy/firewall-ui "$stage/manager" || {
+      [[ -x "$MANAGER" ]] && cp "$MANAGER" "$stage/manager" || return 1
+    }
+  elif [[ -x "$MANAGER" ]]; then cp "$MANAGER" "$stage/manager"
   else fetch_repo_file deploy/firewall-ui "$stage/manager"; fi
   if [[ "${INSTALL_INTERACTIVE:-0}" == 1 ]]; then
     bash "$stage/manager" "$@" <&3
@@ -708,7 +704,11 @@ run_installer_docker_action() (
   local stage
   stage="$(mktemp -d)"; trap 'rm -rf -- "$stage"' EXIT
   local installed="${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/firewall-ui-docker}"
-  if [[ "$1" != install && -x "$installed" ]]; then cp "$installed" "$stage/docker-manager"
+  if [[ "$1" == uninstall ]]; then
+    fetch_repo_file deploy/firewall-ui-docker "$stage/docker-manager" || {
+      [[ -x "$installed" ]] && cp "$installed" "$stage/docker-manager" || return 1
+    }
+  elif [[ "$1" != install && -x "$installed" ]]; then cp "$installed" "$stage/docker-manager"
   else
     command -v curl >/dev/null || pkg_install curl ca-certificates
     fetch_repo_file deploy/firewall-ui-docker "$stage/docker-manager"

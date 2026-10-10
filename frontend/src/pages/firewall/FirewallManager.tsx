@@ -17,7 +17,7 @@ import {
 import { PlusOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { HttpUtil } from '@/utils';
-import { groupFirewallRules } from './portGroups';
+import { formatProtocols, groupFirewallRules } from './portGroups';
 import type { ColumnsType } from 'antd/es/table';
 
 type FirewallRule = {
@@ -325,7 +325,7 @@ export function FirewallManager() {
       title: text.protocol,
       dataIndex: 'protocol',
       width: 100,
-      render: (value: string) => <Tag>{value.toUpperCase()}</Tag>,
+      render: (value: string) => <Tag>{formatProtocols([value])}</Tag>,
     },
     { title: text.source, render: (_, rule) => rule.label || rule.source },
     {
@@ -520,7 +520,7 @@ export function FirewallManager() {
             onChange={setBasicProtocol}
             style={{ width: 135 }}
             options={[
-              { value: 'both', label: 'TCP + UDP' },
+              { value: 'both', label: 'tcp/udp' },
               { value: 'tcp', label: 'TCP' },
               { value: 'udp', label: 'UDP' },
             ]}
@@ -565,7 +565,7 @@ export function FirewallManager() {
               title: text.protocol,
               dataIndex: 'protocol',
               width: 110,
-              render: (v: string) => <Tag>{v.toUpperCase()}</Tag>,
+              render: (v: string) => <Tag>{formatProtocols([v])}</Tag>,
             },
             {
               title: text.label,
@@ -714,7 +714,7 @@ export function FirewallManager() {
               title: text.protocol,
               dataIndex: 'protocol',
               width: 100,
-              render: (value: string) => <Tag>{value.toUpperCase()}</Tag>,
+              render: (value: string) => <Tag>{formatProtocols([value])}</Tag>,
             },
             {
               title: text.range,

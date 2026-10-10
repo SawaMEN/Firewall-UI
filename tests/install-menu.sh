@@ -11,7 +11,7 @@ systemctl() { return 1; }
 docker() { return 0; }
 mkdir -p "$INSTALL_DIR"; printf '#!/bin/sh\nexit 0\n' > "$INSTALL_DIR/firewall-ui"; chmod +x "$INSTALL_DIR/firewall-ui"
 INSTALL_INTERACTIVE=1
-for selection in '1 install' '2 configure' '3 reset-password' '4 uninstall' '6 logs' '0 exit'; do
+for selection in '1 install' '2 configure' '3 reset-password' '4 uninstall' '5 logs' '0 exit'; do
   read -r answer expected <<< "$selection"
   if [[ "$answer" == 2 ]]; then printf '2\n1\n' > "$FIXTURE/answer"
   else printf '%s\n1\n' "$answer" > "$FIXTURE/answer"; fi
@@ -30,10 +30,12 @@ select_installer_action
 printf '1\n0\n1\n2\n' > "$FIXTURE/answer"; exec 3<>"$FIXTURE/answer"
 select_installer_action
 [[ "$INSTALL_ACTION" == docker-install ]]
-printf '5\n\n0\n'  > "$FIXTURE/answer"; exec 3<>"$FIXTURE/answer"
+printf '0\n'  > "$FIXTURE/answer"; exec 3<>"$FIXTURE/answer"
 select_installer_action > "$FIXTURE/status"
 [[ "$(cat "$FIXTURE/status")" == *'Обычная установка: установлена, остановлена'* ]]
 [[ "$(cat "$FIXTURE/status")" == *'Docker Compose: не установлен'* ]]
+[[ "$(cat "$FIXTURE/status")" != *'Показать состояние'* ]]
+[[ "$(cat "$FIXTURE/status")" != *'Показать параметры подключения'* ]]
 exec 3>&-
 # Reset and purge dispatch before package installation, UFW detection or updates.
 FIREWALL_UI_NONINTERACTIVE=1
@@ -83,13 +85,13 @@ main --uninstall
 # Settings/service submenus support back and preserve the numeric variant choice.
 mkdir -p "$INSTALL_DIR"; touch "$INSTALL_DIR/firewall-ui"
 INSTALL_INTERACTIVE=1
-for route in '2 2 credentials' '7 1 start' '7 2 stop' '7 3 restart'; do
+for route in '2 2 credentials' '6 1 start' '6 2 stop' '6 3 restart'; do
  read -r section item expected <<< "$route"
  printf '%s\n%s\n' "$section" "$item" > "$FIXTURE/answer"; exec 3<>"$FIXTURE/answer"
  select_installer_action > /dev/null
  [[ "$INSTALL_ACTION" == "$expected" ]]
 done
-printf '2\n0\n7\n0\n0\n' > "$FIXTURE/answer"; exec 3<>"$FIXTURE/answer"
+printf '2\n0\n6\n0\n0\n' > "$FIXTURE/answer"; exec 3<>"$FIXTURE/answer"
 select_installer_action > /dev/null
 [[ "$INSTALL_ACTION" == exit ]]
 # A rejected deletion and a failed transaction both return to the main menu.

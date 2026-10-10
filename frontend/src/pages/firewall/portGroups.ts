@@ -12,6 +12,15 @@ export type Port = {
 };
 export type ProcessGroup = { id: string; processes: Process[]; ports: Port[] };
 
+// Combined protocol labels are compact and independent of socket order.
+export function formatProtocols(values: string[]): string {
+  const protocols = new Set(values.flatMap((value) => {
+    const protocol = value.toLowerCase();
+    return protocol === 'both' ? ['tcp', 'udp'] : [protocol];
+  }));
+  return [...protocols].sort().join('/');
+}
+
 // Summaries never include missing ports; every gap starts a separate interval.
 export function summarizePorts(values: number[]) {
   const ports = [...new Set(values)].sort((a, b) => a - b);
