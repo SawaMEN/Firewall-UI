@@ -22,7 +22,7 @@ const { chromium } = require(path.join(process.env.PLAYWRIGHT_TOOLS, 'node_modul
     await loadingPage.setViewportSize(viewport);
     const geometry = await loadingPage.evaluate(() => {
       const overlay = document.querySelector('.app-loading').getBoundingClientRect();
-      const spinner = document.querySelector('.app-loading .ant-spin').getBoundingClientRect();
+      const spinner = document.querySelector('.app-loading .ant-spin-dot').getBoundingClientRect();
       return { x: spinner.x + spinner.width / 2 - innerWidth / 2,
         y: spinner.y + spinner.height / 2 - innerHeight / 2,
         width: overlay.width, height: overlay.height, overflow: document.documentElement.scrollWidth > innerWidth };
