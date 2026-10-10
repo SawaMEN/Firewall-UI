@@ -581,7 +581,7 @@ func runFirewallCommand(parent context.Context, binary string, args ...string) (
 	}
 	if err != nil {
 		if text != "" {
-			return text, errors.New(text)
+			return text, fmt.Errorf("%s: %w", text, err)
 		}
 		return text, err
 	}

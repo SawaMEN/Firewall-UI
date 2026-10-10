@@ -58,3 +58,10 @@ cleanup_access_rules
 [[ "$(cat "$FIXTURE/removals")" == *'--permanent --zone=public --remove-port=8443/tcp'* ]]
 [[ "$(cat "$FIXTURE/removals")" != *$'\n--zone=public --remove-port'* ]]
 echo 'Uninstall preservation, purge, failure recovery and firewall ownership passed'
+# A failed purge must not close the terminal/menu or pretend it succeeded.
+(
+ uninstall_service() { echo 'Fixture cleanup failure' >&2; return 1; }
+ menu <<< $'10\n0'
+) > "$FIXTURE/menu-output" 2>&1
+[[ "$(cat "$FIXTURE/menu-output")" == *'Полное удаление не завершено.'* ]]
+[[ "$(awk '/^Firewall-UI$/ {count++} END {print count}' "$FIXTURE/menu-output")" == 2 ]]

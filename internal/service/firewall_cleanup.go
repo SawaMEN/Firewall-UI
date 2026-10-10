@@ -44,10 +44,10 @@ func (s *FirewallService) CleanupOwnedRules(ctx context.Context) error {
 	}
 	if binary, err := exec.LookPath("nft"); err == nil {
 		tables, err := runFirewallCommand(ctx, binary, "list", "tables")
-		if err != nil {
+		if err != nil && !unsupportedFirewallKernel(err) {
 			return err
 		}
-		if strings.Contains(tables, "table inet "+managedNftTable+"\n") {
+		if err == nil && firewallOutputHasFields(tables, "table", "inet", managedNftTable) {
 			if _, err := runFirewallCommand(ctx, binary, "delete", "table", "inet", managedNftTable); err != nil {
 				return err
 			}
@@ -60,9 +60,12 @@ func (s *FirewallService) CleanupOwnedRules(ctx context.Context) error {
 		}
 		rules, err := runFirewallCommand(ctx, binary, "-S")
 		if err != nil {
+			if unsupportedFirewallKernel(err) {
+				continue
+			}
 			return err
 		}
-		if !strings.Contains(rules, "-N "+managedIPTablesChain+"\n") {
+		if !firewallOutputHasFields(rules, "-N", managedIPTablesChain) {
 			continue
 		}
 		for attempts := 0; ; attempts++ {
@@ -87,6 +90,44 @@ func (s *FirewallService) CleanupOwnedRules(ctx context.Context) error {
 		return err
 	}
 	return setFirewallManagedEnabledPreference(false)
+}
+
+// Command output is trimmed by runFirewallCommand. Match complete tokenized
+// lines so the final (or only) table/chain is still found, without prefix matches.
+func firewallOutputHasFields(output string, want ...string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != len(want) {
+			continue
+		}
+		match := true
+		for i := range want {
+			if fields[i] != want[i] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
+// A kernel without this family/backend cannot contain its managed rules.
+// Permission errors, lock failures and unknown failures still abort cleanup.
+func unsupportedFirewallKernel(err error) bool {
+	message := strings.ToLower(err.Error())
+	for _, reason := range []string{
+		"address family not supported by protocol",
+		"protocol not supported",
+		"table does not exist (do you need to insmod?)",
+	} {
+		if strings.Contains(message, reason) {
+			return true
+		}
+	}
+	return false
 }
 
 // show added works even when UFW is inactive. Parse only the commands and exact

@@ -280,12 +280,12 @@ uninstall_service() {
     echo 'Не удалось очистить правила доступа. Файлы сохранены для повторной попытки.' >&2
     return 1
   fi
-  systemctl disable "${SERVICE}.service" firewall-ui-cert-renew.timer >/dev/null 2>&1 || true
-  rm -f "$UNIT_DIR/${SERVICE}.service" "$UNIT_DIR/firewall-ui-cert-renew.service" "$UNIT_DIR/firewall-ui-cert-renew.timer"
-  rm -rf -- "$INSTALL_DIR"
-  rm -f -- "$MANAGER_PATH"
+  systemctl disable "${SERVICE}.service" firewall-ui-cert-renew.timer firewall-ui-cert-renew.service >/dev/null 2>&1 || true
+  rm -f "$UNIT_DIR/${SERVICE}.service" "$UNIT_DIR/firewall-ui-cert-renew.service" "$UNIT_DIR/firewall-ui-cert-renew.timer" || return 1
+  rm -rf -- "$INSTALL_DIR" || return 1
+  rm -f -- "$MANAGER_PATH" || return 1
   if [[ "$mode" == --purge ]]; then
-    rm -rf -- "$CONFIG_DIR" "$STATE_DIR"
+    rm -rf -- "$CONFIG_DIR" "$STATE_DIR" || return 1
     echo 'Firewall-UI полностью удалён: панель, настройки, данные, сертификаты и собственные правила.'
   else
     echo "Firewall-UI удалён. Настройки и сертификаты сохранены в $CONFIG_DIR, данные — в $STATE_DIR."
@@ -320,8 +320,12 @@ menu() {
       6) update_binary ;;
       7) change_credentials ;;
       8) rollback_binary ;;
-      9) uninstall_service; exit 0 ;;
-      10) uninstall_service --purge; exit 0 ;;
+      9) if uninstall_service; then return 0; else
+        echo 'Удаление не завершено. Причина указана выше; файлы сохранены для повторной попытки.' >&2
+      fi ;;
+      10) if uninstall_service --purge; then return 0; else
+        echo 'Полное удаление не завершено. Причина указана выше; файлы сохранены для повторной попытки.' >&2
+      fi ;;
       11) reset_password ;;
       0) exit 0 ;;
       *) echo "Unknown option." ;;
