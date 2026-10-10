@@ -264,9 +264,9 @@ docker_install() (
       if ((stopped)) && [[ -n "$old_mode" ]]; then
         [[ -z "$old_image" ]] || docker tag "$old_image" firewall-ui:local || true
         if ((runtime_saved)); then docker_runtime_backup restore || echo 'Не удалось восстановить конфигурацию в Docker-томе.' >&2; fi
-        docker_compose_mode "$old_mode" up -d --no-build || echo 'Не удалось запустить предыдущую Docker-панель.' >&2
+        docker_compose_mode "$old_mode" up -d --no-build || echo 'Не удалось запустить предыдущую панель Docker Compose.' >&2
       fi
-      echo 'Docker-установка не завершена. Настройки сохранены для повторной попытки.' >&2
+      echo 'Установка Docker Compose не завершена. Настройки сохранены для повторной попытки.' >&2
     fi
     rm -rf -- "$stage"
     return "$result"
@@ -295,7 +295,7 @@ docker_install() (
   if ((runtime_saved)); then docker_runtime_backup clear || return 1; fi
   rm -rf -- "$DOCKER_DIR/source.previous"
   succeeded=1
-  echo 'Docker-версия Firewall-UI готова.'
+  echo 'Версия Docker Compose Firewall-UI готова.'
   docker_show_access
 )
 
@@ -324,7 +324,7 @@ docker_reset_password() {
 
 docker_existing_installation() {
   local file
-  [[ -f "$DOCKER_DIR/.installer-managed" ]] || { echo 'Docker-версия не установлена через этот установщик.' >&2; return 1; }
+  [[ -f "$DOCKER_DIR/.installer-managed" ]] || { echo 'Версия Docker Compose не установлена через этот установщик.' >&2; return 1; }
   for file in deployment docker.env username password; do
     [[ -s "$DOCKER_DIR/$file" ]] || { echo "Не найден файл Docker-настроек: $file" >&2; return 1; }
   done
@@ -345,13 +345,13 @@ docker_uninstall() {
   fi
   rm -rf -- "$DOCKER_DIR" || return 1
   rm -f -- "$DOCKER_MANAGER" || return 1
-  echo 'Docker-версия полностью удалена: контейнер, настройки, данные и собственные правила. Docker и общая сеть прокси сохранены.'
+  echo 'Версия Docker Compose полностью удалена: контейнер, настройки, данные и собственные правила. Docker и общая сеть прокси сохранены.'
 }
 
 docker_menu() {
   local choice
   while true; do
-    echo 'Firewall-UI — Docker'
+    echo 'Firewall-UI — Docker Compose'
     echo '1) Установить / обновить'
     echo '2) Настроить доступ и Docker-сеть'
     echo '3) Состояние'

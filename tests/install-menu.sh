@@ -32,6 +32,8 @@ main --docker-configure
 main --docker-reset-password
 main --docker-uninstall
 [[ "$(cat "$FIXTURE/actions")" == $'reset-password\nuninstall --purge\ndocker install\ndocker configure\ndocker reset-password\ndocker uninstall' ]]
+for action in --compose --compose-configure --compose-reset-password --compose-uninstall; do main "$action"; done
+[[ "$(tail -n 4 "$FIXTURE/actions")" == $'docker install\ndocker configure\ndocker reset-password\ndocker uninstall' ]]
 source "$TASK_ROOT/deploy/firewall-ui"
 require_root() { :; }
 BIN="$FIXTURE/binary"; ENV_FILE="$FIXTURE/environment"

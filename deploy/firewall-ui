@@ -250,6 +250,35 @@ cleanup_access_rules() {
   rm -f -- "$STATE_DIR/access-rules"
 }
 
+wait_uninstall_unit() {
+  local unit="$1" state attempt
+  for ((attempt=0; attempt<10; attempt++)); do
+    state="$(systemctl show "$unit" --property=ActiveState --value 2>/dev/null)" || return 1
+    case "$state" in inactive|failed) return 0;; esac
+    sleep 0.5
+  done
+  return 1
+}
+
+stop_uninstall_unit() {
+  local unit="$1" stop_error
+  # Separate jobs: a missing renewal unit must not interfere with the panel.
+  # Disable the timer before stopping it so it cannot launch another renewal.
+  systemctl disable "$unit" >/dev/null 2>&1 || true
+  stop_error="$(systemctl stop --no-block "$unit" 2>&1)" || true
+  if wait_uninstall_unit "$unit"; then return 0; fi
+  # A stuck shutdown must not hold the installer for systemd's default timeout.
+  # Signal only processes belonging to this unit, never unrelated listeners.
+  systemctl kill --kill-whom=all --signal=SIGTERM "$unit" >/dev/null 2>&1 || true
+  if wait_uninstall_unit "$unit"; then return 0; fi
+  systemctl kill --kill-whom=all --signal=SIGKILL "$unit" >/dev/null 2>&1 || true
+  if wait_uninstall_unit "$unit"; then return 0; fi
+  echo "Не удалось завершить $unit. Файлы сохранены." >&2
+  [[ -z "$stop_error" ]] || printf '%s\n' "$stop_error" >&2
+  systemctl status --no-pager "$unit" >&2 || true
+  return 1
+}
+
 uninstall_service() {
   require_root
   local mode="${1:-}" answer
@@ -258,14 +287,9 @@ uninstall_service() {
     read -r -p 'Удалить также настройки, данные и сертификаты? [y/N]: ' answer
     [[ "$answer" =~ ^[Yy]$ ]] && mode=--purge
   fi
-  # Stop the timer AND a renewal already in progress before touching files.
-  systemctl stop "${SERVICE}.service" firewall-ui-cert-renew.timer firewall-ui-cert-renew.service >/dev/null 2>&1 || true
   local unit
-  for unit in "${SERVICE}.service" firewall-ui-cert-renew.timer firewall-ui-cert-renew.service; do
-    if systemctl is-active --quiet "$unit"; then
-      echo "Не удалось остановить $unit. Удаление отменено." >&2
-      return 1
-    fi
+  for unit in firewall-ui-cert-renew.timer firewall-ui-cert-renew.service "${SERVICE}.service"; do
+    stop_uninstall_unit "$unit" || return 1
   done
   if [[ -x "$BIN" ]]; then
     if ! "$BIN" -config "$CONFIG" -cleanup-firewall; then

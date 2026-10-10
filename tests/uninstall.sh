@@ -8,7 +8,21 @@ INSTALL_DIR="$FIXTURE/install"; BIN="$INSTALL_DIR/firewall-ui"
 CONFIG_DIR="$FIXTURE/config"; CONFIG="$CONFIG_DIR/config.json"
 STATE_DIR="$FIXTURE/state"; UNIT_DIR="$FIXTURE/units"; MANAGER_PATH="$FIXTURE/manager"
 require_root() { :; }
-systemctl() { printf '%s\n' "$*" >> "$FIXTURE/systemctl"; [[ "$1" != is-active ]]; }
+sleep() { :; }
+systemctl() {
+ printf '%s\n' "$*" >> "$FIXTURE/systemctl"
+ case "$1" in
+  show)
+   if [[ "$2" != firewall-ui.service ]]; then echo inactive
+   elif [[ "${STOP_CASE:-normal}" == stuck ]]; then echo deactivating
+   elif [[ "${STOP_CASE:-normal}" == delayed && ! -f "$FIXTURE/polled" ]]; then touch "$FIXTURE/polled"; echo deactivating
+   elif [[ "${STOP_CASE:-normal}" == kill && ! -f "$FIXTURE/killed" ]]; then echo deactivating
+   else echo inactive; fi;;
+  stop) [[ "$*" != *cert-renew* ]];;
+  kill) [[ "$*" != *SIGKILL* ]] || touch "$FIXTURE/killed";;
+  is-active) return 1;;
+ esac
+}
 prepare() {
  mkdir -p "$INSTALL_DIR" "$CONFIG_DIR/tls" "$STATE_DIR" "$UNIT_DIR"
  printf 'credential' > "$CONFIG_DIR/environment"
@@ -23,6 +37,14 @@ BIN
  chmod +x "$BIN"
 }
 prepare
+STOP_CASE=stuck
+if uninstall_service --purge; then echo 'Deleted a running service'; exit 1; fi
+[[ -x "$BIN" && -f "$MANAGER_PATH" && -f "$CONFIG_DIR/environment" ]]
+STOP_CASE=kill
+uninstall_service --purge
+[[ -f "$FIXTURE/killed" && ! -d "$INSTALL_DIR" ]]
+prepare
+STOP_CASE=delayed
 export CLEANUP_RESULT=1
 if uninstall_service --purge; then echo 'Ignored failed rule cleanup'; exit 1; fi
 [[ -f "$CONFIG_DIR/environment" && -x "$BIN" && -f "$STATE_DIR/state.json" && -f "$MANAGER_PATH" ]]
@@ -35,7 +57,9 @@ printf 'foreign firewall configuration' > "$FIXTURE/foreign-firewall"
 uninstall_service <<< 'y'
 [[ ! -d "$INSTALL_DIR" && ! -d "$CONFIG_DIR" && ! -d "$STATE_DIR" && ! -f "$MANAGER_PATH" ]]
 [[ -f "$FIXTURE/foreign-firewall" && ! -f "$UNIT_DIR/firewall-ui-cert-renew.timer" ]]
-[[ "$(cat "$FIXTURE/systemctl")" == *'stop firewall-ui.service firewall-ui-cert-renew.timer firewall-ui-cert-renew.service'* ]]
+[[ "$(cat "$FIXTURE/systemctl")" == *'stop --no-block firewall-ui.service'* ]]
+[[ "$(cat "$FIXTURE/systemctl")" == *'stop --no-block firewall-ui-cert-renew.timer'* ]]
+[[ "$(cat "$FIXTURE/systemctl")" == *'kill --kill-whom=all --signal=SIGKILL firewall-ui.service'* ]]
 # Installer records only a newly added firewalld layer; existing runtime ports
 # belong to the administrator and must survive removal.
 source "$TASK_ROOT/install.sh"
