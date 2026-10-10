@@ -1,12 +1,14 @@
 """Read-only smoke check: Direct host access, login and socket ownership."""
 import json
+import os
 import time
 from http.cookies import SimpleCookie
 from urllib.request import Request, urlopen
 
 base = "http://127.0.0.1:18089"
 request = Request(base + "/api/login", data=json.dumps({
-    "username": "admin", "password": "ci-compose-smoke",
+    "username": os.environ.get("FIREWALL_UI_USERNAME", "admin"),
+    "password": os.environ.get("FIREWALL_UI_PASSWORD", "ci-compose-smoke"),
 }).encode(), headers={"Content-Type": "application/json"})
 with urlopen(request, timeout=10) as response:
     assert json.load(response)["success"]

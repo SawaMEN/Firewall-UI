@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.20
+
+- Replace separate server menus with one persistent Russian menu, terminal-only colors, contextual status, connection details, settings, service controls and diagnostics.
+- Retain numeric native/Compose selection and y/n confirmations; confirm full removal with cancellation as the default.
+- Save the standalone menu locally, return after actions/errors and show bounded logs without blocking navigation.
+- Add Compose credential changes and service controls; preserve current usernames on blank input and write native credentials atomically.
+- Default access settings to the saved mode and allow certificate type changes during reconfiguration.
+
 ## 1.2.19
 
 - Prevent native installation while the Compose panel is running.

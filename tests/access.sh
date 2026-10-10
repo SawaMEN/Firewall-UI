@@ -58,6 +58,7 @@ source "$TASK_ROOT/deploy/firewall-ui"
 ENV_FILE="$FIXTURE/credentials"
 require_root() { :; }
 systemctl() { :; }
+FIREWALL_UI_NONINTERACTIVE=0
 change_credentials <<'INPUT'
 admin
 1

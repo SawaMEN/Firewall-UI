@@ -131,7 +131,7 @@ docker_download_source() (
   local stage file
   stage="$(mktemp -d "$DOCKER_DIR/.download-XXXXXX")"; trap 'rm -rf -- "$stage"' EXIT
   mkdir "$stage/source"
-  for file in compose.yaml compose.docker-ports.yaml; do
+  for file in compose.yaml compose.docker-ports.yaml install.sh; do
     if [[ -n "${FIREWALL_UI_DOCKER_SOURCE:-}" ]]; then cp "$FIREWALL_UI_DOCKER_SOURCE/$file" "$stage/source/$file" || return 1
     else curl -fLsS --retry 3 "https://raw.githubusercontent.com/SawaMEN/Firewall-UI/main/$file" -o "$stage/source/$file" || return 1; fi
   done
@@ -227,20 +227,24 @@ docker_show_access() {
   echo "Управление: firewall-ui-docker; настройки сохранены в $DOCKER_DIR."
 }
 
-docker_install() (
-  set -Eeuo pipefail
-  local action="${1:-install}" first=0 old_mode='' stage succeeded=0 stopped=0 runtime_saved=0 old_image='' up_attempted=0
-  docker_require_engine || return 1
+docker_require_exclusive() {
   if systemctl is-active --quiet firewall-ui.service 2>/dev/null; then
     echo 'Остановите обычную панель: systemctl stop firewall-ui. Одновременно используйте один вариант управления файрволлом.' >&2
     return 1
   fi
+}
+
+docker_install() (
+  set -Eeuo pipefail
+  local action="${1:-install}" first=0 old_mode='' stage succeeded=0 stopped=0 runtime_saved=0 old_image='' up_attempted=0
+  docker_require_engine || return 1
+  docker_require_exclusive || return 1
   umask 077; mkdir -p "$DOCKER_DIR"; chmod 700 "$DOCKER_DIR"
   printf 'Firewall-UI Docker installer\n' > "$DOCKER_DIR/.installer-managed"
   [[ -f "$DOCKER_DIR/deployment" ]] || first=1
   stage="$(mktemp -d "$DOCKER_DIR/.settings-XXXXXX")"
   local file
-  for file in deployment docker.env username password; do
+  for file in deployment docker.env username password install.sh; do
     [[ ! -f "$DOCKER_DIR/$file" ]] || cp -p "$DOCKER_DIR/$file" "$stage/$file"
   done
   [[ ! -f "$DOCKER_DIR/docker.env" ]] || cp -p "$DOCKER_DIR/docker.env" "$DOCKER_DIR/docker.env.previous"
@@ -251,7 +255,7 @@ docker_install() (
       # restoring the volume and restarting the previous deployment.
       if ((up_attempted)); then docker_compose stop || echo 'Не удалось остановить новую Docker-панель.' >&2; fi
       if ((runtime_saved)); then docker_runtime_backup restore || echo 'Не удалось восстановить конфигурацию в Docker-томе.' >&2; fi
-      for file in deployment docker.env username password; do
+      for file in deployment docker.env username password install.sh; do
         if [[ -f "$stage/$file" ]]; then cp -p "$stage/$file" "$DOCKER_DIR/$file"
         else rm -f -- "$DOCKER_DIR/$file"; fi
       done
@@ -291,6 +295,7 @@ docker_install() (
   docker_compose up -d --no-build || return 1
   docker_wait_for_service || return 1
   install -m 0755 "${BASH_SOURCE[0]}" "$DOCKER_MANAGER" || return 1
+  install -m 0700 "$DOCKER_DIR/source/install.sh" "$DOCKER_DIR/install.sh" || return 1
   if ((runtime_saved)); then docker_runtime_backup clear || return 1; fi
   rm -rf -- "$DOCKER_DIR/source.previous"
   succeeded=1
@@ -298,16 +303,19 @@ docker_install() (
   docker_show_access
 )
 
-docker_reset_password() {
+docker_update_credentials() {
+  local user="${1:-}"
+  docker_require_exclusive || return 1
   docker_existing_installation || return 1
   docker_password || return 1
   # Keep the username saved by the web panel, including changes made after install.
-  printf '%s\n' "$DOCKER_PASSWORD" | docker_compose run --rm --no-deps -T --entrypoint sh firewall-ui -c '
+  printf '%s\n%s\n' "$user" "$DOCKER_PASSWORD" | docker_compose run --rm --no-deps -T --entrypoint sh firewall-ui -c '
     set -eu; umask 077
-    read -r password
+    read -r user; read -r password
     escape() { printf "%s" "$1" | sed '\''s/\\/\\\\/g; s/"/\\"/g'\''; }
     mkdir -p /etc/firewall-ui
     userline=$(sed -n "/^FIREWALL_UI_USERNAME=/p" /etc/firewall-ui/environment 2>/dev/null || true)
+    if [ -n "$user" ]; then userline="FIREWALL_UI_USERNAME=\"$(escape "$user")\""; fi
     if [ -z "$userline" ]; then userline="FIREWALL_UI_USERNAME=\"$(escape "$FIREWALL_UI_USERNAME")\""; fi
     stage=$(mktemp /etc/firewall-ui/.credentials-XXXXXX)
     trap '\''rm -f "$stage"'\'' EXIT
@@ -315,10 +323,20 @@ docker_reset_password() {
     mv "$stage" /etc/firewall-ui/environment
   ' || return 1
   printf '%s' "$DOCKER_PASSWORD" > "$DOCKER_DIR/password"
+  [[ -z "$user" ]] || printf '%s' "$user" > "$DOCKER_DIR/username"
   unset DOCKER_PASSWORD
   docker_compose restart || return 1
   docker_wait_for_service || return 1
-  echo 'Пароль Docker-панели сброшен. Текущий логин сохранён.'
+  echo 'Учётные данные Docker-панели обновлены.'
+}
+
+docker_reset_password() { docker_update_credentials ''; }
+
+docker_change_credentials() {
+  local user="${FIREWALL_UI_USERNAME:-}"
+  docker_ask user 'Новый логин (Enter — сохранить текущий)' "$user" || return 1
+  [[ "$user" != *$'\r'* && "$user" != *$'\n'* ]] || return 1
+  docker_update_credentials "$user"
 }
 
 docker_existing_installation() {
@@ -371,26 +389,13 @@ docker_uninstall() (
   echo 'Версия Docker Compose полностью удалена: контейнеры, тома, настройки, данные, собственные правила и запрет пинга. Docker сохранён.'
 )
 
-docker_menu() {
-  local choice
-  while true; do
-    echo 'Firewall-UI — Docker Compose'
-    echo '1) Установить / обновить'
-    echo '2) Настроить адрес и порт'
-    echo '3) Состояние'
-    echo '4) Журнал'
-    echo '5) Сбросить пароль'
-    echo '6) Полностью удалить'
-    echo '0) Выход'
-    docker_ask choice 'Выберите действие' 0
-    case "$choice" in
-      1) docker_install install;; 2) docker_install configure;;
-      3) docker_compose ps;; 4) docker_compose logs --tail 100 -f;;
-      5) docker_reset_password;; 6) docker_uninstall; return;; 0) return;;
-      *) echo 'Неизвестный пункт.';;
-    esac
-  done
-}
+docker_menu() (
+  local installer="$DOCKER_DIR/install.sh" stage
+  if [[ -f "$installer" ]]; then bash "$installer" --menu; return; fi
+  stage="$(mktemp -d)"; trap 'rm -rf -- "$stage"' EXIT
+  curl -fLsS --retry 3 --connect-timeout 15 https://raw.githubusercontent.com/SawaMEN/Firewall-UI/main/install.sh -o "$stage/install.sh"
+  bash "$stage/install.sh" --menu
+)
 
 docker_main() {
   [[ ${EUID:-$(id -u)} -eq 0 ]] || { echo 'Запустите от root.' >&2; return 1; }
@@ -398,9 +403,14 @@ docker_main() {
   if [[ "${FIREWALL_UI_NONINTERACTIVE:-0}" != 1 ]] && { exec 3<>/dev/tty; } 2>/dev/null; then DOCKER_INTERACTIVE=1; fi
   case "${1:-}" in
     install|update) docker_install install;; configure) docker_install configure;;
+    credentials) docker_change_credentials;;
     reset-password) docker_reset_password;; uninstall) docker_uninstall;;
+    start) docker_require_exclusive && docker_existing_installation && docker_compose up -d --no-build && docker_wait_for_service;;
+    stop) docker_existing_installation && docker_compose stop;;
+    restart) docker_require_exclusive && docker_existing_installation && docker_compose restart && docker_wait_for_service;;
+    logs-once) docker_compose logs --tail 100;;
     status) docker_compose ps;; logs) docker_compose logs --tail 100 -f;;
-    '') docker_menu;; *) echo 'Команды: install|update|configure|status|logs|reset-password|uninstall' >&2; return 1;;
+    ''|menu) docker_menu;; *) echo 'Команды: install|update|configure|start|stop|restart|status|logs|credentials|reset-password|uninstall' >&2; return 1;;
   esac
 }
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then docker_main "$@"; fi

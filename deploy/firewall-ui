@@ -171,28 +171,38 @@ escape_env_value() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
-change_credentials() {
+change_credentials() (
+  set -Eeuo pipefail
   require_root
-  local username password
-  read -r -p "Имя пользователя [admin]: " username
-  username="${username:-admin}"
-  echo 'Рекомендация: используйте длинный уникальный пароль.'
-  read -r -s -p 'Пароль (любой длины; Enter — сгенерировать): ' password
-  echo
+  local username="${FIREWALL_UI_USERNAME:-}" password userline stage
+  userline="$(sed -n '/^FIREWALL_UI_USERNAME=/p' "$ENV_FILE" 2>/dev/null | head -n 1)" || true
+  if [[ "${FIREWALL_UI_NONINTERACTIVE:-0}" != 1 ]]; then
+    read -r -p 'Новый логин (Enter — сохранить текущий): ' username
+    echo 'Рекомендация: используйте длинный уникальный пароль.'
+    read -r -s -p 'Новый пароль (Enter — сгенерировать): ' password
+    echo
+  else
+    [[ -v FIREWALL_UI_PASSWORD ]] || { echo 'Задайте FIREWALL_UI_PASSWORD.' >&2; return 1; }
+    password="$FIREWALL_UI_PASSWORD"
+  fi
   if [[ -z "$password" ]]; then
     password="$(od -An -N20 -tx1 /dev/urandom | tr -d ' \n')"
-    echo "Сгенерированный пароль: $password"
+    printf 'Сгенерированный пароль: %s\n' "$password"
   fi
-  [[ "$username" != *$'\r'* && "$password" != *$'\r'* ]] || { echo 'Перевод строки в учётных данных не поддерживается.' >&2; return 1; }
+  [[ "$username$password" != *$'\r'* && "$username$password" != *$'\n'* ]] || return 1
+  if [[ -n "$username" || -z "$userline" ]]; then
+    userline="FIREWALL_UI_USERNAME=\"$(escape_env_value "${username:-admin}")\""
+  fi
   install -d -m 0700 "$(dirname "$ENV_FILE")"
-  {
-    printf 'FIREWALL_UI_USERNAME="%s"\n' "$(escape_env_value "$username")"
-    printf 'FIREWALL_UI_PASSWORD="%s"\n' "$(escape_env_value "$password")"
-  } > "$ENV_FILE"
-  chmod 0600 "$ENV_FILE"
+  stage="$(mktemp "$(dirname "$ENV_FILE")/.credentials-XXXXXX")"
+  trap 'rm -f -- "$stage"' EXIT
+  if [[ -f "$ENV_FILE" ]]; then sed '/^FIREWALL_UI_USERNAME=/d; /^FIREWALL_UI_PASSWORD=/d' "$ENV_FILE" > "$stage"; fi
+  printf '%s\nFIREWALL_UI_PASSWORD="%s"\n' "$userline" "$(escape_env_value "$password")" >> "$stage"
+  chmod 0600 "$stage"
+  mv -f -- "$stage" "$ENV_FILE"
   systemctl restart "${SERVICE}.service"
-  echo "Учётные данные обновлены."
-}
+  echo 'Учётные данные обновлены.'
+)
 
 reset_password() (
   set -euo pipefail
@@ -347,44 +357,15 @@ uninstall_service() {
   systemctl reset-failed "${SERVICE}.service" firewall-ui-cert-renew.service >/dev/null 2>&1 || true
 }
 
-menu() {
-  while true; do
-    echo
-    echo "Firewall-UI"
-    echo "1) Status"
-    echo "2) Start"
-    echo "3) Stop"
-    echo "4) Restart"
-    echo "5) Logs"
-    echo "6) Update"
-    echo "7) Change username/password"
-    echo "8) Roll back previous binary"
-    echo "9) Удалить с выбором сохранения данных"
-    echo "10) Полностью удалить Firewall-UI"
-    echo "11) Сбросить пароль (сохранить логин)"
-    echo "0) Exit"
-    read -r -p "Select: " choice
-    case "$choice" in
-      1) show_status ;;
-      2) require_root; service_action start ;;
-      3) require_root; service_action stop ;;
-      4) require_root; service_action restart ;;
-      5) show_logs ;;
-      6) update_binary ;;
-      7) change_credentials ;;
-      8) rollback_binary ;;
-      9) if uninstall_service; then return 0; else
-        echo 'Удаление не завершено. Причина указана выше; файлы сохранены для повторной попытки.' >&2
-      fi ;;
-      10) if uninstall_service --purge; then return 0; else
-        echo 'Полное удаление не завершено. Причина указана выше; файлы сохранены для повторной попытки.' >&2
-      fi ;;
-      11) reset_password ;;
-      0) exit 0 ;;
-      *) echo "Unknown option." ;;
-    esac
-  done
-}
+menu() (
+  require_root
+  local installer="$INSTALL_DIR/install.sh" stage
+  if [[ -f "$installer" ]]; then bash "$installer" --menu; return; fi
+  # Upgrade path for installations created before the unified local menu.
+  stage="$(mktemp -d)"; trap 'rm -rf -- "$stage"' EXIT
+  curl -fLsS --retry 3 --connect-timeout 15 "https://raw.githubusercontent.com/$REPO/main/install.sh" -o "$stage/install.sh"
+  bash "$stage/install.sh" --menu
+)
 
 main() {
 case "${1:-}" in
@@ -394,6 +375,9 @@ case "${1:-}" in
     ;;
   status)
     show_status
+    ;;
+  logs-once)
+    journalctl -u "${SERVICE}.service" -n 100 --no-pager
     ;;
   log|logs)
     show_logs

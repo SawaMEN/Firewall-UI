@@ -18,6 +18,7 @@ docker_download_source() {
  rm -rf "$DOCKER_DIR/source.previous"
  [[ ! -d "$DOCKER_DIR/source" ]] || mv "$DOCKER_DIR/source" "$DOCKER_DIR/source.previous"
  mkdir -p "$DOCKER_DIR/source"; touch "$DOCKER_DIR/source/compose.yaml"
+ cp "$TASK_ROOT/install.sh" "$DOCKER_DIR/source/install.sh"
 }
 docker() {
  printf '%s\n' "$*" >> "$FIXTURE/commands"
@@ -152,3 +153,13 @@ docker_uninstall
  [[ "$(cat "$FIXTURE/commands")" == *' up -d --no-build'* ]]
 )
 echo 'Failed Docker startup and runtime rollback/retry passed'
+
+# Username changes use the same literal, atomic volume format as password reset.
+(
+ DOCKER_DIR="$FIXTURE/failed-startup"
+ FIREWALL_UI_USERNAME='console-user'; FIREWALL_UI_PASSWORD='console$pass'
+ docker_change_credentials
+ [[ "$(cat "$DOCKER_DIR/username")" == console-user ]]
+ [[ "$(cat "$FIXTURE/volume/environment")" == *'FIREWALL_UI_USERNAME="console-user"'* ]]
+ [[ "$(cat "$FIXTURE/volume/environment")" == *'FIREWALL_UI_PASSWORD="console$pass"'* ]]
+)

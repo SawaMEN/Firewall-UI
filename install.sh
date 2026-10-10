@@ -58,7 +58,7 @@ sha256_file() {
 
 fetch_repo_file() {
   local path="$1" destination="$2"
-  if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/$path" ]]; then
+  if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/$path" && ( "$path" != install.sh || -f "$SCRIPT_DIR/Dockerfile" ) ]]; then
     install -m 0644 "$SCRIPT_DIR/$path" "$destination"
   else curl -fLsS --retry 3 --connect-timeout 15 "${RAW_BASE}/$path" -o "$destination"; fi
 }
@@ -124,14 +124,21 @@ json_text() {
 }
 
 choose_access() {
-  ACCESS_MODE="${FIREWALL_UI_ACCESS_MODE:-local}"
+  ACCESS_MODE=local
+  if [[ -n "${SAVED_PUBLIC_HOST:-}" ]]; then
+    ACCESS_MODE=domain
+    [[ "$SAVED_PUBLIC_HOST" != *:* && ! "$SAVED_PUBLIC_HOST" =~ ^[0-9.]+$ ]] || ACCESS_MODE=ip
+  fi
+  ACCESS_MODE="${FIREWALL_UI_ACCESS_MODE:-$ACCESS_MODE}"
   if [[ "${INSTALL_INTERACTIVE:-0}" == 1 && -z "${FIREWALL_UI_ACCESS_MODE:-}" ]]; then
     echo 'Как подключаться к Firewall-UI?'
     echo '1) Только локально / через SSH-туннель'
     echo '2) Из интернета по домену, с HTTPS'
     echo '3) Из интернета по IP, с HTTPS'
     local choice
-    ask choice 'Выберите режим' 1
+    local default=1
+    case "$ACCESS_MODE" in domain) default=2;; ip) default=3;; esac
+    ask choice 'Выберите режим' "$default"
     case "$choice" in 1) ACCESS_MODE=local;; 2) ACCESS_MODE=domain;; 3) ACCESS_MODE=ip;; *) echo 'Неизвестный режим доступа.' >&2; return 1;; esac
   fi
   PANEL_HOST="${FIREWALL_UI_LISTEN_HOST:-127.0.0.1}"
@@ -154,15 +161,17 @@ choose_access() {
       [[ "$PUBLIC_HOST" != *:* || -n "${FIREWALL_UI_LISTEN_HOST:-}" ]] || PANEL_HOST='::'
       [[ "$PANEL_HOST" != 127.0.0.1 && "$PANEL_HOST" != ::1 && "$PANEL_HOST" != localhost ]] || { echo 'Для внешнего доступа выберите внешний интерфейс.' >&2; return 1; }
       if [[ -z "$TLS_MODE" ]]; then
-        if [[ -n "$TLS_CERT" && -n "$TLS_KEY" ]]; then TLS_MODE=existing
-        elif [[ "${INSTALL_INTERACTIVE:-0}" == 1 ]]; then
+        if [[ "${INSTALL_INTERACTIVE:-0}" == 1 ]]; then
           echo 'Сертификат для HTTPS:'
           echo '1) Готовый сертификат и ключ PEM'
           echo '2) Получить доверенный сертификат Let’s Encrypt (домен или публичный IP)'
           echo '3) Создать самоподписанный (браузер потребует подтверждения доверия)'
           local choice
-          ask choice 'Выберите сертификат' 2
+          local default_cert=2
+          [[ -z "$TLS_CERT" || -z "$TLS_KEY" ]] || default_cert=1
+          ask choice 'Выберите сертификат' "$default_cert"
           case "$choice" in 1) TLS_MODE=existing;; 2) TLS_MODE=letsencrypt;; 3) TLS_MODE=selfsigned;; *) echo 'Неизвестный вариант сертификата.' >&2; return 1;; esac
+        elif [[ -n "$TLS_CERT" && -n "$TLS_KEY" ]]; then TLS_MODE=existing
         else echo 'Для внешнего доступа задайте FIREWALL_UI_TLS_MODE: existing, letsencrypt или selfsigned.' >&2; return 1; fi
       fi
       ;;
@@ -387,8 +396,8 @@ cleanup() {
     echo 'Установка завершилась ошибкой; восстанавливаем предыдущие файлы службы.' >&2
     if ((HAD_BINARY)); then cp -p "$TEMP_DIR/previous-binary" "$INSTALL_DIR/firewall-ui"; else rm -f "$INSTALL_DIR/firewall-ui"; fi
     local name destination
-    for name in manager service; do
-      if [[ "$name" == manager ]]; then destination="$MANAGER"; else destination="$SERVICE_FILE"; fi
+    for name in manager service installer; do
+      if [[ "$name" == manager ]]; then destination="$MANAGER"; elif [[ "$name" == service ]]; then destination="$SERVICE_FILE"; else destination="$INSTALL_DIR/install.sh"; fi
       if [[ -f "$TEMP_DIR/previous-$name" ]]; then cp -p "$TEMP_DIR/previous-$name" "$destination"; else rm -f "$destination"; fi
     done
     systemctl daemon-reload || true
@@ -439,9 +448,154 @@ installer_require_native_exclusive() {
   }
 }
 
+installer_style() {
+  UI_ACCENT=''; UI_MUTED=''; UI_BOLD=''; UI_RESET=''; UI_DANGER=''
+  if [[ -t 1 && -z "${NO_COLOR+x}" && "${TERM:-dumb}" != dumb ]]; then
+    UI_ACCENT=$'\033[36m'; UI_MUTED=$'\033[2m'; UI_BOLD=$'\033[1m'
+    UI_RESET=$'\033[0m'; UI_DANGER=$'\033[31m'
+  fi
+}
+
+installer_heading() {
+  printf '\n%sFirewall-UI%s  /  %s\n' "${UI_BOLD:-}" "${UI_RESET:-}" "$1"
+}
+
+installer_item() {
+  printf '  %s[%s]%s  %s\n' "${UI_ACCENT:-}" "$1" "${UI_RESET:-}" "$2"
+  [[ -z "${3:-}" ]] || printf '       %s%s%s\n' "${UI_MUTED:-}" "$3" "${UI_RESET:-}"
+}
+
+installer_pause() {
+  local reply
+  [[ "${INSTALL_INTERACTIVE:-0}" != 1 ]] || read -r -p 'Нажмите Enter, чтобы вернуться в меню: ' reply <&3
+}
+
+installer_settings_menu() {
+  local choice
+  while true; do
+    installer_heading 'Настройки'
+    installer_item 1 'Адрес, порт и сертификат' 'Мастер подключения и HTTPS; для Docker — адрес и порт'
+    installer_item 2 'Изменить логин и пароль'
+    installer_item 3 'Сбросить пароль' 'Текущий логин сохранится'
+    installer_item 4 'Показать параметры подключения'
+    installer_item 0 'Назад'
+    ask choice 'Выберите настройку' 0 || return 1
+    case "$choice" in
+      1) INSTALL_ACTION=configure;; 2) INSTALL_ACTION=credentials;;
+      3) INSTALL_ACTION=reset-password;;
+      4) installer_connection_info; installer_pause || return 1; continue;;
+      0) INSTALL_ACTION=back; return 0;;
+      *) echo 'Введите номер пункта.' >&2; continue;;
+    esac
+    installer_select_target "$INSTALL_ACTION" || { INSTALL_ACTION=back; return 0; }
+    return 0
+  done
+}
+
+installer_service_menu() {
+  local choice
+  while true; do
+    installer_heading 'Управление службой'
+    installer_item 1 'Запустить панель'
+    installer_item 2 'Остановить панель' 'Правила файрволла сохраняются'
+    installer_item 3 'Перезапустить панель'
+    installer_item 4 'Подробное состояние'
+    installer_item 0 'Назад'
+    ask choice 'Выберите действие' 0 || return 1
+    case "$choice" in
+      1) INSTALL_ACTION=start;; 2) INSTALL_ACTION=stop;;
+      3) INSTALL_ACTION=restart;; 4) INSTALL_ACTION=status;;
+      0) INSTALL_ACTION=back; return 0;;
+      *) echo 'Введите номер пункта.' >&2; continue;;
+    esac
+    installer_select_target "$INSTALL_ACTION" || { INSTALL_ACTION=back; return 0; }
+    return 0
+  done
+}
+
+installer_config_value() {
+  # Print only named public fields, never environment/password files.
+  sed -n "s/.*\"$2\":[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$1" 2>/dev/null | head -n 1
+}
+
+installer_connection_info() {
+  local config="$CONFIG_DIR/config.json" host port cert scheme=http docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}"
+  if [[ -f "$config" ]]; then
+    host="$(installer_config_value "$config" publicHost)"
+    [[ -n "$host" ]] || host="$(installer_config_value "$config" listenHost)"
+    port="$(sed -n 's/.*"listenPort":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$config" | head -n 1)"
+    cert="$(installer_config_value "$config" tlsCert)"; [[ -z "$cert" ]] || scheme=https
+    case "$host" in 0.0.0.0|::|'') host='<IP-сервера>';; *:*) host="[$host]";; esac
+    printf 'Обычная панель: %s://%s:%s\n' "$scheme" "$host" "$port"
+    [[ -z "$cert" ]] || printf 'Сертификат: %s\n' "$cert"
+  fi
+  if [[ -f "$docker_dir/docker.env" ]]; then
+    host="$(sed -n 's/^FIREWALL_UI_DOCKER_HOST=//p' "$docker_dir/docker.env" | head -n 1)"
+    port="$(sed -n 's/^FIREWALL_UI_DOCKER_PORT=//p' "$docker_dir/docker.env" | head -n 1)"
+    [[ "$host" != 0.0.0.0 ]] || host='<IP-сервера>'
+    printf 'Docker: %s:%s (параметры установщика)\n' "$host" "$port"
+    echo 'Адрес и HTTPS, изменённые в веб-панели, проверяйте в её настройках.'
+  fi
+}
+
+installer_diagnostics() {
+  installer_heading 'Диагностика'
+  printf 'Система: %s / %s\n' "$(uname -s)" "$(uname -m)"
+  printf 'Файрволл: %s\n' "$(detect_firewall)"
+  installer_status
+  installer_connection_info
+  if command -v docker >/dev/null 2>&1; then
+    docker version --format 'Docker Engine: {{.Server.Version}}' 2>/dev/null || echo 'Docker Engine недоступен.'
+    docker compose version 2>/dev/null || echo 'Docker Compose недоступен.'
+  fi
+  echo 'При проблемах с подключением проверьте порт в файрволле хостинга.'
+}
+
+installer_execute_action() {
+  local action="$1" answer
+  case "$action" in
+    exit|back) return 0;;
+    install) installer_native_install;;
+    configure) FIREWALL_UI_RECONFIGURE=1 installer_native_install;;
+    uninstall)
+      if [[ "${INSTALL_INTERACTIVE:-0}" == 1 ]]; then
+        echo 'Будут удалены оба варианта панели, данные, сертификаты панели и собственные правила, включая запрет пинга.'
+        ask answer 'Полностью удалить Firewall-UI? (y/n)' n || return 1
+        case "$answer" in y|Y) ;; n|N) echo 'Удаление отменено.'; return 0;; *) echo 'Введите y или n.' >&2; return 1;; esac
+      fi
+      installer_uninstall_all;;
+    diagnostics) installer_diagnostics;;
+    docker-logs) run_installer_docker_action logs-once;;
+    docker-*) run_installer_docker_action "${action#docker-}";;
+    logs) run_installer_manager_action logs-once;;
+    reset-password|credentials|start|restart|rollback)
+      installer_require_native_exclusive || return 1
+      run_installer_manager_action "$action";;
+    stop|status) run_installer_manager_action "$action";;
+    *) echo 'Неизвестное действие.' >&2; return 1;;
+  esac
+}
+
+installer_menu_loop() {
+  local result
+  installer_style
+  while true; do
+    select_installer_action || return 1
+    [[ "$INSTALL_ACTION" != exit ]] || return 0
+    # A conditional function call disables Bash errexit throughout nested
+    # transactions. Use an unconditional child with its own strict mode.
+    set +e
+    ( set -Eeuo pipefail; installer_execute_action "$INSTALL_ACTION" )
+    result=$?
+    set -e
+    if ((result)); then printf 'Действие завершилось ошибкой (%s). Причина указана выше.\n' "$result" >&2; fi
+    installer_pause || return 0
+  done
+}
+
 installer_status() {
   installer_detect_installations
-  local native='не установлена' compose='не установлен' state
+  local native='не установлена' compose='не установлен' state version
   if ((NATIVE_INSTALLED)); then
     native='установлена, остановлена'
     if systemctl is-active --quiet firewall-ui.service 2>/dev/null; then native='установлена, запущена'; fi
@@ -455,6 +609,10 @@ installer_status() {
     fi
   fi
   printf 'Обычная установка: %s\nDocker Compose: %s\n' "$native" "$compose"
+  if [[ -x "$INSTALL_DIR/firewall-ui" ]]; then
+    version="$("$INSTALL_DIR/firewall-ui" -version 2>/dev/null)" || true
+    [[ -z "$version" ]] || printf 'Версия обычной панели: %s\n' "$version"
+  fi
 }
 
 installer_select_target() {
@@ -487,27 +645,33 @@ select_installer_action() {
   [[ "${INSTALL_INTERACTIVE:-0}" == 1 ]] || { installer_select_target install; return; }
   local choice
   while true; do
-    echo
-    echo 'Firewall-UI — установка и обслуживание'
+    installer_heading 'Установка и обслуживание'
     installer_status
+    installer_connection_info
     echo
-    echo '1) Установить / обновить (выбрать обычную установку или Docker Compose)'
-    echo '2) Настроить доступ'
-    echo '3) Сбросить пароль'
-    echo '4) Полностью удалить оба варианта и их данные'
-    echo '5) Показать состояние'
-    echo '6) Посмотреть журнал'
-    echo '0) Выход'
-    ask choice 'Выберите действие' 1 || return 1
+    installer_item 1 'Установить / обновить' '1 — обычная установка; 2 — Docker Compose; 0 — назад'
+    installer_item 2 'Настройки' 'Подключение, логин и пароль'
+    installer_item 3 'Сбросить пароль' 'Сохранить текущий логин'
+    printf '  %s[4]  Полностью удалить%s\n' "${UI_DANGER:-}" "${UI_RESET:-}"
+    printf '       %sОба варианта, данные и собственные правила%s\n' "${UI_MUTED:-}" "${UI_RESET:-}"
+    echo
+    installer_item 5 'Показать состояние'
+    installer_item 6 'Последние записи журнала' '100 строк; меню останется открытым'
+    installer_item 7 'Управление службой' 'Запуск, остановка и перезапуск'
+    installer_item 8 'Диагностика'
+    installer_item 0 'Выход'
+    ask choice 'Выберите действие' 0 || return 1
     case "$choice" in
       1) INSTALL_ACTION=install; installer_select_target install || return 1;;
-      2) INSTALL_ACTION=configure; installer_select_target configure || return 1;;
-      3) INSTALL_ACTION=reset-password; installer_select_target reset-password || return 1;;
+      2) installer_settings_menu || return 1;;
+      3) INSTALL_ACTION=reset-password; installer_select_target reset-password || { INSTALL_ACTION=back; };;
       4) INSTALL_ACTION=uninstall; return 0;;
-      5) installer_status; continue;;
-      6) INSTALL_ACTION=logs; installer_select_target logs || return 1;;
-      0) INSTALL_ACTION=exit; return 0;;
-      *) echo 'Неизвестный пункт меню.' >&2; continue;;
+      5) installer_status; installer_pause || return 1; continue;;
+      6) INSTALL_ACTION=logs; installer_select_target logs || { INSTALL_ACTION=back; };;
+      7) installer_service_menu || return 1;;
+      8) INSTALL_ACTION=diagnostics; return 0;;
+      0|q|Q) INSTALL_ACTION=exit; return 0;;
+      *) echo 'Введите номер пункта.' >&2; continue;;
     esac
     [[ "$INSTALL_ACTION" == back ]] || return 0
   done
@@ -532,7 +696,8 @@ run_installer_manager_action() (
   local stage
   stage="$(mktemp -d)"
   trap 'rm -rf -- "$stage"' EXIT
-  fetch_repo_file deploy/firewall-ui "$stage/manager"
+  if [[ -x "$MANAGER" ]]; then cp "$MANAGER" "$stage/manager"
+  else fetch_repo_file deploy/firewall-ui "$stage/manager"; fi
   if [[ "${INSTALL_INTERACTIVE:-0}" == 1 ]]; then
     bash "$stage/manager" "$@" <&3
   else bash "$stage/manager" "$@"; fi
@@ -542,44 +707,20 @@ run_installer_docker_action() (
   set -euo pipefail
   local stage
   stage="$(mktemp -d)"; trap 'rm -rf -- "$stage"' EXIT
-  command -v curl >/dev/null || pkg_install curl ca-certificates
-  fetch_repo_file deploy/firewall-ui-docker "$stage/docker-manager"
+  local installed="${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/firewall-ui-docker}"
+  if [[ "$1" != install && -x "$installed" ]]; then cp "$installed" "$stage/docker-manager"
+  else
+    command -v curl >/dev/null || pkg_install curl ca-certificates
+    fetch_repo_file deploy/firewall-ui-docker "$stage/docker-manager"
+  fi
   if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/Dockerfile" ]]; then
     export FIREWALL_UI_DOCKER_SOURCE="$SCRIPT_DIR"
   fi
-  bash "$stage/docker-manager" "$1"
+  bash "$stage/docker-manager" "$@"
 )
 
-main() {
-  INSTALL_ACTION=install
-  case "${1:-}" in
-    --help|-h) echo 'Использование: install.sh [--check|--configure|--reset-password|--uninstall|--compose|--compose-configure|--compose-reset-password|--compose-uninstall]. Без параметров — русское меню. FIREWALL_UI_NONINTERACTIVE=1 — без вопросов.'; return;;
-    --check) check_system; return;;
-    --configure) INSTALL_ACTION=configure;;
-    --reset-password) INSTALL_ACTION=reset-password;;
-    --uninstall) INSTALL_ACTION=uninstall;;
-    --compose|--docker) INSTALL_ACTION=docker-install;;
-    --compose-configure|--docker-configure) INSTALL_ACTION=docker-configure;;
-    --compose-reset-password|--docker-reset-password) INSTALL_ACTION=docker-reset-password;;
-    --compose-uninstall|--docker-uninstall) INSTALL_ACTION=docker-uninstall;;
-    '') ;;
-    *) echo 'Неизвестный параметр.' >&2; return 1;;
-  esac
-  require_installer_root || return 1
-  INSTALL_INTERACTIVE=0
-  if [[ "${FIREWALL_UI_NONINTERACTIVE:-0}" != 1 ]] && { exec 3<>/dev/tty; } 2>/dev/null; then INSTALL_INTERACTIVE=1; fi
-  if [[ -z "${1:-}" ]]; then select_installer_action || return 1
-  elif [[ "$INSTALL_ACTION" == configure || "$INSTALL_ACTION" == reset-password ]]; then installer_select_target "$INSTALL_ACTION" || return 1
-    if [[ "$INSTALL_ACTION" == back ]]; then select_installer_action || return 1; fi
-  fi
-  case "$INSTALL_ACTION" in
-    exit) return 0;;
-    docker-*) run_installer_docker_action "${INSTALL_ACTION#docker-}"; return;;
-    reset-password) run_installer_manager_action reset-password; return;;
-    uninstall) installer_uninstall_all; return;;
-    logs) run_installer_manager_action logs; return;;
-    configure) FIREWALL_UI_RECONFIGURE=1;;
-  esac
+installer_native_install() (
+  set -Eeuo pipefail
   check_system
   installer_require_native_exclusive || return 1
   UPDATE_CHANNEL="${FIREWALL_UI_UPDATE_CHANNEL:-}"
@@ -594,6 +735,7 @@ main() {
   download_binary
   fetch_repo_file deploy/firewall-ui "$TEMP_DIR/manager"
   fetch_repo_file deploy/firewall-ui.service "$TEMP_DIR/service"
+  fetch_repo_file install.sh "$TEMP_DIR/installer"
   install -d -m 0755 "$INSTALL_DIR"
   install -d -m 0700 "$CONFIG_DIR"
   if [[ -f "$CONFIG_DIR/config.json" ]]; then cp -p "$CONFIG_DIR/config.json" "$TEMP_DIR/previous-config"; fi
@@ -602,12 +744,14 @@ main() {
   if [[ -f "$INSTALL_DIR/firewall-ui" ]]; then cp -p "$INSTALL_DIR/firewall-ui" "$TEMP_DIR/previous-binary"; HAD_BINARY=1; fi
   [[ ! -f "$MANAGER" ]] || cp -p "$MANAGER" "$TEMP_DIR/previous-manager"
   [[ ! -f "$SERVICE_FILE" ]] || cp -p "$SERVICE_FILE" "$TEMP_DIR/previous-service"
+  [[ ! -f "$INSTALL_DIR/install.sh" ]] || cp -p "$INSTALL_DIR/install.sh" "$TEMP_DIR/previous-installer"
   systemctl is-active --quiet firewall-ui.service && WAS_ACTIVE=1
   systemctl is-enabled --quiet firewall-ui.service && WAS_ENABLED=1
   REPLACED=1
   install -m 0755 "$TEMP_DIR/binary" "$INSTALL_DIR/firewall-ui.new"; mv -f "$INSTALL_DIR/firewall-ui.new" "$INSTALL_DIR/firewall-ui"
   install -m 0755 "$TEMP_DIR/manager" "$MANAGER"
   install -m 0644 "$TEMP_DIR/service" "$SERVICE_FILE"
+  install -m 0700 "$TEMP_DIR/installer" "$INSTALL_DIR/install.sh"
   systemctl daemon-reload
   systemctl enable firewall-ui.service
   systemctl reset-failed firewall-ui.service || true
@@ -620,6 +764,37 @@ main() {
   echo 'Firewall-UI установлен.'
   show_panel_url
   echo 'Управление: firewall-ui; журнал: firewall-ui logs'
+
+)
+
+main() {
+  INSTALL_ACTION=install
+  case "${1:-}" in
+    --menu) ;;
+    --help|-h) echo 'Использование: install.sh [--menu|--check|--configure|--reset-password|--uninstall|--compose|--compose-configure|--compose-reset-password|--compose-uninstall]. Без параметров — русское меню. FIREWALL_UI_NONINTERACTIVE=1 — без вопросов.'; return;;
+    --check) check_system; return;;
+    --configure) INSTALL_ACTION=configure;;
+    --reset-password) INSTALL_ACTION=reset-password;;
+    --uninstall) INSTALL_ACTION=uninstall;;
+    --compose|--docker) INSTALL_ACTION=docker-install;;
+    --compose-configure|--docker-configure) INSTALL_ACTION=docker-configure;;
+    --compose-reset-password|--docker-reset-password) INSTALL_ACTION=docker-reset-password;;
+    --compose-uninstall|--docker-uninstall) INSTALL_ACTION=docker-uninstall;;
+    '') ;;
+    *) echo 'Неизвестный параметр.' >&2; return 1;;
+  esac
+  require_installer_root || return 1
+  INSTALL_INTERACTIVE=0
+  if [[ "${FIREWALL_UI_NONINTERACTIVE:-0}" != 1 ]] && { exec 3<>/dev/tty; } 2>/dev/null; then INSTALL_INTERACTIVE=1; fi
+  if [[ -z "${1:-}" || "${1:-}" == --menu ]]; then
+    if [[ "$INSTALL_INTERACTIVE" == 1 ]]; then installer_menu_loop; return; fi
+    [[ "${1:-}" != --menu ]] || { echo 'Для меню нужен интерактивный терминал.' >&2; return 1; }
+    installer_select_target install || return 1
+  elif [[ "$INSTALL_ACTION" == configure || "$INSTALL_ACTION" == reset-password ]]; then
+    installer_select_target "$INSTALL_ACTION" || return 1
+    [[ "$INSTALL_ACTION" != back ]] || return 0
+  fi
+  installer_execute_action "$INSTALL_ACTION"
 
 }
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi

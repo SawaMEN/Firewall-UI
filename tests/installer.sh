@@ -57,12 +57,15 @@ mkdir -p "$INSTALL_DIR"
 printf 'old binary' > "$TEMP_DIR/previous-binary"
 printf 'old manager' > "$TEMP_DIR/previous-manager"
 printf 'old unit' > "$TEMP_DIR/previous-service"
+printf 'old installer' > "$TEMP_DIR/previous-installer"
+printf 'new installer' > "$INSTALL_DIR/install.sh"
 printf 'new binary' > "$INSTALL_DIR/firewall-ui"
 systemctl() { printf '%s\n' "$*" >> "$FIXTURE/systemctl"; }
 REPLACED=1;HAD_BINARY=1;WAS_ACTIVE=1;WAS_ENABLED=1
 cleanup
 [[ "$(cat "$INSTALL_DIR/firewall-ui")" == 'old binary' ]]
 [[ "$(cat "$MANAGER")" == 'old manager' && "$(cat "$SERVICE_FILE")" == 'old unit' ]]
+[[ "$(cat "$INSTALL_DIR/install.sh")" == 'old installer' ]]
 [[ "$(tail -n 1 "$FIXTURE/systemctl")" == 'restart firewall-ui.service' ]]
 printf 'Installer firewall detection, repeat-install, checksum and rollback tests passed\n'
 
