@@ -68,6 +68,7 @@ switch_remove_docker() {
   done
   rm -rf -- "${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}" || return 1
   rm -f -- "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}" "${FIREWALL_UI_LEGACY_DOCKER_MANAGER:-/usr/local/bin/firewall-ui-docker}" || return 1
+  docker image rm firewall-ui:stable firewall-ui:local >/dev/null 2>&1 || true
   # /usr/local/bin/fw-ui now belongs to the freshly installed native variant.
 }
 
@@ -165,7 +166,12 @@ switch_native_to_docker() (
   switch_docker_environment "$docker_dir/docker.env" "$cfg" "$mode" || return 1
   # The temporary bootstrap may have created a local configuration. Its entire
   # replacement is complete; verify startup before removing the old installation.
-  run_installer_docker_action restart || return 1
+  # Recreate to apply a newly required TLS bind mount; 'restart' keeps old mounts.
+  (
+    source "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}"
+    docker_compose up -d --force-recreate --no-build
+    docker_wait_for_service
+  ) || return 1
   if [[ "$mode" == letsencrypt ]]; then
     ( source "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}"; docker_setup_renewal ) || return 1
   fi
