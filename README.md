@@ -102,6 +102,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/SawaMEN/Firewall-UI/main/ins
 | `/var/lib/firewall-ui` | Состояние, история и резервные копии |
 | `/usr/local/firewall-ui/firewall-ui` | Бинарник |
 
+При включённом HTTPS используйте `https://` и выбранный порт. Обычные HTTP-ссылки на этот порт перенаправляются на HTTPS; учётные данные по HTTP не принимаются. Некорректные TLS-пакеты от внешних клиентов отклоняются и могут появляться в журнале.
+
 Если панель не открывается, проверьте `sudo firewall-ui status` и `sudo firewall-ui logs`, выбранный режим доступа и разрешение порта у хостинга.
 
 ## Лицензия

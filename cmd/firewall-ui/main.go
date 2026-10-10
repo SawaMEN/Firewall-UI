@@ -179,6 +179,7 @@ func main() {
 	srv := &http.Server{
 		Addr:              cfg.Address(),
 		Handler:           app,
+		ErrorLog:          server.QuietHTTPErrorLogger(log.Default()),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      6 * time.Minute,
@@ -203,7 +204,12 @@ func main() {
 	info := buildinfo.Current()
 	log.Printf("Firewall-UI %s (%s, %s) listening on %s (user %s)", info.Version, info.Channel, info.Commit, cfg.Address(), user)
 	if cfg.TLSCert != "" {
-		err = srv.ListenAndServeTLS(cfg.TLSCert, cfg.TLSKey)
+		listener, listenErr := net.Listen("tcp", cfg.Address())
+		if listenErr != nil {
+			err = listenErr
+		} else {
+			err = srv.ServeTLS(server.HTTPSRedirectListener(listener, cfg.PublicHost), cfg.TLSCert, cfg.TLSKey)
+		}
 	} else {
 		err = srv.ListenAndServe()
 	}

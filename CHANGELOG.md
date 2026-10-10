@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.21
+
+- Redirect accidental plaintext GET/HEAD requests on the HTTPS port to the configured domain/IP, preserving paths and queries without trusting client Host headers.
+- Reject plaintext credential submissions and malformed TLS; retain certificate and server failure diagnostics.
+- Silence routine EOF disconnects during TLS negotiation while keeping per-connection deadlines and concurrent HTTPS handling.
+
 ## 1.2.20
 
 - Replace separate server menus with one persistent Russian menu, terminal-only colors, contextual status, connection details, settings, service controls and diagnostics.
