@@ -69,12 +69,12 @@ type XUIStatus struct {
 }
 
 type XUIIntegration struct {
-	mu       sync.RWMutex
-	cfg      XUIConfig
-	status   XUIStatus
-	inbounds []XUIInbound
-	trigger  chan struct{}
-	client   *http.Client
+	mu      sync.RWMutex
+	cfg     XUIConfig
+	status  XUIStatus
+	byPort  map[int][]XUIInbound
+	trigger chan struct{}
+	client  *http.Client
 }
 
 func NewXUIIntegration() *XUIIntegration {
@@ -91,7 +91,7 @@ func (x *XUIIntegration) Configure(cfg XUIConfig) {
 		return
 	}
 	x.cfg = cfg
-	x.inbounds = nil
+	x.byPort = nil
 	x.status = XUIStatus{Enabled: cfg.Enabled}
 	x.mu.Unlock()
 	select {
@@ -135,11 +135,14 @@ func (x *XUIIntegration) refresh(ctx context.Context) {
 	x.status = XUIStatus{Enabled: true, Connected: err == nil, Inbounds: len(inbounds)}
 	if err != nil {
 		x.status.Message = err.Error()
-		x.inbounds = nil
+		x.byPort = nil
 		return
 	}
 	x.status.LastSync = time.Now().UTC()
-	x.inbounds = inbounds
+	x.byPort = make(map[int][]XUIInbound, len(inbounds))
+	for _, inbound := range inbounds {
+		x.byPort[inbound.Port] = append(x.byPort[inbound.Port], inbound)
+	}
 }
 
 func (x *XUIIntegration) Fetch(ctx context.Context, cfg XUIConfig) ([]XUIInbound, error) {
@@ -236,9 +239,28 @@ func xuiSocketMatches(p Port, inbound XUIInbound) bool {
 	if !core {
 		return false
 	}
-	listen := strings.Trim(inbound.Listen, "[]")
-	if ip := net.ParseIP(listen); ip != nil && !ip.IsUnspecified() && !ip.Equal(net.ParseIP(p.Address)) {
-		return false
+	listen := strings.Trim(strings.TrimSpace(inbound.Listen), "[]")
+	socketIP := net.ParseIP(p.Address)
+	if strings.EqualFold(listen, "localhost") {
+		if socketIP == nil || !socketIP.IsLoopback() {
+			return false
+		}
+	} else if listen != "" && listen != "*" {
+		ip := net.ParseIP(listen)
+		// Do not resolve DNS during a socket scan or guess another listener's
+		// identity from a matching port number alone.
+		if ip == nil || socketIP == nil {
+			return false
+		}
+		if ip.IsUnspecified() {
+			// Go may represent an IPv4 wildcard listener as a dual-stack IPv6
+			// socket. Match wildcard to wildcard, not to a specific bind IP.
+			if !socketIP.IsUnspecified() {
+				return false
+			}
+		} else if !ip.Equal(socketIP) {
+			return false
+		}
 	}
 	network := strings.ToLower(inbound.Network)
 	protocol := strings.ToLower(inbound.Protocol)
@@ -255,13 +277,9 @@ func xuiSocketMatches(p Port, inbound XUIInbound) bool {
 func (x *XUIIntegration) Annotate(ports []Port) XUIStatus {
 	x.mu.RLock()
 	defer x.mu.RUnlock()
-	byPort := make(map[int][]XUIInbound, len(x.inbounds))
-	for _, inbound := range x.inbounds {
-		byPort[inbound.Port] = append(byPort[inbound.Port], inbound)
-	}
 	for i := range ports {
 		ports[i].Services = nil
-		for _, inbound := range byPort[ports[i].Port] {
+		for _, inbound := range x.byPort[ports[i].Port] {
 			if xuiSocketMatches(ports[i], inbound) {
 				ports[i].Services = append(ports[i].Services, PortService{ID: inbound.ID, Name: inbound.Remark, Protocol: inbound.Protocol, Transport: inbound.Network, Security: inbound.Security})
 			}

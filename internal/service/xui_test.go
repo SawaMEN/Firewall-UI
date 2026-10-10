@@ -111,3 +111,25 @@ func TestXUIRejectsResponseFromReplacedConfiguration(t *testing.T) {
 		t.Fatal("old response replaced disabled connection")
 	}
 }
+
+func TestXUIBindingScopeDoesNotAttributeAnotherAddress(t *testing.T) {
+	for _, tc := range []struct {
+		listen, address string
+		match           bool
+	}{
+		{"localhost", "127.0.0.1", true}, {"localhost", "::1", true},
+		{"localhost", "0.0.0.0", false}, {"localhost", "192.168.1.1", false},
+		{"0.0.0.0", "0.0.0.0", true}, {"0.0.0.0", "192.168.1.1", false}, {"0.0.0.0", "::", true},
+		{"::", "::", true}, {"::", "192.168.1.1", false}, {"::", "0.0.0.0", true},
+		{"127.0.0.1", "::ffff:127.0.0.1", true},
+		{"192.168.1.1", "192.168.1.2", false},
+		{"unknown.example", "0.0.0.0", false}, {"", "::", true},
+	} {
+		t.Run(tc.listen+"/"+tc.address, func(t *testing.T) {
+			port := Port{Port: 443, Protocol: "tcp", Address: tc.address, Listening: true, Processes: []Process{{Name: "xray", PID: 1}}}
+			if xuiSocketMatches(port, XUIInbound{Port: 443, Listen: tc.listen, Network: "tcp"}) != tc.match {
+				t.Fatal("incorrect binding attribution")
+			}
+		})
+	}
+}

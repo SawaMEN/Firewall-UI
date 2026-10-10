@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.8
+
+- Match 3X-UI localhost inbounds only to loopback sockets and wildcard inbounds only to wildcard sockets, preserving IPv4/IPv6 dual-stack listeners and preventing attribution to another bind address on the same port.
+- Avoid guessing inbound identity for unresolved listen hostnames; retain exact and IPv4-mapped address matching.
+- Cache the inbound lookup index between metadata refreshes instead of rebuilding it on every socket scan.
+
 ## 1.2.7
 
 - Integrate with 3X-UI through authenticated read-only metadata requests; expose local inbound names, application protocols, transport and security beside socket ports. Cache metadata in the background without delaying socket scans; support panel base paths and older list APIs.
