@@ -48,7 +48,7 @@ func TestSessionAndCSRF(t *testing.T) {
 	if w := send("GET", "/api/session", "", "", cookie); w.Code != 200 {
 		t.Fatal("session missing")
 	}
-	if w := send("POST", "/panel/api/server/firewall/enabled", "{}", result.Obj.CSRF, cookie); w.Code != 400 {
+	if w := send("POST", "/api/firewall/enabled", "{}", result.Obj.CSRF, cookie); w.Code != 400 {
 		t.Fatal("accepted missing enabled")
 	}
 	if w := send("POST", "/api/logout", "{}", result.Obj.CSRF, cookie); w.Code != 200 {

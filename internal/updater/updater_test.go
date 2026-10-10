@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/SawaMEN/Firewall-UI/internal/buildinfo"
@@ -134,12 +136,15 @@ func TestCheckCacheAndProgress(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("repeated checks fetched %d manifests", calls)
 	}
+	if _, err := m.CheckFresh(context.Background(), "stable"); err != nil || calls != 2 {
+		t.Fatalf("explicit refresh did not fetch fresh metadata: calls=%d err=%v", calls, err)
+	}
 	m.mu.Lock()
 	m.applying = true
 	m.progress = Status{Applying: true, Phase: "downloading", LatestVersion: "9.0.0"}
 	m.mu.Unlock()
 	status, err := m.Check(context.Background(), "stable")
-	if err != nil || !status.Applying || status.Phase != "downloading" || calls != 1 {
+	if err != nil || !status.Applying || status.Phase != "downloading" || calls != 2 {
 		t.Fatalf("progress check fetched metadata or lost progress: %+v, %v", status, err)
 	}
 	m.mu.Lock()
@@ -148,5 +153,38 @@ func TestCheckCacheAndProgress(t *testing.T) {
 	m.mu.Unlock()
 	if _, err := m.Apply(context.Background(), "stable"); err == nil {
 		t.Fatal("accepted a second update during restart")
+	}
+}
+
+func TestConcurrentChecksShareMetadata(t *testing.T) {
+	m := New(nil)
+	var calls atomic.Int32
+	m.client.Transport = manifestTransport(func(*http.Request) (*http.Response, error) {
+		calls.Add(1)
+		manifest := Manifest{Version: "9.0.0", Channel: "stable", Commit: "next", Assets: map[string]Asset{
+			runtime.GOARCH: {URL: "https://github.com/SawaMEN/Firewall-UI/releases/download/v9.0.0/firewall-ui-linux-" + runtime.GOARCH, SHA256: strings.Repeat("a", 64)},
+		}}
+		raw, err := json.Marshal(manifest)
+		if err != nil {
+			return nil, err
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(string(raw)))}, nil
+	})
+	var workers sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < 20; i++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			if _, err := m.Check(context.Background(), "stable"); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	close(start)
+	workers.Wait()
+	if calls.Load() != 1 {
+		t.Fatalf("concurrent checks made %d metadata requests", calls.Load())
 	}
 }

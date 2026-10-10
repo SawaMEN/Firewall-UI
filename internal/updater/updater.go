@@ -66,6 +66,7 @@ type Manager struct {
 	client   *http.Client
 	restart  func()
 	mu       sync.Mutex
+	checkMu  sync.Mutex
 	applying bool
 	trigger  chan struct{}
 	progress Status
@@ -185,21 +186,49 @@ func validateAsset(asset Asset) error {
 	return nil
 }
 
+func (m *Manager) InProgress() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.applying || m.progress.Restarting
+}
+
+func (m *Manager) cachedStatus(channel string, fresh bool) (Status, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.applying || m.progress.Restarting {
+		return m.progress, true
+	}
+	if cached, ok := m.cache[channel]; !fresh && ok && time.Now().Before(cached.expires) {
+		return statusFor(channel, cached.manifest), true
+	}
+	return Status{}, false
+}
+
 func (m *Manager) Check(ctx context.Context, channel string) (Status, error) {
+	return m.check(ctx, channel, false)
+}
+
+func (m *Manager) CheckFresh(ctx context.Context, channel string) (Status, error) {
+	return m.check(ctx, channel, true)
+}
+
+func (m *Manager) check(ctx context.Context, channel string, fresh bool) (Status, error) {
 	channel, err := normalizeChannel(channel)
 	if err != nil {
 		return Status{}, err
 	}
-	m.mu.Lock()
-	if m.applying || m.progress.Restarting {
-		status := m.progress
-		m.mu.Unlock()
+	if status, ok := m.cachedStatus(channel, fresh); ok {
 		return status, nil
 	}
-	cached, ok := m.cache[channel]
-	m.mu.Unlock()
-	if ok && time.Now().Before(cached.expires) {
-		return statusFor(channel, cached.manifest), nil
+	// Share one metadata fetch between simultaneous sessions. Progress checks
+	// bypass this lock and stay responsive while the binary is downloading.
+	m.checkMu.Lock()
+	defer m.checkMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return Status{}, err
+	}
+	if status, ok := m.cachedStatus(channel, fresh); ok {
+		return status, nil
 	}
 	manifest, err := m.fetchManifest(ctx, channel)
 	if err != nil {
@@ -329,9 +358,6 @@ func (m *Manager) Apply(ctx context.Context, channel string) (Status, error) {
 		return Status{}, err
 	}
 
-	status.CurrentVersion = manifest.Version
-	status.CurrentChannel = manifest.Channel
-	status.CurrentCommit = manifest.Commit
 	status.Available = false
 	status.Restarting = m.restart != nil
 	if status.Restarting {

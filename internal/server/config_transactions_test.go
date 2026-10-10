@@ -73,7 +73,7 @@ func TestRuntimeRollbackPreservesCredentials(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatal(w.Body.String())
 	}
-	if err := s.restoreRuntimeAfterRollback(old, expected); err != nil {
+	if err := s.restoreRuntimeAfterRollbackLocked(old, expected); err != nil {
 		t.Fatal(err)
 	}
 	saved, err := appconfig.Load(s.ConfigPath)
@@ -99,7 +99,7 @@ func TestRuntimeRollbackDoesNotOverwriteLaterEdits(t *testing.T) {
 	if err := appconfig.Save(s.ConfigPath, current); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.restoreRuntimeAfterRollback(old, expected); err == nil {
+	if err := s.restoreRuntimeAfterRollbackLocked(old, expected); err == nil {
 		t.Fatal("newer settings were overwritten")
 	}
 	saved, err := appconfig.Load(s.ConfigPath)
@@ -117,7 +117,7 @@ func TestRuntimeRollbackWriteFailureKeepsMemory(t *testing.T) {
 	old := s.RuntimeConfig
 	s.RuntimeConfig.ExternalPort = 443
 	current := s.RuntimeConfig
-	if err := s.restoreRuntimeAfterRollback(old, runtimeBackupFromConfig(current)); err == nil {
+	if err := s.restoreRuntimeAfterRollbackLocked(old, runtimeBackupFromConfig(current)); err == nil {
 		t.Fatal("accepted a failed save")
 	}
 	if !reflect.DeepEqual(s.RuntimeConfig, current) {

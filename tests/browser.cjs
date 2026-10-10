@@ -7,6 +7,34 @@ const { chromium } = require(path.join(process.env.PLAYWRIGHT_TOOLS, 'node_modul
   const base = process.env.FIREWALL_UI_BROWSER_URL || 'http://panel.test:18123';
   const output = process.env.FIREWALL_UI_SCREENSHOTS || '/tmp/firewall-ui-ui-shots';
   fs.mkdirSync(output, { recursive: true });
+  // Hold session bootstrap so geometry is measured before the loader disappears.
+  const loadingContext = await browser.newContext();
+  const loadingPage = await loadingContext.newPage();
+  let releaseSession;
+  const sessionGate = new Promise(resolve => { releaseSession = resolve; });
+  await loadingPage.route('**/api/session', async route => {
+    await sessionGate;
+    await route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ success: false, msg: 'authentication required' }) });
+  });
+  await loadingPage.goto(base);
+  await loadingPage.locator('.app-loading .ant-spin').waitFor();
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+    await loadingPage.setViewportSize(viewport);
+    const geometry = await loadingPage.evaluate(() => {
+      const overlay = document.querySelector('.app-loading').getBoundingClientRect();
+      const spinner = document.querySelector('.app-loading .ant-spin').getBoundingClientRect();
+      return { x: spinner.x + spinner.width / 2 - innerWidth / 2,
+        y: spinner.y + spinner.height / 2 - innerHeight / 2,
+        width: overlay.width, height: overlay.height, overflow: document.documentElement.scrollWidth > innerWidth };
+    });
+    assert.ok(Math.abs(geometry.x) < 1 && Math.abs(geometry.y) < 1, `Loader is off center: ${JSON.stringify(geometry)}`);
+    assert.equal(geometry.width, viewport.width);
+    assert.equal(geometry.height, viewport.height);
+    assert.equal(geometry.overflow, false);
+  }
+  releaseSession();
+  await loadingPage.getByRole('button', { name: 'Войти', exact: true }).waitFor();
+  await loadingContext.close();
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   await context.addCookies([{ name: 'firewall_ui_session', value: 'obsolete-secure-cookie', domain: new URL(base).hostname, path: '/', secure: true, httpOnly: true, sameSite: 'Strict' }]);
   const page = await context.newPage();
@@ -19,7 +47,7 @@ const { chromium } = require(path.join(process.env.PLAYWRIGHT_TOOLS, 'node_modul
   }
   const updateStatus = { currentVersion: '1.3.2', currentChannel: 'stable', selectedChannel: 'stable', latestVersion: '1.3.99', latestCommit: 'fixture-next', available: true };
   const json = (route, obj) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, obj, msg: '' }) });
-  await page.route('**/api/update/status', route => json(route, updateStatus));
+  await page.route('**/api/update/status*', route => json(route, updateStatus));
   await page.goto(base);
   await page.getByRole('button', { name: 'Войти', exact: true }).waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'cyberpunk');
@@ -74,9 +102,9 @@ const { chromium } = require(path.join(process.env.PLAYWRIGHT_TOOLS, 'node_modul
   const status = () => ({ supported: true, backend: 'ufw', enabled: true, autoSync: false, pingEnabled: true,
     rules: manual.map(rule => ({ ...rule, source: 'manual', owned: true, exists: true })), manualRules: manual });
   const response = (route, obj) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, obj, msg: '' }) });
-  await page.route('**/panel/api/server/firewall/status', route => response(route, status()));
+  await page.route('**/api/firewall/status', route => response(route, status()));
   await page.route('**/api/firewall/advanced', route => response(route, advanced));
-  await page.route('**/panel/api/server/firewall/rules/delete', route => {
+  await page.route('**/api/firewall/rules/delete', route => {
     const data = route.request().postDataJSON(); requests.push(data);
     manual = manual.filter(rule => rule.port !== data.port || rule.protocol !== data.protocol);
     return response(route, status());
@@ -118,7 +146,7 @@ const { chromium } = require(path.join(process.env.PLAYWRIGHT_TOOLS, 'node_modul
   let healthChecks = 0;
   let navigations = 0;
   updatePage.on('framenavigated', frame => { if (frame === updatePage.mainFrame()) navigations++; });
-  await updatePage.route('**/api/update/status', route => json(route, updateStatus));
+  await updatePage.route('**/api/update/status*', route => json(route, updateStatus));
   await updatePage.route('**/api/update/apply', route => json(route, { ...updateStatus, available: false, restarting: true }));
   await updatePage.route('**/api/health', route => {
     healthChecks++;
@@ -137,7 +165,7 @@ const { chromium } = require(path.join(process.env.PLAYWRIGHT_TOOLS, 'node_modul
   // Docker availability uses the same banner, with instructions instead of self-update.
   const docker = await browser.newContext({ storageState: await context.storageState() });
   const dockerPage = await docker.newPage();
-  await dockerPage.route('**/api/update/status', route => json(route, { ...updateStatus, manualInstall: true }));
+  await dockerPage.route('**/api/update/status*', route => json(route, { ...updateStatus, manualInstall: true }));
   await dockerPage.goto(base);
   await dockerPage.locator('.update-banner').getByRole('button', { name: 'Как обновить' }).click();
   await dockerPage.getByRole('dialog').getByText(/curl -fsSL/).waitFor();

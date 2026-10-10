@@ -26,7 +26,7 @@ type Updates = {
   checking: boolean;
   busy: boolean;
   error: string;
-  check: () => Promise<void>;
+  check: (fresh?: boolean) => Promise<void>;
   confirm: () => void;
 };
 const Context = createContext<Updates | null>(null);
@@ -55,12 +55,14 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
     return () => { controller.abort(); setSessionRestarting(false); };
   }, []);
 
-  const check = useCallback(async () => {
-    if (running.current) return;
+  const checkingSignal = useRef<AbortSignal | null>(null);
+  const check = useCallback(async (fresh = false) => {
+    if (running.current || (checkingSignal.current && !checkingSignal.current.aborted)) return;
     const signal = lifetime.current.signal;
+    checkingSignal.current = signal;
     setChecking(true);
     try {
-      const result = await request<UpdateStatus>('/api/update/status', undefined, {
+      const result = await request<UpdateStatus>('/api/update/status' + (fresh ? '?refresh=1' : ''), undefined, {
         silent: true, signal: AbortSignal.any([signal, AbortSignal.timeout(22000)]),
       });
       if (signal.aborted) return;
@@ -69,6 +71,7 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
     } catch {
       if (!signal.aborted) setError(failed);
     } finally {
+      if (checkingSignal.current === signal) checkingSignal.current = null;
       if (!signal.aborted) setChecking(false);
     }
   }, [failed]);

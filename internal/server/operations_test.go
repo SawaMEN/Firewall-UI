@@ -77,3 +77,16 @@ func TestOverviewCoverageUsesFullRangesAndExactProtocols(t *testing.T) {
 		t.Fatalf("ANY range does not cover both protocols: %v", covered)
 	}
 }
+
+func TestOverviewIncludesExplicitNetworkAddresses(t *testing.T) {
+	ports := []service.Port{
+		{Port: 443, Protocol: "tcp", Address: "203.0.113.10", Listening: true},
+		{Port: 8443, Protocol: "tcp", Address: "2001:db8::10", Listening: true},
+		{Port: 8080, Protocol: "tcp", Address: "127.1.2.3", Listening: true},
+		{Port: 8081, Protocol: "tcp", Address: "::1", Listening: true},
+	}
+	listening, public, risky := summarizePorts(ports, map[string]bool{})
+	if listening != 4 || public != 2 || len(risky) != 2 {
+		t.Fatalf("incorrect address classification: %d, %d, %+v", listening, public, risky)
+	}
+}

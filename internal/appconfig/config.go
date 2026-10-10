@@ -68,6 +68,9 @@ func Load(path string) (Config, error) {
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return Config{}, fmt.Errorf("parse config fields: %w", err)
 	}
+	if fields == nil {
+		return Config{}, errors.New("configuration must be a JSON object, not null")
+	}
 	if _, obsolete := fields["xui"]; obsolete {
 		if err := Save(path, cfg); err != nil {
 			return Config{}, fmt.Errorf("remove retired configuration: %w", err)

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.5
+
+- Center the full-screen loader without viewport overflow on desktop and mobile.
+- Remove retired panel API routes, their development proxy and unused settings/helper code.
+- Guard manual restart/update against pending firewall rollback and conflicting operations.
+- Fix Docker channel selection, configuration locking and same-second retry diagnostics.
+- Share concurrent update checks, allow explicit refresh and report the running build until restart.
+- Correct explicit network-address risk counts and stop disconnected port streams on write errors.
+- Reject null configuration and unreadable oversized log records; share bounded, corruption-tolerant recent-log reading.
+- Add focused regression coverage and desktop/mobile loader geometry checks.
+
 ## 1.3.4
 
 - Run Docker firewall commands against the actual host UFW/firewalld and their configuration through the host mount namespace.

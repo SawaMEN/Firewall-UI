@@ -38,7 +38,7 @@ for attempt in range(15):
 else:
     raise AssertionError("Host test listener/process missing from Compose panel")
 
-request = Request(base + "/panel/api/server/firewall/status", headers={"Cookie": session})
+request = Request(base + "/api/firewall/status", headers={"Cookie": session})
 with urlopen(request, timeout=20, context=context) as response:
     firewall = json.load(response)
 assert firewall["success"], firewall.get("msg")

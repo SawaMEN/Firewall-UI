@@ -182,7 +182,7 @@ export function FirewallManager() {
     setLoading(true);
     try {
       const [statusResult, advancedResult] = await Promise.all([
-        HttpUtil.get<FirewallStatus>('/panel/api/server/firewall/status'),
+        HttpUtil.get<FirewallStatus>('/api/firewall/status'),
         HttpUtil.get<AdvancedRule[]>('/api/firewall/advanced'),
       ]);
       if (statusResult.success && statusResult.obj) setStatus(statusResult.obj);
@@ -297,7 +297,7 @@ export function FirewallManager() {
               loading={action === 'install'}
               onClick={() =>
                 void mutate(
-                  '/panel/api/server/firewall/install-ufw',
+                  '/api/firewall/install-ufw',
                   {},
                   'install',
                 )
@@ -429,7 +429,7 @@ export function FirewallManager() {
               loading={action === 'enabled'}
               onChange={(enabled) =>
                 void mutate(
-                  '/panel/api/server/firewall/enabled',
+                  '/api/firewall/enabled',
                   { enabled },
                   'enabled',
                 )
@@ -443,7 +443,7 @@ export function FirewallManager() {
           <Button
             loading={action === 'sync'}
             onClick={() =>
-              void mutate('/panel/api/server/firewall/sync', {}, 'sync')
+              void mutate('/api/firewall/sync', {}, 'sync')
             }
           >
             {text.sync}
@@ -462,7 +462,7 @@ export function FirewallManager() {
               loading={action === 'auto'}
               onChange={(enabled) =>
                 void mutate(
-                  '/panel/api/server/firewall/auto-sync',
+                  '/api/firewall/auto-sync',
                   { enabled },
                   'auto',
                 )
@@ -477,7 +477,7 @@ export function FirewallManager() {
               loading={action === 'ping'}
               onChange={(enabled) =>
                 void mutate(
-                  '/panel/api/server/firewall/ping',
+                  '/api/firewall/ping',
                   { enabled },
                   'ping',
                 )
@@ -548,7 +548,7 @@ export function FirewallManager() {
             onClick={() => {
               if (!basicPort) return;
               void mutate(
-                '/panel/api/server/firewall/rules/add',
+                '/api/firewall/rules/add',
                 { port: basicPort, protocol: basicProtocol, label: basicLabel },
                 'basic-add',
               ).then((ok) => {
@@ -588,7 +588,7 @@ export function FirewallManager() {
                   title={ru ? 'Удалить правило?' : 'Delete rule?'}
                   onConfirm={() =>
                     void mutate(
-                      '/panel/api/server/firewall/rules/delete',
+                      '/api/firewall/rules/delete',
                       { port: rule.port, protocol: rule.protocol },
                       `basic-${rule.port}-${rule.protocol}`,
                     )

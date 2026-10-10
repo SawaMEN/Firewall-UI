@@ -186,3 +186,17 @@ func TestBlankCIDRsCannotDisableAccessRestrictions(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadRejectsNullConfiguration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte("null"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("null configuration silently reset credentials and settings")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil || string(raw) != "null" {
+		t.Fatal("invalid configuration was rewritten")
+	}
+}

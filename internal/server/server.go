@@ -58,6 +58,7 @@ type Server struct {
 	Audit         *audit.Logger
 	History       *history.Store
 	Rollbacks     *rollback.Manager
+	restartUntil  time.Time
 	configMu      sync.Mutex // Serializes config read-modify-save operations.
 	mu            sync.Mutex
 	sessions      map[string]session
@@ -121,7 +122,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Referrer-Policy", "same-origin")
-	if !strings.HasPrefix(r.URL.Path, "/api/") && !strings.HasPrefix(r.URL.Path, "/panel/api/") {
+	if !strings.HasPrefix(r.URL.Path, "/api/") {
 		s.static(w, r)
 		return
 	}
@@ -467,6 +468,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	reply(w, http.StatusOK, runtimeSettingsView(cfg, restarting), nil)
 
 	if restarting {
+		s.restartUntil = time.Now().Add(2 * time.Second)
 		go func() {
 			time.Sleep(350 * time.Millisecond)
 			s.Restart()
@@ -488,10 +490,13 @@ func (s *Server) updateStatus(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	if s.ContainerMode {
-		channel = "stable"
+	var status updater.Status
+	var err error
+	if r.URL.Query().Get("refresh") == "1" {
+		status, err = s.Updater.CheckFresh(ctx, channel)
+	} else {
+		status, err = s.Updater.Check(ctx, channel)
 	}
-	status, err := s.Updater.Check(ctx, channel)
 	status.Docker = s.ContainerMode
 	status.ManualInstall = s.ContainerMode && s.DockerUpdater == nil
 	if s.DockerUpdater != nil {
@@ -505,6 +510,14 @@ func (s *Server) applyUpdate(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusMethodNotAllowed, nil, fmt.Errorf("method not allowed"))
 		return
 	}
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	if !s.requireNoPendingRollback(w) {
+		return
+	}
+	s.mu.Lock()
+	channel := s.RuntimeConfig.UpdateChannel
+	s.mu.Unlock()
 	if s.Updater == nil {
 		reply(w, http.StatusServiceUnavailable, nil, fmt.Errorf("updater is not configured"))
 		return
@@ -516,19 +529,19 @@ func (s *Server) applyUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
-		status, err := s.Updater.Check(ctx, s.RuntimeConfig.UpdateChannel)
+		status, err := s.Updater.Check(ctx, channel)
 		if err == nil && status.Available {
 			err = s.DockerUpdater.Start(ctx)
 			status.Docker = true
 			status.Restarting = err == nil
 			status.Phase = "checking"
+			if err == nil {
+				s.restartUntil = time.Now().Add(2 * time.Second)
+			}
 		}
 		reply(w, http.StatusOK, status, err)
 		return
 	}
-	s.mu.Lock()
-	channel := s.RuntimeConfig.UpdateChannel
-	s.mu.Unlock()
 	if channel != "stable" {
 		reply(w, http.StatusConflict, nil, fmt.Errorf("dev updates are installed automatically"))
 		return
@@ -540,7 +553,7 @@ func (s *Server) applyUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) manage(w http.ResponseWriter, r *http.Request) {
-	operation := strings.TrimPrefix(r.URL.Path, "/panel/api/server/firewall/")
+	operation := strings.TrimPrefix(r.URL.Path, "/api/firewall/")
 	if operation == r.URL.Path {
 		reply(w, http.StatusNotFound, nil, fmt.Errorf("not found"))
 		return

@@ -53,7 +53,11 @@ func (m *DockerManager) ReadStatus(status *Status) {
 	m.mu.Lock()
 	requestedAt := m.requestedAt
 	m.mu.Unlock()
-	if progress.UpdatedAt < requestedAt || time.Now().Unix()-progress.UpdatedAt > 900 || progress.UpdatedAt > time.Now().Unix()+60 {
+	if time.Now().Unix()-progress.UpdatedAt > 900 || progress.UpdatedAt > time.Now().Unix()+60 {
+		return
+	}
+	info, err := file.Stat()
+	if err != nil || info.ModTime().UnixNano() < requestedAt {
 		return
 	}
 	switch progress.Phase {
@@ -76,7 +80,7 @@ func (m *DockerManager) Start(ctx context.Context) error {
 		return err
 	}
 	m.mu.Lock()
-	m.requestedAt = time.Now().Unix()
+	m.requestedAt = time.Now().UnixNano()
 	m.mu.Unlock()
 	out, err := hostexec.CommandContext(ctx, binary, "start", "--no-block", "firewall-ui-docker-update.service").CombinedOutput()
 	if err != nil {

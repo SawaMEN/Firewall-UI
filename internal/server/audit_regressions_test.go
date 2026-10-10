@@ -99,7 +99,9 @@ func TestMutationsRejectPendingRollbackBeforeChangingState(t *testing.T) {
 		{"/api/firewall/advanced", `{}`, s.advancedRules},
 		{"/api/firewall/advanced/delete", `{"id":"one"}`, s.deleteAdvancedRule},
 		{"/api/ports/access", `{"port":443,"protocol":"tcp","closed":true}`, s.setPortAccess},
-		{"/panel/api/server/firewall/enabled", `{"enabled":true}`, s.manage},
+		{"/api/firewall/enabled", `{"enabled":true}`, s.manage},
+		{"/api/system/restart", `{}`, s.restartService},
+		{"/api/update/apply", `{}`, s.applyUpdate},
 	}
 	for _, item := range cases {
 		w := httptest.NewRecorder()

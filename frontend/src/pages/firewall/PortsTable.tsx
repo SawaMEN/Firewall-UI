@@ -140,7 +140,7 @@ export function PortsTable() {
     try {
       const [portsResult, firewallResult, advancedResult] = await Promise.all([
         HttpUtil.get<Snapshot>(`/api/ports${diagnostics ? '' : '?active=1'}`),
-        HttpUtil.get<FirewallStatus>('/panel/api/server/firewall/status'),
+        HttpUtil.get<FirewallStatus>('/api/firewall/status'),
         HttpUtil.get<AdvancedRule[]>('/api/firewall/advanced'),
       ]);
       if (id !== loadId.current) return;

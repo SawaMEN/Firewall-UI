@@ -31,8 +31,8 @@ func TestDockerProgressAndOldFailures(t *testing.T) {
 	if !status.Automatic || !status.Applying || !status.Available || status.Phase != "downloading" || status.LatestCommit != "new" {
 		t.Fatalf("lost Docker progress: %+v", status)
 	}
-	write("failed", "checksum failed", now-10)
-	m.requestedAt = now
+	write("failed", "checksum failed", now)
+	m.requestedAt = time.Now().UnixNano()
 	status = Status{}
 	m.ReadStatus(&status)
 	if status.UpdateError != "" {

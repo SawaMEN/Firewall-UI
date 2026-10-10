@@ -1,7 +1,6 @@
 package history
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"os"
@@ -9,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/SawaMEN/Firewall-UI/internal/jsonlog"
 	"github.com/SawaMEN/Firewall-UI/internal/service"
 )
 
@@ -37,6 +37,9 @@ func (s *Store) Add(snapshot Snapshot) error {
 	if err != nil {
 		return err
 	}
+	if len(raw) > 4194304 {
+		return errors.New("history record is too large")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {
@@ -62,34 +65,7 @@ func (s *Store) Recent(limit int) ([]Snapshot, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	f, err := os.Open(s.path)
-	if errors.Is(err, os.ErrNotExist) {
-		return []Snapshot{}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	items := make([]Snapshot, 0, limit)
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
-	for scanner.Scan() {
-		var snapshot Snapshot
-		if json.Unmarshal(scanner.Bytes(), &snapshot) != nil {
-			continue
-		}
-		items = append(items, snapshot)
-		if len(items) > limit {
-			items = append([]Snapshot(nil), items[len(items)-limit:]...)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-	for i, j := 0, len(items)-1; i < j; i, j = i+1, j-1 {
-		items[i], items[j] = items[j], items[i]
-	}
-	return items, nil
+	return jsonlog.Recent[Snapshot](s.path, limit, 4194304)
 }
 
 func (s *Store) Get(id string) (Snapshot, bool, error) {

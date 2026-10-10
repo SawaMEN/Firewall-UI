@@ -118,7 +118,6 @@ export default function SettingsPage() {
             latest: 'Доступная версия',
             check: 'Проверить',
             update: 'Установить',
-            updateConfirm: 'Установить stable-обновление и перезапустить Firewall-UI?',
             noUpdate: 'Установлена актуальная версия.',
             backup: 'Backup и история',
             export: 'Скачать backup',
@@ -166,7 +165,6 @@ export default function SettingsPage() {
             latest: 'Available version',
             check: 'Check',
             update: 'Install',
-            updateConfirm: 'Install the stable update and restart Firewall-UI?',
             noUpdate: 'The current version is up to date.',
             backup: 'Backup & history',
             export: 'Download backup',
@@ -269,7 +267,7 @@ export default function SettingsPage() {
         }, 2200);
       } else {
         void message.success(ru ? 'Настройки сохранены' : 'Settings saved');
-        void loadUpdateStatus();
+        void loadUpdateStatus(true);
       }
     } finally {
       setSaving(false);
@@ -434,7 +432,7 @@ export default function SettingsPage() {
           <Space wrap>
             <Typography.Text>{text.current}: <Tag>{updateStatus?.currentVersion || '—'}</Tag></Typography.Text>
             <Typography.Text>{text.latest}: <Tag color={updateStatus?.available ? 'processing' : undefined}>{updateStatus?.latestVersion || '—'}</Tag></Typography.Text>
-            <Button icon={<ReloadOutlined />} loading={checkingUpdate} onClick={() => void loadUpdateStatus()}>{text.check}</Button>
+            <Button icon={<ReloadOutlined />} loading={checkingUpdate} onClick={() => void loadUpdateStatus(true)}>{text.check}</Button>
             {(channel === 'stable' || updateStatus?.manualInstall) && updateStatus?.available ? (
               <Button type="primary" icon={<SyncOutlined />} loading={applyingUpdate} onClick={confirmUpdate}>{updateStatus.manualInstall ? (ru ? "Как обновить" : "How to update") : text.update}</Button>
             ) : updateStatus && !updateStatus.available ? <Typography.Text type="secondary">{text.noUpdate}</Typography.Text> : null}

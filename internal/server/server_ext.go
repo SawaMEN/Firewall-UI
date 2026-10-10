@@ -18,6 +18,7 @@ import (
 	"github.com/SawaMEN/Firewall-UI/internal/rollback"
 	"github.com/SawaMEN/Firewall-UI/internal/security"
 	"github.com/SawaMEN/Firewall-UI/internal/service"
+	"github.com/SawaMEN/Firewall-UI/internal/updater"
 )
 
 type fullBackup struct {
@@ -166,13 +167,17 @@ func (s *Server) streamPorts(w http.ResponseWriter, r *http.Request) {
 			}
 			sent, lastState = true, state
 			raw, _ := json.Marshal(current)
-			_, _ = fmt.Fprintf(w, "event: ports\ndata: %s\n\n", raw)
+			if _, err := fmt.Fprintf(w, "event: ports\ndata: %s\n\n", raw); err != nil {
+				return
+			}
 			flusher.Flush()
 		case <-keepAlive.C:
 			if !validSession() {
 				return
 			}
-			_, _ = fmt.Fprint(w, ": keepalive\n\n")
+			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
+				return
+			}
 			flusher.Flush()
 		}
 	}
@@ -235,7 +240,8 @@ func summarizePorts(ports []service.Port, covered map[string]bool) (int, int, []
 			continue
 		}
 		listening++
-		isPublic := port.Address == "0.0.0.0" || port.Address == "::"
+		ip := net.ParseIP(port.Address)
+		isPublic := ip != nil && !ip.IsLoopback()
 		if isPublic {
 			public++
 		}
@@ -533,10 +539,16 @@ func (s *Server) restartService(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusMethodNotAllowed, nil, fmt.Errorf("method not allowed"))
 		return
 	}
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	if !s.requireNoPendingRollback(w) {
+		return
+	}
 	if s.Restart == nil {
 		reply(w, http.StatusServiceUnavailable, nil, fmt.Errorf("restart is not configured"))
 		return
 	}
+	s.restartUntil = time.Now().Add(2 * time.Second)
 	s.audit(r, "system.restart", true, "", nil)
 	reply(w, http.StatusOK, map[string]bool{"restarting": true}, nil)
 	go func() {
@@ -570,6 +582,17 @@ func (s *Server) beginRollback(before service.FirewallBackup, reason string, r *
 }
 
 func (s *Server) requireNoPendingRollback(w http.ResponseWriter) bool {
+	updating := s.Updater != nil && s.Updater.InProgress()
+	if s.DockerUpdater != nil {
+		status := updater.Status{}
+		s.DockerUpdater.ReadStatus(&status)
+		updating = updating || status.Applying
+	}
+	if time.Now().Before(s.restartUntil) || updating {
+		reply(w, http.StatusConflict, nil, fmt.Errorf("Дождитесь завершения обновления или перезапуска панели"))
+		return false
+	}
+
 	if s.Rollbacks != nil && s.Rollbacks.HasPending() {
 		reply(w, http.StatusConflict, nil, fmt.Errorf("Дождитесь подтверждения предыдущего изменения файрволла"))
 		return false
@@ -619,12 +642,6 @@ func (s *Server) beginRollbackWithConfig(before service.FirewallBackup, oldCfg a
 
 // Credentials are excluded from runtime backups. Restore only runtime fields,
 // and only if no later runtime edit has superseded the backup transaction.
-func (s *Server) restoreRuntimeAfterRollback(old appconfig.Config, expected runtimeBackup) error {
-	s.configMu.Lock()
-	defer s.configMu.Unlock()
-	return s.restoreRuntimeAfterRollbackLocked(old, expected)
-}
-
 func (s *Server) restoreRuntimeAfterRollbackLocked(old appconfig.Config, expected runtimeBackup) error {
 	s.mu.Lock()
 	current := s.RuntimeConfig
