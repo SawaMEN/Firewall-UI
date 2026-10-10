@@ -198,11 +198,14 @@ func (s *FirewallService) desiredRules(auto bool, safetyPort int) ([]FirewallRul
 		addRule(FirewallRule{Port: port, Protocol: proto, Source: source, Label: label})
 	}
 	settings := SettingService{}
-	if p, err := settings.GetPort(); err == nil {
+	if p, err := settings.GetPort(); err == nil && !hostNetworkNamespace() {
 		add(p, "tcp", "panel", "Web panel")
 	}
 	if externalPort > 0 {
 		add(externalPort, "tcp", "session", "Configured reverse proxy port")
+	}
+	if hostNetworkNamespace() && safetyPort == listenPort {
+		safetyPort = externalPort
 	}
 	if safetyPort > 0 {
 		add(safetyPort, "tcp", "session", "Current panel connection")
@@ -429,8 +432,7 @@ func detectFirewallBackend(ctx context.Context) (firewallBackend, error) {
 		}
 		b.enabled = func(ctx context.Context) (bool, error) {
 			if systemctl, err := exec.LookPath("systemctl"); err == nil {
-				cmd := exec.CommandContext(ctx, systemctl, "is-active", "--quiet", "firewalld")
-				cmd.Env = append(os.Environ(), "LC_ALL=C")
+				cmd := firewallCommand(ctx, systemctl, "is-active", "--quiet", "firewalld")
 				err := cmd.Run()
 				if err == nil {
 					return true, nil
@@ -572,8 +574,7 @@ func setFirewallBackendEnabled(ctx context.Context, b firewallBackend, enabled b
 func runFirewallCommand(parent context.Context, binary string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(parent, 12*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, binary, args...)
-	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	cmd := firewallCommand(ctx, binary, args...)
 	out, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	if ctx.Err() != nil {

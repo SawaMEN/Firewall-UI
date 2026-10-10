@@ -66,6 +66,9 @@ func main() {
 		if !filepath.IsAbs(cfg.StatePath) {
 			log.Fatal("State path must be absolute")
 		}
+		if err := service.CheckHostNetworkNamespace(context.Background()); err != nil {
+			log.Fatalf("Cannot access host network namespace: %v", err)
+		}
 		service.Configure(cfg.StatePath, cfg.ListenPort, cfg.ExternalPort)
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
@@ -79,6 +82,19 @@ func main() {
 	cfg, err := appconfig.Load(*configPath)
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	// A proxy container listens inside its Docker network, while privileged
+	// firewall commands target the host namespace separately.
+	if os.Getenv("FIREWALL_UI_CONTAINER") == "1" && os.Getenv("FIREWALL_UI_HOST_NETNS") == "1" {
+		cfg.ListenHost = "0.0.0.0"
+		cfg.SecureCookies = true
+		if host := strings.TrimSpace(os.Getenv("FIREWALL_UI_PUBLIC_HOST")); host != "" {
+			cfg.PublicHost = host
+		}
+		if cfg.ExternalPort == 0 {
+			cfg.ExternalPort = 443
+		}
 	}
 
 	visited := map[string]bool{}
@@ -153,6 +169,9 @@ func main() {
 		log.Print("Run as root to manage the firewall and see all process owners")
 	}
 
+	if err := service.CheckHostNetworkNamespace(context.Background()); err != nil {
+		log.Fatalf("Cannot access host network namespace: %v", err)
+	}
 	service.Configure(cfg.StatePath, cfg.ListenPort, cfg.ExternalPort)
 	assets, _ := fs.Sub(webassets.Files, "dist")
 	app := server.New(user, password, cfg.ListenPort, assets)

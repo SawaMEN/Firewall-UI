@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -129,8 +128,7 @@ func detectOwnedNativeFirewallBackend(ctx context.Context) (firewallBackend, boo
 	}
 	if path, err := exec.LookPath("iptables"); err == nil {
 		b := nativeFirewallBackend("iptables", path, func(ctx context.Context) (bool, error) {
-			cmd := exec.CommandContext(ctx, path, "-C", "INPUT", "-j", managedIPTablesChain)
-			cmd.Env = append(os.Environ(), "LC_ALL=C")
+			cmd := firewallCommand(ctx, path, "-C", "INPUT", "-j", managedIPTablesChain)
 			if err := cmd.Run(); err != nil {
 				var exitErr *exec.ExitError
 				if errors.As(err, &exitErr) {
@@ -176,8 +174,7 @@ func detectManagedFirewallBackend(ctx context.Context) (firewallBackend, error) 
 	}
 	if path, err := exec.LookPath("iptables"); err == nil {
 		return nativeFirewallBackend("iptables", path, func(ctx context.Context) (bool, error) {
-			cmd := exec.CommandContext(ctx, path, "-C", "INPUT", "-j", managedIPTablesChain)
-			cmd.Env = append(os.Environ(), "LC_ALL=C")
+			cmd := firewallCommand(ctx, path, "-C", "INPUT", "-j", managedIPTablesChain)
 			err := cmd.Run()
 			if err == nil {
 				return true, nil
@@ -456,8 +453,7 @@ func applyManagedNftables(ctx context.Context, binary string, rules []FirewallRu
 		}
 	}
 	script.WriteString(" }\n}\n")
-	cmd := exec.CommandContext(ctx, binary, "-f", "-")
-	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	cmd := firewallCommand(ctx, binary, "-f", "-")
 	cmd.Stdin = strings.NewReader(script.String())
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -518,8 +514,7 @@ func applyManagedIPTablesBinary(ctx context.Context, binary, icmpProto string, r
 		return err
 	}
 	for {
-		cmd := exec.CommandContext(ctx, binary, "-C", "INPUT", "-j", managedIPTablesChain)
-		cmd.Env = append(os.Environ(), "LC_ALL=C")
+		cmd := firewallCommand(ctx, binary, "-C", "INPUT", "-j", managedIPTablesChain)
 		if cmd.Run() != nil {
 			break
 		}
@@ -536,8 +531,7 @@ func removeManagedIPTables(ctx context.Context, binary string) error {
 			continue
 		}
 		for {
-			cmd := exec.CommandContext(ctx, path, "-C", "INPUT", "-j", managedIPTablesChain)
-			cmd.Env = append(os.Environ(), "LC_ALL=C")
+			cmd := firewallCommand(ctx, path, "-C", "INPUT", "-j", managedIPTablesChain)
 			if cmd.Run() != nil {
 				break
 			}

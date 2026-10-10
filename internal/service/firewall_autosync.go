@@ -26,6 +26,9 @@ func (s *FirewallService) MarkControlInitialized() error {
 // learned external reverse-proxy port with the panel's internal listen port:
 // doing so would let the next background reconcile close the public entrypoint.
 func (s *FirewallService) RememberSafetyPort(port int) error {
+	if hostNetworkNamespace() && port == listenPort {
+		port = externalPort
+	}
 	if port < 1 || port > 65535 {
 		return nil
 	}

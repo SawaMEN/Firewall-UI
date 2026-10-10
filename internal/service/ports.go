@@ -36,10 +36,15 @@ var socketStates = map[string]string{"01": "ESTABLISHED", "02": "SYN_SENT", "03"
 
 // ReadPorts reads every local TCP/UDP socket in the service's network namespace,
 // and maps socket inodes to every owning process, including shared descriptors.
+// Proxy-mode containers read the host init process network tables instead.
 func ReadPorts(root string) ([]Port, error) {
 	ports := []Port{}
+	networkDir := filepath.Join(root, "net")
+	if hostNetworkNamespace() {
+		networkDir = filepath.Join(root, "1", "net")
+	}
 	for _, table := range []string{"tcp", "tcp6", "udp", "udp6"} {
-		file, err := os.Open(filepath.Join(root, "net", table))
+		file, err := os.Open(filepath.Join(networkDir, table))
 		if os.IsNotExist(err) && strings.HasSuffix(table, "6") {
 			continue
 		}

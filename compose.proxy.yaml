@@ -1,0 +1,37 @@
+# Use with a reverse proxy already connected to this external Docker network.
+services:
+  firewall-ui:
+    build: .
+    image: firewall-ui:local
+    restart: unless-stopped
+    pid: host
+    privileged: true
+    environment:
+      FIREWALL_UI_USERNAME: ${FIREWALL_UI_USERNAME:-admin}
+      FIREWALL_UI_PASSWORD: ${FIREWALL_UI_PASSWORD:?Set FIREWALL_UI_PASSWORD in .env}
+      FIREWALL_UI_HOST_NETNS: '1'
+      FIREWALL_UI_PUBLIC_HOST: ${FIREWALL_UI_PUBLIC_HOST:-}
+    expose:
+      - '8088'
+    networks:
+      proxy:
+        aliases:
+          - firewall-ui.internal
+    volumes:
+      - firewall-ui-config:/etc/firewall-ui
+      - firewall-ui-data:/var/lib/firewall-ui
+      - /etc/ssh:/etc/ssh:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+
+networks:
+  proxy:
+    external: true
+    name: ${FIREWALL_UI_PROXY_NETWORK:-proxy}
+
+volumes:
+  firewall-ui-config:
+  firewall-ui-data:

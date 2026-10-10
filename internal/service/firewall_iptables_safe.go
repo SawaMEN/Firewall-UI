@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"os"
 	"os/exec"
 	"strings"
 )
@@ -47,8 +46,7 @@ func ensureManagedIPTablesChain(ctx context.Context, binary string) error {
 }
 
 func managedIPTablesJumpExists(ctx context.Context, binary string) (bool, error) {
-	cmd := exec.CommandContext(ctx, binary, "-C", "INPUT", "-j", managedIPTablesChain)
-	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	cmd := firewallCommand(ctx, binary, "-C", "INPUT", "-j", managedIPTablesChain)
 	if err := cmd.Run(); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {

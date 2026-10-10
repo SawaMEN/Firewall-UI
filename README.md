@@ -87,6 +87,30 @@ docker compose exec firewall-ui firewall-ui -cleanup-firewall
 docker compose down -v
 ```
 
+### Домен через reverse proxy в Docker
+
+Для Nginx Proxy Manager, Nginx или другого прокси используйте `compose.proxy.yaml`. В `.env` укажите имя общей Docker-сети и домен:
+
+```dotenv
+FIREWALL_UI_PROXY_NETWORK=proxy
+FIREWALL_UI_PUBLIC_HOST=firewall.example.com
+```
+
+Прокси должен быть подключён к этой сети. Если сеть ещё не создана, выполните `docker network create proxy` и подключите к ней прокси. Переключение с обычного Docker-режима сохраняет тома:
+
+```bash
+docker compose down
+docker compose -f compose.proxy.yaml up -d --build
+```
+
+В настройках прокси: домен `firewall.example.com`, схема **HTTP**, имя назначения **`firewall-ui.internal`** (или `firewall-ui`), порт **8088**. Выпустите сертификат на прокси и включите HTTPS. DNS-запись домена должна указывать на сервер прокси. Панель не публикует свой порт на хост.
+
+Для Nginx готовый блок — [nginx-location.conf](deploy/docker/nginx-location.conf); он сохраняет заголовок Host и отключает буферизацию обновлений портов. HTTPS завершается на прокси; Secure Cookie включается автоматически, внешний порт 443 защищается правилами панели. Для другого HTTPS-порта измените внешний порт в настройках.
+
+Панель продолжает видеть процессы и порты хоста и управлять его файрволлом. Ограничения по IP клиентов задавайте на прокси: сама панель видит адрес прокси.
+
+Команды обновления и удаления выполняйте с `-f compose.proxy.yaml`. Для обнаружения опубликованных Docker-портов дополнительно подключите `-f compose.docker-ports.yaml`.
+
 ## Управление на сервере
 
 Команда `sudo firewall-ui` открывает меню. Основные действия доступны отдельно:
