@@ -54,9 +54,9 @@ export default function AppSidebar({ page, onPageChange }: Props) {
         onChange={(value) => setThemeMode(value as ThemeMode)}
         style={{ width: '100%' }}
         options={[
+          { value: 'cyberpunk', label: ru ? 'Киберпанк' : 'Cyberpunk' },
           { value: 'light', label: ru ? 'Светлая' : 'Light' },
           { value: 'dark', label: ru ? 'Тёмная' : 'Dark' },
-          { value: 'cyberpunk', label: ru ? 'Киберпанк' : 'Cyberpunk' },
         ]}
       />
       <Select

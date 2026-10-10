@@ -19,10 +19,11 @@ function readTheme(): ThemeMode {
       localStorage.getItem(STORAGE_THEME) || localStorage.getItem('xui-theme');
     if (saved === 'light' || saved === 'colorful') return 'light';
     if (saved === 'cyberpunk') return 'cyberpunk';
+    if (saved === 'dark') return 'dark';
   } catch {
     /* Private browser storage can be unavailable. */
   }
-  return 'dark';
+  return 'cyberpunk';
 }
 
 const palettes = {

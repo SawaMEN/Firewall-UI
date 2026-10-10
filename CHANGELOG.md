@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.9
+
+- Make cyberpunk the default theme and the first option in the theme selector; preserve saved light/dark/cyberpunk preferences.
+
 ## 1.2.8
 
 - Match 3X-UI localhost inbounds only to loopback sockets and wildcard inbounds only to wildcard sockets, preserving IPv4/IPv6 dual-stack listeners and preventing attribution to another bind address on the same port.
