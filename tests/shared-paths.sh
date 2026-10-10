@@ -40,7 +40,7 @@ docker() {
           data-volume) echo firewall-ui-data;;
         esac;;
     esac
-  elif [[ "$1" == stop ]]; then echo "$2" >> "$FIXTURE/stops"
+  elif [[ "$1" == stop ]]; then local last; for last; do :; done; echo "$last" >> "$FIXTURE/stops"
   else return 1; fi
 }
 docker_migrate_legacy_layout
