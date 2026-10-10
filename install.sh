@@ -618,11 +618,37 @@ installer_diagnostics() {
   echo 'При проблемах с подключением проверьте порт в файрволле хостинга.'
 }
 
+installer_install_target() {
+  local target="$1" stage
+  installer_detect_installations
+  if ((NATIVE_INSTALLED && COMPOSE_INSTALLED)); then
+    echo 'Обнаружены обе версии Firewall-UI. Удалите лишние остатки вручную перед переключением; данные не изменены.' >&2
+    return 1
+  fi
+  if [[ "$target" == native ]] && ((COMPOSE_INSTALLED)); then
+    stage="$(mktemp -d)"
+    if ! fetch_repo_file deploy/firewall-ui-switch "$stage/switch"; then rm -rf -- "$stage"; return 1; fi
+    source "$stage/switch"
+    rm -rf -- "$stage"
+    installer_switch_variant native
+  elif [[ "$target" == docker ]] && ((NATIVE_INSTALLED)); then
+    stage="$(mktemp -d)"
+    if ! fetch_repo_file deploy/firewall-ui-switch "$stage/switch"; then rm -rf -- "$stage"; return 1; fi
+    source "$stage/switch"
+    rm -rf -- "$stage"
+    installer_switch_variant docker
+  elif [[ "$target" == native ]]; then
+    installer_native_install
+  else
+    run_installer_docker_action install
+  fi
+}
+
 installer_execute_action() {
   local action="$1" answer
   case "$action" in
     exit|back) return 0;;
-    install) installer_native_install;;
+    install) installer_install_target native;;
     configure) FIREWALL_UI_RECONFIGURE=1 installer_native_install;;
     uninstall)
       if [[ "${INSTALL_INTERACTIVE:-0}" == 1 ]]; then
@@ -633,6 +659,7 @@ installer_execute_action() {
       installer_uninstall_all;;
     diagnostics) installer_diagnostics;;
     docker-logs) run_installer_docker_action logs-once;;
+    docker-install) installer_install_target docker;;
     docker-*) run_installer_docker_action "${action#docker-}";;
     logs) run_installer_manager_action logs-once;;
     reset-password|credentials|start|restart|rollback)
@@ -850,7 +877,7 @@ main() {
   INSTALL_ACTION=install
   case "${1:-}" in
     --menu) ;;
-    --help|-h) echo 'Использование: install.sh [--menu|--check|--configure|--reset-password|--uninstall|--compose|--compose-configure|--compose-reset-password|--compose-uninstall]. Без параметров — русское меню. FIREWALL_UI_NONINTERACTIVE=1 — без вопросов.'; return;;
+    --help|-h) echo 'Использование: install.sh [--menu|--check|--configure|--reset-password|--uninstall|--compose|--compose-configure|--compose-reset-password|--compose-uninstall]. Без параметров — русское меню. FIREWALL_UI_NONINTERACTIVE=1 — без вопросов; FIREWALL_UI_SWITCH_CONFIRM=1 — подтвердить смену варианта без терминала.'; return;;
     --check) check_system; return;;
     --configure) INSTALL_ACTION=configure;;
     --reset-password) INSTALL_ACTION=reset-password;;
