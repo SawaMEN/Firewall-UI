@@ -132,7 +132,9 @@ jobs:
       - name: Build ready dev image for this commit
         run: |
           docker build -f deploy/docker/Dockerfile --build-arg VCS_REF="$GITHUB_SHA" --build-arg BUILD_CHANNEL=dev -t firewall-ui:dev .
-          test "$(docker run --rm --entrypoint /usr/local/bin/firewall-ui firewall-ui:dev -version)" = "dev-${GITHUB_SHA::7}"
+          actual_version="$(docker run --rm --entrypoint /usr/local/bin/firewall-ui firewall-ui:dev -version)"
+          echo "Built Docker dev version: $actual_version; expected: dev-${GITHUB_SHA::7}"
+          test "$actual_version" = "dev-${GITHUB_SHA::7}"
           docker tag firewall-ui:dev firewall-ui:stable
           mkdir -p release-images/dev
           docker save firewall-ui:stable | gzip -1 > release-images/dev/firewall-ui-docker-linux-${{ matrix.arch }}.tar.gz
