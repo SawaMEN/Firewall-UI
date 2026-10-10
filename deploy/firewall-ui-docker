@@ -381,6 +381,19 @@ docker_install() (
   old_image="$(docker image inspect firewall-ui:stable --format '{{.Id}}' 2>/dev/null || true)"
   docker_update_status downloading
   docker_download_image || return 1
+  if [[ "${FIREWALL_UI_SWITCH_PREPARE:-0}" == 1 ]]; then
+    # Migration from the native service: create volumes but never start the
+    # privileged panel with an empty configuration or firewall state.
+    ((first)) || { echo 'Предварительная миграция допустима только при первой установке Docker.' >&2; return 1; }
+    docker_compose run --rm --no-deps -T --entrypoint /bin/true firewall-ui || return 1
+    install -m 0755 "${BASH_SOURCE[0]}" "$DOCKER_MANAGER" || return 1
+    install -m 0700 "$DOCKER_DIR/source/install.sh" "$DOCKER_DIR/install.sh" || return 1
+    install -m 0755 "$DOCKER_DIR/source/firewall-manager" "$PUBLIC_MANAGER" || return 1
+    [[ ! -f "$DOCKER_DIR/.image-sha256.pending" ]] || mv "$DOCKER_DIR/.image-sha256.pending" "$DOCKER_DIR/image.sha256"
+    succeeded=1
+    echo 'Docker-образ и пустые тома подготовлены. Панель ещё не запущена.'
+    return 0
+  fi
   docker_update_status installing
   if [[ -n "$old_mode" ]]; then
     stopped=1
