@@ -478,9 +478,11 @@ installer_directory_has_data() {
 
 installer_detect_installations() {
   NATIVE_INSTALLED=0; COMPOSE_INSTALLED=0
-  local docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}"
-  if [[ -e "$INSTALL_DIR/firewall-ui" || -e "$SERVICE_FILE" ]] || installer_directory_has_data "$INSTALL_DIR" || installer_directory_has_data "$CONFIG_DIR" || installer_directory_has_data "$STATE_DIR"; then NATIVE_INSTALLED=1; fi
-  if installer_directory_has_data "$docker_dir" || [[ -e "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}" || -e "${FIREWALL_UI_LEGACY_DOCKER_MANAGER:-/usr/local/bin/firewall-ui-docker}" ]]; then COMPOSE_INSTALLED=1; fi
+  local docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui}" legacy_dir="${FIREWALL_UI_LEGACY_DOCKER_DIR:-/opt/firewall-ui-docker}"
+  # These directories are common to both deployment variants.
+  if [[ -e "$INSTALL_DIR/firewall-ui" || -e "$SERVICE_FILE" ]] || installer_directory_has_data "$INSTALL_DIR"; then NATIVE_INSTALLED=1; fi
+  if installer_directory_has_data "$docker_dir" || installer_directory_has_data "$legacy_dir" ||
+     [[ -e "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}" || -e "${FIREWALL_UI_LEGACY_DOCKER_MANAGER:-/usr/local/bin/firewall-ui-docker}" ]]; then COMPOSE_INSTALLED=1; fi
   if (( !COMPOSE_INSTALLED )) && command -v docker >/dev/null 2>&1; then
     local containers volumes volume role project="${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}"
     containers="$(docker ps -aq --filter "label=com.docker.compose.project=$project" --filter label=com.docker.compose.service=firewall-ui 2>/dev/null)" || containers=''
@@ -497,7 +499,7 @@ installer_require_native_exclusive() {
   command -v docker >/dev/null 2>&1 || return 0
   local running
   running="$(docker ps --filter "label=com.docker.compose.project=${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}" --filter label=com.docker.compose.service=firewall-ui --filter status=running --format '{{.Names}}' 2>/dev/null)" || {
-    if installer_directory_has_data "${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}"; then
+    if installer_directory_has_data "${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui}" || installer_directory_has_data "${FIREWALL_UI_LEGACY_DOCKER_DIR:-/opt/firewall-ui-docker}"; then
       echo 'Не удалось проверить Docker-панель. Проверьте Docker Engine перед обычной установкой.' >&2
       return 1
     fi
@@ -538,7 +540,7 @@ installer_settings_menu() {
     installer_item 1 'Адрес, порт и сертификат' 'Локальный доступ, домен или IP; выбор сертификата HTTPS'
     installer_item 2 'Изменить логин и пароль'
     installer_detect_installations
-    if ((COMPOSE_INSTALLED)); then installer_item 3 'Автообновление Docker' 'Включить или отключить проверку stable-релизов'; fi
+    if ((COMPOSE_INSTALLED)); then installer_item 3 'Автообновление Docker' 'Проверка stable/dev каждый час без подтверждения'; fi
     installer_item 0 'Назад'
     ask choice 'Выберите настройку' 0 || return 1
     case "$choice" in
@@ -582,7 +584,8 @@ installer_config_value() {
 }
 
 installer_connection_info() {
-  local config="$CONFIG_DIR/config.json" host port cert scheme=http docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}"
+  local config="$CONFIG_DIR/config.json" host port cert scheme=http docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui}"
+  [[ -f "$docker_dir/docker.env" ]] || docker_dir="${FIREWALL_UI_LEGACY_DOCKER_DIR:-/opt/firewall-ui-docker}"
   if [[ -f "$config" ]]; then
     host="$(installer_config_value "$config" publicHost)"
     [[ -n "$host" ]] || host="$(installer_config_value "$config" listenHost)"
@@ -769,7 +772,7 @@ installer_uninstall_all() {
   installer_detect_installations
   local result=0
   # Empty leftovers are removable without downloading binaries or creating state.
-  rmdir "$INSTALL_DIR" "$CONFIG_DIR" "$STATE_DIR" "${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}" 2>/dev/null || true
+  rmdir "$INSTALL_DIR" "$CONFIG_DIR" "$STATE_DIR" "${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui}" 2>/dev/null || true
   installer_detect_installations
   if ((!NATIVE_INSTALLED && !COMPOSE_INSTALLED)); then echo 'Firewall-UI не установлен.'; return 0; fi
   # Try both variants even if one fails; retain failure status and diagnostics.
@@ -803,6 +806,12 @@ run_installer_docker_action() (
   stage="$(mktemp -d)"; trap 'rm -rf -- "$stage"' EXIT
   local installed="${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}"
   [[ -x "$installed" ]] || installed="${FIREWALL_UI_LEGACY_DOCKER_MANAGER:-/usr/local/bin/firewall-ui-docker}"
+  if [[ ! -e "${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui}/.installer-managed" &&
+        -f "${FIREWALL_UI_LEGACY_DOCKER_DIR:-/opt/firewall-ui-docker}/.installer-managed" ]]; then
+    export FIREWALL_UI_DOCKER_DIR="${FIREWALL_UI_LEGACY_DOCKER_DIR:-/opt/firewall-ui-docker}"
+    # Installation uses the new layout and performs a verified data migration.
+    if [[ "$1" == install || "$1" == update ]]; then unset FIREWALL_UI_DOCKER_DIR; fi
+  fi
   if [[ "$1" == uninstall ]]; then
     fetch_repo_file deploy/firewall-ui-docker "$stage/docker-manager" || {
       [[ -x "$installed" ]] && cp "$installed" "$stage/docker-manager" || return 1

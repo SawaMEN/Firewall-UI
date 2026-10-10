@@ -13,7 +13,7 @@ UNIT_DIR="/etc/systemd/system"
 MANAGER_PATH="${FIREWALL_UI_MANAGER:-/usr/local/bin/fw-ui}"
 LEGACY_MANAGER_PATH="${FIREWALL_UI_LEGACY_MANAGER:-/usr/local/bin/firewall-ui}"
 DOCKER_MANAGER_PATH="${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}"
-DOCKER_INSTALL_DIR="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}"
+DOCKER_INSTALL_DIR="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui}"
 
 remove_legacy_manager() {
   # Never remove an unrelated executable with the old command name.
