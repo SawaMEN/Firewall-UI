@@ -83,17 +83,19 @@ html {
 
 /* Cyberpunk: luminous surfaces, neon controls and a small animated wordmark.
    No full-screen animation or backdrop blur; large tables stay inexpensive. */
-:root[data-theme='cyberpunk'] .content-area,
+:root[data-theme='cyberpunk'] .page-layout,
 :root[data-theme='cyberpunk'] .login-shell {
   background:
-    radial-gradient(ellipse at 0% 0%, #13cadb16, transparent 55%),
-    radial-gradient(ellipse at 100% 25%, #d747ff14, transparent 55%),
-    linear-gradient(135deg, #080c17, #101024 60%, #08131a);
+    radial-gradient(ellipse at 0% 0%, #13cadb12, #13cadb00 65%),
+    radial-gradient(ellipse at 100% 25%, #b96efb10, #b96efb00 70%),
+    linear-gradient(145deg, #0b1220 0%, #101324 40%, #111322 70%, #0c1821 100%);
 }
 :root[data-theme='cyberpunk'] .ant-sidebar > .ant-layout-sider,
 :root[data-theme='cyberpunk'] .ant-drawer .ant-drawer-content {
-  background: linear-gradient(170deg, #101b2c, #0c101d 55%, #191024);
-  border-color: #37d8e944;
+  background:
+    radial-gradient(ellipse at 0% 0%, #37d8e910, #37d8e900 70%),
+    linear-gradient(180deg, #101a29 0%, #101725 40%, #121524 75%, #171426 100%);
+  border-color: #37d8e925;
 }
 :root[data-theme='cyberpunk'] .panel-card,
 :root[data-theme='cyberpunk'] .login-shell .ant-card {
@@ -105,7 +107,8 @@ html {
     0 0 18px #37d8e909;
 }
 :root[data-theme='cyberpunk'] .ant-card-head {
-  background: linear-gradient(110deg, #37d8e909, #a564ff0b);
+  background: transparent;
+  border-bottom-color: #8db7cb20;
   border-radius: 17px 17px 0 0;
 }
 :root[data-theme='cyberpunk'] .page-header-icon {
@@ -233,4 +236,24 @@ html {
 :root[data-theme='cyberpunk'] .ant-btn:focus-visible {
   outline: 2px solid #75ecff;
   outline-offset: 2px;
+}
+
+/* One continuous surface beneath menu, utility controls and the collapse trigger. */
+:root[data-theme='cyberpunk'] .content-area,
+:root[data-theme='cyberpunk'] .sider-nav,
+:root[data-theme='cyberpunk'] .drawer-menu,
+:root[data-theme='cyberpunk'] .ant-sidebar .ant-layout-sider-trigger {
+  background: transparent;
+}
+:root[data-theme='cyberpunk'] .ant-sidebar .ant-layout-sider-trigger {
+  color: #b9e6ef;
+  border-top: 1px solid #8db7cb18;
+  transition: color 150ms ease;
+}
+:root[data-theme='cyberpunk'] .ant-sidebar .ant-layout-sider-trigger:hover {
+  color: #75ecff;
+}
+:root[data-theme='cyberpunk'] .sider-utility,
+:root[data-theme='cyberpunk'] .drawer-utility {
+  border-top-color: #8db7cb18;
 }

@@ -10,7 +10,20 @@ REPO="SawaMEN/Firewall-UI"
 CONFIG_DIR="/etc/firewall-ui"
 STATE_DIR="/var/lib/firewall-ui"
 UNIT_DIR="/etc/systemd/system"
-MANAGER_PATH="/usr/local/bin/firewall-ui"
+MANAGER_PATH="${FIREWALL_UI_MANAGER:-/usr/local/bin/fw-ui}"
+LEGACY_MANAGER_PATH="${FIREWALL_UI_LEGACY_MANAGER:-/usr/local/bin/firewall-ui}"
+DOCKER_MANAGER_PATH="${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}"
+DOCKER_INSTALL_DIR="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}"
+
+remove_legacy_manager() {
+  # Never remove an unrelated executable with the old command name.
+  if [[ "$LEGACY_MANAGER_PATH" != "$MANAGER_PATH" && -f "$LEGACY_MANAGER_PATH" ]] &&
+     grep -Fq 'REPO="SawaMEN/Firewall-UI"' "$LEGACY_MANAGER_PATH" &&
+     grep -Fq 'SERVICE="firewall-ui"' "$LEGACY_MANAGER_PATH"; then
+    rm -f -- "$LEGACY_MANAGER_PATH" || return 1
+  fi
+}
+
 
 require_root() {
   if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
@@ -336,7 +349,7 @@ cleanup_missing_binary() (
 uninstall_service() {
   require_root
   local mode="${1:-}" answer
-  [[ "$mode" == '' || "$mode" == --purge ]] || { echo 'Использование: firewall-ui uninstall [--purge]' >&2; return 2; }
+  [[ "$mode" == '' || "$mode" == --purge ]] || { echo 'Использование: fw-ui uninstall [--purge]' >&2; return 2; }
   if [[ -z "$mode" && "${FIREWALL_UI_NONINTERACTIVE:-0}" != 1 ]]; then
     read -r -p 'Удалить также настройки, данные и сертификаты? [y/N]: ' answer
     [[ "$answer" =~ ^[Yy]$ ]] && mode=--purge
@@ -362,12 +375,16 @@ uninstall_service() {
   systemctl disable "${SERVICE}.service" firewall-ui-cert-renew.timer firewall-ui-cert-renew.service >/dev/null 2>&1 || true
   rm -f "$UNIT_DIR/${SERVICE}.service" "$UNIT_DIR/firewall-ui-cert-renew.service" "$UNIT_DIR/firewall-ui-cert-renew.timer" || return 1
   rm -rf -- "$INSTALL_DIR" || return 1
-  rm -f -- "$MANAGER_PATH" || return 1
+  local retained_manager=0
+  if [[ -f "$DOCKER_INSTALL_DIR/deployment" && -x "$DOCKER_MANAGER_PATH" ]]; then retained_manager=1
+  else rm -f -- "$MANAGER_PATH" || return 1; fi
+  remove_legacy_manager || return 1
   if [[ "$mode" == --purge ]]; then
     rm -rf -- "$CONFIG_DIR" "$STATE_DIR" || return 1
   fi
   local path
   for path in "$INSTALL_DIR" "$MANAGER_PATH" "$UNIT_DIR/${SERVICE}.service" "$UNIT_DIR/firewall-ui-cert-renew.service" "$UNIT_DIR/firewall-ui-cert-renew.timer"; do
+    [[ "$path" != "$MANAGER_PATH" || "$retained_manager" != 1 ]] || continue
     [[ ! -e "$path" && ! -L "$path" ]] || { echo "Не удалось удалить $path" >&2; return 1; }
   done
   if [[ "$mode" == --purge ]]; then
@@ -385,6 +402,7 @@ uninstall_service() {
 menu() (
   require_root
   local installer="$INSTALL_DIR/install.sh" stage
+  [[ -f "$installer" ]] || installer="$DOCKER_INSTALL_DIR/install.sh"
   if [[ -f "$installer" ]]; then bash "$installer" --menu; return; fi
   # Upgrade path for installations created before the unified local menu.
   stage="$(mktemp -d)"; trap 'rm -rf -- "$stage"' EXIT
@@ -393,6 +411,19 @@ menu() (
 )
 
 main() {
+  # The public purge command uses the same two-variant cleanup as menu item 4.
+  if [[ -z "${FIREWALL_UI_MANAGER_VARIANT:-}" && "${FIREWALL_UI_PURGE_DISPATCHED:-0}" != 1 && "${1:-}" == uninstall && "${2:-}" == --purge ]]; then
+    local installer="$INSTALL_DIR/install.sh"
+    [[ -f "$installer" ]] || installer="$DOCKER_INSTALL_DIR/install.sh"
+    if [[ -f "$installer" ]]; then FIREWALL_UI_PURGE_DISPATCHED=1 bash "$installer" --uninstall; return; fi
+  fi
+  if [[ "${FIREWALL_UI_MANAGER_VARIANT:-}" != native && "${FIREWALL_UI_PURGE_DISPATCHED:-0}" != 1 && -f "$DOCKER_INSTALL_DIR/deployment" && -x "$DOCKER_MANAGER_PATH" ]] &&
+     { [[ ! -x "$BIN" ]] || ! systemctl is-active --quiet "${SERVICE}.service" 2>/dev/null; }; then
+    case "${1:-}" in
+      ''|menu) menu; return;;
+      *) bash "$DOCKER_MANAGER_PATH" "$@"; return;;
+    esac
+  fi
 case "${1:-}" in
   start|stop|restart|reload)
     require_root
@@ -426,7 +457,7 @@ case "${1:-}" in
     menu
     ;;
   *)
-    echo "Usage: firewall-ui [start|stop|restart|status|logs|update|rollback|credentials|reset-password|uninstall [--purge]]"
+    echo "Usage: fw-ui [start|stop|restart|status|logs|update|rollback|credentials|reset-password|uninstall [--purge]]"
     exit 2
     ;;
 esac

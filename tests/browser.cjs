@@ -20,12 +20,24 @@ const { chromium } = require(path.join(process.env.PLAYWRIGHT_TOOLS, 'node_modul
   await page.goto(base);
   await page.getByRole('button', { name: 'Войти', exact: true }).waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'cyberpunk');
+  assert.equal(await page.locator('link[rel=icon]').getAttribute('href'), '/favicon.svg');
+  assert.equal(await page.evaluate(async () => {
+    const response = await fetch('/favicon.svg');
+    return response.ok && response.headers.get('content-type').includes('image/svg+xml') && (await response.text()).includes('<svg');
+  }), true);
   await page.screenshot({ path: path.join(output, 'login.png') });
   await signIn(page);
   await page.locator('.page-header').waitFor();
   await page.locator('.dashboard-stat').first().waitFor();
   assert.equal(await page.evaluate(async () => (await fetch('/api/session')).status), 200);
+  assert.deepEqual(await page.locator('.sider-nav').evaluate(node => ({ color: getComputedStyle(node).backgroundColor, image: getComputedStyle(node).backgroundImage })), { color: 'rgba(0, 0, 0, 0)', image: 'none' });
+  const trigger = page.locator('.ant-layout-sider-trigger');
+  assert.equal(await trigger.evaluate(node => getComputedStyle(node).backgroundColor), 'rgba(0, 0, 0, 0)');
   await page.screenshot({ path: path.join(output, 'overview-desktop.png'), fullPage: true });
+  await trigger.click();
+  await page.locator('.ant-layout-sider-collapsed').waitFor();
+  await page.screenshot({ path: path.join(output, 'sidebar-collapsed.png') });
+  await trigger.click();
   await page.getByRole('menuitem', { name: 'Настройки' }).click();
   await page.getByRole('button', { name: 'Сохранить настройки' }).waitFor();
   assert.equal(await page.locator('input[type=file]').evaluate(input => getComputedStyle(input).display), 'none');

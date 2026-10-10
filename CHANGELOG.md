@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.26
+
+- Add a shield and firewall favicon.
+- Smooth cyberpunk backgrounds and remove opaque sidebar menu/collapse surfaces.
+- Use fw-ui as the native/Compose management command; migrate owned legacy helpers and certificate renewal hooks.
+
 ## 1.2.25
 
 - Suggest public IP or a matching server domain in the shared native/Compose HTTPS wizard; retain saved addresses.

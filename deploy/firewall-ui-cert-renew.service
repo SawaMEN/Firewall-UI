@@ -6,5 +6,5 @@ ConditionPathExists=/etc/firewall-ui/acme/renewal
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/env certbot renew --quiet --config-dir /etc/firewall-ui/acme --work-dir /var/lib/firewall-ui/acme --logs-dir /var/lib/firewall-ui/acme-logs --deploy-hook "/usr/local/bin/firewall-ui restart"
+ExecStart=/usr/bin/env certbot renew --quiet --config-dir /etc/firewall-ui/acme --work-dir /var/lib/firewall-ui/acme --logs-dir /var/lib/firewall-ui/acme-logs --deploy-hook "/usr/local/bin/fw-ui restart"
 UMask=0077

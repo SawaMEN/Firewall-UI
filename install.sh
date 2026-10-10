@@ -7,7 +7,7 @@ INSTALL_DIR="/usr/local/firewall-ui"
 CONFIG_DIR="/etc/firewall-ui"
 STATE_DIR="/var/lib/firewall-ui"
 SERVICE_FILE="/etc/systemd/system/firewall-ui.service"
-MANAGER="/usr/local/bin/firewall-ui"
+MANAGER="${FIREWALL_UI_MANAGER:-/usr/local/bin/fw-ui}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd || true)"
 TEMP_DIR=""
 REPLACED=0
@@ -477,7 +477,7 @@ installer_detect_installations() {
   NATIVE_INSTALLED=0; COMPOSE_INSTALLED=0
   local docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}"
   if [[ -e "$INSTALL_DIR/firewall-ui" || -e "$SERVICE_FILE" ]] || installer_directory_has_data "$INSTALL_DIR" || installer_directory_has_data "$CONFIG_DIR" || installer_directory_has_data "$STATE_DIR"; then NATIVE_INSTALLED=1; fi
-  if installer_directory_has_data "$docker_dir" || [[ -e "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/firewall-ui-docker}" ]]; then COMPOSE_INSTALLED=1; fi
+  if installer_directory_has_data "$docker_dir" || [[ -e "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}" || -e "${FIREWALL_UI_LEGACY_DOCKER_MANAGER:-/usr/local/bin/firewall-ui-docker}" ]]; then COMPOSE_INSTALLED=1; fi
   if (( !COMPOSE_INSTALLED )) && command -v docker >/dev/null 2>&1; then
     local containers volumes volume role project="${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}"
     containers="$(docker ps -aq --filter "label=com.docker.compose.project=$project" --filter label=com.docker.compose.service=firewall-ui 2>/dev/null)" || containers=''
@@ -748,26 +748,28 @@ installer_uninstall_all() {
 
 run_installer_manager_action() (
   set -euo pipefail
-  local stage
+  local stage installed="$MANAGER"
+  [[ -x "$installed" ]] || installed="${FIREWALL_UI_LEGACY_MANAGER:-/usr/local/bin/firewall-ui}"
   stage="$(mktemp -d)"
   trap 'rm -rf -- "$stage"' EXIT
   if [[ "$1" == uninstall ]]; then
     # A freshly downloaded installer must not delegate cleanup to an old helper.
     fetch_repo_file deploy/firewall-ui "$stage/manager" || {
-      [[ -x "$MANAGER" ]] && cp "$MANAGER" "$stage/manager" || return 1
+      [[ -x "$installed" ]] && cp "$installed" "$stage/manager" || return 1
     }
-  elif [[ -x "$MANAGER" ]]; then cp "$MANAGER" "$stage/manager"
+  elif [[ -x "$installed" ]]; then cp "$installed" "$stage/manager"
   else fetch_repo_file deploy/firewall-ui "$stage/manager"; fi
   if [[ "${INSTALL_INTERACTIVE:-0}" == 1 ]]; then
-    bash "$stage/manager" "$@" <&3
-  else bash "$stage/manager" "$@"; fi
+    FIREWALL_UI_MANAGER_VARIANT=native bash "$stage/manager" "$@" <&3
+  else FIREWALL_UI_MANAGER_VARIANT=native bash "$stage/manager" "$@"; fi
 )
 
 run_installer_docker_action() (
   set -euo pipefail
   local stage
   stage="$(mktemp -d)"; trap 'rm -rf -- "$stage"' EXIT
-  local installed="${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/firewall-ui-docker}"
+  local installed="${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}"
+  [[ -x "$installed" ]] || installed="${FIREWALL_UI_LEGACY_DOCKER_MANAGER:-/usr/local/bin/firewall-ui-docker}"
   if [[ "$1" == uninstall ]]; then
     fetch_repo_file deploy/firewall-ui-docker "$stage/docker-manager" || {
       [[ -x "$installed" ]] && cp "$installed" "$stage/docker-manager" || return 1
@@ -824,10 +826,17 @@ installer_native_install() (
   if ((HAD_BINARY)); then cp -p "$TEMP_DIR/previous-binary" "$INSTALL_DIR/firewall-ui.previous"; fi
   allow_access_port "$PANEL_PORT"
   setup_renewal
+  # Existing ACME units must use the renamed command even when settings are kept.
+  local renewal_unit="${SERVICE_FILE%/*}/firewall-ui-cert-renew.service"
+  if [[ -f "$renewal_unit" ]]; then
+    sed -i 's|/usr/local/bin/firewall-ui restart|/usr/local/bin/fw-ui restart|g' "$renewal_unit"
+    systemctl daemon-reload
+  fi
+  ( source "$TEMP_DIR/manager"; remove_legacy_manager )
   SUCCEEDED=1
   echo 'Firewall-UI установлен.'
   show_panel_url
-  echo 'Управление: firewall-ui; журнал: firewall-ui logs'
+  echo 'Управление: fw-ui; журнал: fw-ui logs'
 
 )
 

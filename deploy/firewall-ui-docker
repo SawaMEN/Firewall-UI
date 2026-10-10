@@ -2,8 +2,10 @@
 set -Eeuo pipefail
 
 DOCKER_DIR="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}"
-DOCKER_MANAGER="${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/firewall-ui-docker}"
+DOCKER_MANAGER="${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}"
 DOCKER_PROJECT="${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}"
+PUBLIC_MANAGER="${FIREWALL_UI_MANAGER:-/usr/local/bin/fw-ui}"
+LEGACY_DOCKER_MANAGER="${FIREWALL_UI_LEGACY_DOCKER_MANAGER:-/usr/local/bin/firewall-ui-docker}"
 DOCKER_INTERACTIVE=0
 
 # Credentials are plain private files, never sourced as shell code or expanded
@@ -295,7 +297,7 @@ docker_show_access() {
   [[ "$host" != *:* ]] || host="[$host]"
   [[ -z "$(docker_read_setting FIREWALL_UI_TLS_CERT '')" ]] || scheme=https
   echo "Панель: $scheme://$host:$port/"
-  echo "Управление: firewall-ui-docker; настройки сохранены в $DOCKER_DIR."
+  echo "Управление: fw-ui; настройки сохранены в $DOCKER_DIR."
 }
 
 docker_require_exclusive() {
@@ -307,7 +309,7 @@ docker_require_exclusive() {
 
 docker_install() (
   set -Eeuo pipefail
-  local action="${1:-install}" first=0 old_mode='' stage succeeded=0 stopped=0 runtime_saved=0 old_image='' up_attempted=0
+  local action="${1:-install}" first=0 old_mode='' stage succeeded=0 stopped=0 runtime_saved=0 old_image='' up_attempted=0 managers_replaced=0
   docker_require_engine || return 1
   docker_require_exclusive || return 1
   umask 077; mkdir -p "$DOCKER_DIR"; chmod 700 "$DOCKER_DIR"
@@ -318,6 +320,8 @@ docker_install() (
   for file in deployment docker.env username password install.sh; do
     [[ ! -f "$DOCKER_DIR/$file" ]] || cp -p "$DOCKER_DIR/$file" "$stage/$file"
   done
+  [[ ! -f "$DOCKER_MANAGER" ]] || cp -p "$DOCKER_MANAGER" "$stage/docker-manager"
+  [[ ! -f "$PUBLIC_MANAGER" ]] || cp -p "$PUBLIC_MANAGER" "$stage/public-manager"
   [[ ! -f "$DOCKER_DIR/docker.env" ]] || cp -p "$DOCKER_DIR/docker.env" "$DOCKER_DIR/docker.env.previous"
   rollback() {
     local result=$?
@@ -331,6 +335,10 @@ docker_install() (
         else rm -f -- "$DOCKER_DIR/$file"; fi
       done
       if [[ -d "$DOCKER_DIR/source.previous" ]]; then rm -rf -- "$DOCKER_DIR/source"; mv "$DOCKER_DIR/source.previous" "$DOCKER_DIR/source"; fi
+      if ((managers_replaced)); then
+        if [[ -f "$stage/docker-manager" ]]; then cp -p "$stage/docker-manager" "$DOCKER_MANAGER"; else rm -f -- "$DOCKER_MANAGER"; fi
+        if [[ -f "$stage/public-manager" ]]; then cp -p "$stage/public-manager" "$PUBLIC_MANAGER"; else rm -f -- "$PUBLIC_MANAGER"; fi
+      fi
       [[ -z "$old_image" ]] || docker tag "$old_image" firewall-ui:stable || true
       if ((stopped)) && [[ -n "$old_mode" ]]; then
         if docker_compose_mode "$old_mode" up -d --no-build; then
@@ -369,6 +377,7 @@ docker_install() (
   up_attempted=1
   docker_compose up -d --no-build || return 1
   docker_wait_for_service || return 1
+  managers_replaced=1
   install -m 0755 "${BASH_SOURCE[0]}" "$DOCKER_MANAGER" || return 1
   install -m 0700 "$DOCKER_DIR/source/install.sh" "$DOCKER_DIR/install.sh" || return 1
   if ((first)) || [[ "$action" == configure ]]; then
@@ -380,9 +389,11 @@ docker_install() (
       allow_access_port "$(docker_read_setting FIREWALL_UI_DOCKER_PORT 8088)"
     ) || return 1
   fi
+  install -m 0755 "$DOCKER_DIR/source/firewall-manager" "$PUBLIC_MANAGER" || return 1
   if ((runtime_saved)); then docker_runtime_backup clear || return 1; fi
   rm -rf -- "$DOCKER_DIR/source.previous"
   succeeded=1
+  docker_remove_legacy_manager || return 1
   echo 'Версия Docker Compose Firewall-UI готова.'
   docker_show_access
 )
@@ -460,6 +471,14 @@ docker_cleanup_image() {
   docker_download_image
 }
 
+docker_remove_legacy_manager() {
+  if [[ "$LEGACY_DOCKER_MANAGER" != "$DOCKER_MANAGER" && -f "$LEGACY_DOCKER_MANAGER" ]] &&
+     grep -Fq 'DOCKER_DIR=' "$LEGACY_DOCKER_MANAGER" &&
+     grep -Fq 'SawaMEN/Firewall-UI' "$LEGACY_DOCKER_MANAGER"; then
+    rm -f -- "$LEGACY_DOCKER_MANAGER" || return 1
+  fi
+}
+
 docker_uninstall() (
   local renew=firewall-ui-docker-cert-renew
   if [[ -f /etc/systemd/system/$renew.timer || -f /etc/systemd/system/$renew.service ]]; then
@@ -509,6 +528,11 @@ docker_uninstall() (
   docker_cleanup_access || return 1
   rm -rf -- "$DOCKER_DIR" || return 1
   rm -f -- "$DOCKER_MANAGER" || return 1
+  docker_remove_legacy_manager || return 1
+  if [[ ! -x "${FIREWALL_UI_NATIVE_BINARY:-/usr/local/firewall-ui/firewall-ui}" && -f "$PUBLIC_MANAGER" ]] &&
+     grep -Fq 'REPO="SawaMEN/Firewall-UI"' "$PUBLIC_MANAGER"; then
+    rm -f -- "$PUBLIC_MANAGER" || return 1
+  fi
   if command -v docker >/dev/null 2>&1; then
     docker image rm firewall-ui:stable firewall-ui:local >/dev/null 2>&1 || true
   fi

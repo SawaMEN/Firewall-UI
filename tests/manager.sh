@@ -87,3 +87,30 @@ if ACTION=download bash "$FIXTURE/runner"; then echo 'Accepted tampered binary';
 [[ ! -s "$FIXTURE/systemctl" && "$(cat "$FIXTURE/install/firewall-ui")" == *'# old'* ]]
 [[ -z "$(find "$FIXTURE/downloads" -mindepth 1 -print)" ]]
 printf 'Manager replacement, configuration checks, health rollback and version swap tests passed\n'
+
+# fw-ui uses the saved Compose menu and delegates commands without network access.
+(
+ source "$TASK_ROOT/deploy/firewall-ui"
+ require_root() { :; }
+ INSTALL_DIR="$FIXTURE/absent-native"; BIN="$INSTALL_DIR/firewall-ui"
+ DOCKER_INSTALL_DIR="$FIXTURE/compose"; DOCKER_MANAGER_PATH="$FIXTURE/fw-ui-docker"
+ mkdir -p "$DOCKER_INSTALL_DIR"; touch "$DOCKER_INSTALL_DIR/deployment"
+ printf '#!/bin/bash\nprintf "compose %%s\n" "$*"\n' > "$DOCKER_MANAGER_PATH"; chmod +x "$DOCKER_MANAGER_PATH"
+ printf '#!/bin/bash\nprintf "saved menu %%s\n" "$*"\n' > "$DOCKER_INSTALL_DIR/install.sh"
+ [[ "$(main restart)" == 'compose restart' ]]
+ mkdir -p "$INSTALL_DIR"; touch "$BIN"; chmod +x "$BIN"
+ systemctl() { return 1; }
+ [[ "$(main restart)" == 'compose restart' ]]
+ [[ "$(main uninstall --purge)" == 'saved menu --uninstall' ]]
+ [[ "$(main)" == 'saved menu --menu' ]]
+ systemctl() { printf 'native %s\n' "$*"; }
+ [[ "$(FIREWALL_UI_MANAGER_VARIANT=native main restart)" == 'native restart firewall-ui.service' ]]
+ MANAGER_PATH="$FIXTURE/fw-ui"; LEGACY_MANAGER_PATH="$FIXTURE/firewall-ui"
+ cp "$TASK_ROOT/deploy/firewall-ui" "$LEGACY_MANAGER_PATH"
+ remove_legacy_manager
+ [[ ! -e "$LEGACY_MANAGER_PATH" ]]
+ printf 'foreign executable\n' > "$LEGACY_MANAGER_PATH"
+ remove_legacy_manager
+ [[ -f "$LEGACY_MANAGER_PATH" ]]
+)
+echo 'fw-ui Compose dispatch, offline menu and owned legacy command migration passed'

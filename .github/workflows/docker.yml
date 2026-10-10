@@ -92,6 +92,8 @@ jobs:
           export FIREWALL_UI_DOCKER_IMAGE_SHA256="$(sha256sum "$FIREWALL_UI_DOCKER_IMAGE_ARCHIVE" | awk '{print $1}')"
           trap 'sudo sysctl -w net.ipv4.icmp_echo_ignore_all=0 >/dev/null; kill "$PROBE_PID" || true; sudo -E bash deploy/firewall-ui-docker uninstall || true' EXIT
           sudo -E bash install.sh --compose
+          sudo test -x /usr/local/bin/fw-ui
+          sudo -E /usr/local/bin/fw-ui status
           python3 tests/docker_host.py
           sudo -E bash install.sh --compose
           sudo -E bash install.sh --compose-configure
@@ -106,9 +108,9 @@ jobs:
           python3 tests/docker_host.py
           sudo test -s "$FIREWALL_UI_DOCKER_DIR/source/install.sh"
           sudo test -s "$FIREWALL_UI_DOCKER_DIR/install.sh"
-          sudo -E env FIREWALL_UI_USERNAME=ci-console FIREWALL_UI_PASSWORD=1 bash deploy/firewall-ui-docker credentials
+          sudo -E env FIREWALL_UI_USERNAME=ci-console FIREWALL_UI_PASSWORD=1 /usr/local/bin/fw-ui credentials
           FIREWALL_UI_USERNAME=ci-console FIREWALL_UI_PASSWORD=1 python3 tests/docker_host.py
-          sudo -E bash deploy/firewall-ui-docker restart
+          sudo -E /usr/local/bin/fw-ui restart
           FIREWALL_UI_USERNAME=ci-console FIREWALL_UI_PASSWORD=1 python3 tests/docker_host.py
           # Use the same IP/HTTPS wizard as native installation, then return to HTTP.
           sudo -E env FIREWALL_UI_ACCESS_MODE=ip FIREWALL_UI_PUBLIC_HOST=127.0.0.1 FIREWALL_UI_TLS_MODE=selfsigned bash install.sh --compose-configure
@@ -122,7 +124,7 @@ jobs:
           '
           docker volume create --label com.docker.compose.project=firewall-ui-installer-ci --label com.docker.compose.volume=unrelated ci-unrelated-volume
           # Offline removal must use the already installed capable cleanup image.
-          sudo -E env FIREWALL_UI_DOCKER_IMAGE_ARCHIVE=/nonexistent/archive bash install.sh --uninstall
+          sudo -E env FIREWALL_UI_DOCKER_IMAGE_ARCHIVE=/nonexistent/archive /usr/local/bin/fw-ui uninstall --purge
           docker volume inspect ci-unrelated-volume >/dev/null
           sudo -E bash -c 'source install.sh; installer_detect_installations; test "$COMPOSE_INSTALLED" = 0'
           docker volume rm ci-unrelated-volume
@@ -130,6 +132,7 @@ jobs:
           if [ -f /proc/sys/net/ipv6/icmp/echo_ignore_all ]; then test "$(sysctl -n net.ipv6.icmp.echo_ignore_all)" = 0; fi
           test ! -e "$FIREWALL_UI_DOCKER_DIR"
           test ! -e "$FIREWALL_UI_DOCKER_MANAGER"
+          test ! -e /usr/local/bin/fw-ui
           test -z "$(docker ps -aq --filter label=com.docker.compose.project=firewall-ui-installer-ci)"
           test -z "$(docker volume ls -q --filter label=com.docker.compose.project=firewall-ui-installer-ci)"
       - uses: actions/upload-artifact@v4

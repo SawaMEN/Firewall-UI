@@ -6,7 +6,8 @@ FIXTURE="$(mktemp -d)"
 trap 'rm -rf -- "$FIXTURE"' EXIT
 INSTALL_DIR="$FIXTURE/install"; BIN="$INSTALL_DIR/firewall-ui"
 CONFIG_DIR="$FIXTURE/config"; CONFIG="$CONFIG_DIR/config.json"
-STATE_DIR="$FIXTURE/state"; UNIT_DIR="$FIXTURE/units"; MANAGER_PATH="$FIXTURE/manager"
+STATE_DIR="$FIXTURE/state"; UNIT_DIR="$FIXTURE/units"; MANAGER_PATH="$FIXTURE/manager"; LEGACY_MANAGER_PATH="$FIXTURE/legacy-manager"
+DOCKER_INSTALL_DIR="$FIXTURE/compose"; DOCKER_MANAGER_PATH="$FIXTURE/compose-manager"
 require_root() { :; }
 sleep() { :; }
 systemctl() {
@@ -28,6 +29,7 @@ prepare() {
  printf 'credential' > "$CONFIG_DIR/environment"
  printf 'certificate' > "$CONFIG_DIR/tls/cert.pem"
  printf 'state' > "$STATE_DIR/state.json"
+ cp "$TASK_ROOT/deploy/firewall-ui" "$LEGACY_MANAGER_PATH"
  touch "$UNIT_DIR/firewall-ui.service" "$UNIT_DIR/firewall-ui-cert-renew.service" "$UNIT_DIR/firewall-ui-cert-renew.timer" "$MANAGER_PATH"
  cat > "$BIN" <<'BIN'
 #!/usr/bin/env bash
@@ -55,7 +57,7 @@ uninstall_service <<< 'n'
 prepare
 printf 'foreign firewall configuration' > "$FIXTURE/foreign-firewall"
 uninstall_service <<< 'y'
-[[ ! -d "$INSTALL_DIR" && ! -d "$CONFIG_DIR" && ! -d "$STATE_DIR" && ! -f "$MANAGER_PATH" ]]
+[[ ! -d "$INSTALL_DIR" && ! -d "$CONFIG_DIR" && ! -d "$STATE_DIR" && ! -f "$MANAGER_PATH" && ! -f "$LEGACY_MANAGER_PATH" ]]
 [[ -f "$FIXTURE/foreign-firewall" && ! -f "$UNIT_DIR/firewall-ui-cert-renew.timer" ]]
 [[ "$(cat "$FIXTURE/systemctl")" == *'stop --no-block firewall-ui.service'* ]]
 [[ "$(cat "$FIXTURE/systemctl")" == *'stop --no-block firewall-ui-cert-renew.timer'* ]]

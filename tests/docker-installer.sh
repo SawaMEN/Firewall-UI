@@ -4,6 +4,9 @@ TASK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FIXTURE="$(mktemp -d)"; trap 'rm -rf -- "$FIXTURE"' EXIT
 source "$TASK_ROOT/deploy/firewall-ui-docker"
 DOCKER_DIR="$FIXTURE/install"; DOCKER_MANAGER="$FIXTURE/manager"
+export FIREWALL_UI_MANAGER="$FIXTURE/fw-ui" FIREWALL_UI_LEGACY_MANAGER="$FIXTURE/legacy-native"
+export FIREWALL_UI_LEGACY_DOCKER_MANAGER="$FIXTURE/legacy-docker" FIREWALL_UI_NATIVE_BINARY="$FIXTURE/native-binary"
+PUBLIC_MANAGER="$FIREWALL_UI_MANAGER"; LEGACY_DOCKER_MANAGER="$FIREWALL_UI_LEGACY_DOCKER_MANAGER"
 DOCKER_INTERACTIVE=0
 export MOCK_RESOURCES=1
 export FIREWALL_UI_USERNAME=admin FIREWALL_UI_PASSWORD='1$HOME`id`"\' FIREWALL_UI_DOCKER_HOST=127.0.0.1
@@ -19,6 +22,7 @@ docker_download_source() {
  [[ ! -d "$DOCKER_DIR/source" ]] || mv "$DOCKER_DIR/source" "$DOCKER_DIR/source.previous"
  mkdir -p "$DOCKER_DIR/source"; touch "$DOCKER_DIR/source/compose.yaml"
  cp "$TASK_ROOT/install.sh" "$DOCKER_DIR/source/install.sh"
+ cp "$TASK_ROOT/deploy/firewall-ui" "$DOCKER_DIR/source/firewall-manager"
 }
 docker() {
  printf '%s\n' "$*" >> "$FIXTURE/commands"
@@ -90,6 +94,20 @@ if (docker_install configure); then echo 'Ignored failed image download'; exit 1
 cmp "$FIXTURE/env-before" "$DOCKER_DIR/docker.env"
 [[ -d "$DOCKER_DIR/source" ]]
 unset MOCK_IMAGE_RESULT
+# A late command-install failure restores both existing helpers and runtime settings.
+cp "$PUBLIC_MANAGER" "$FIXTURE/public-before"
+cp "$DOCKER_MANAGER" "$FIXTURE/docker-before"
+(
+ install() {
+   [[ "${*: -1}" != "$PUBLIC_MANAGER" ]] || return 1
+   command install "$@"
+ }
+ if docker_install configure; then echo 'Ignored failed public-command replacement'; exit 1; fi
+)
+cmp "$PUBLIC_MANAGER" "$FIXTURE/public-before"
+cmp "$DOCKER_MANAGER" "$FIXTURE/docker-before"
+# Purge removes the owned old Compose helper too.
+cp "$TASK_ROOT/deploy/firewall-ui-docker" "$LEGACY_DOCKER_MANAGER"
 # Never remove files/volumes after failed cleanup; remove them after success.
 export MOCK_CLEANUP_RESULT=1
 if docker_uninstall; then echo 'Ignored failed Docker cleanup'; exit 1; fi
@@ -97,7 +115,7 @@ if docker_uninstall; then echo 'Ignored failed Docker cleanup'; exit 1; fi
 export MOCK_CLEANUP_RESULT=0 MOCK_IMAGE_RESULT=1
 : > "$FIXTURE/commands"
 docker_uninstall
-[[ ! -e "$DOCKER_DIR" && ! -e "$DOCKER_MANAGER" ]]
+[[ ! -e "$DOCKER_DIR" && ! -e "$DOCKER_MANAGER" && ! -e "$PUBLIC_MANAGER" && ! -e "$LEGACY_DOCKER_MANAGER" ]]
 [[ "$(cat "$FIXTURE/commands")" == *'volume rm fixture-data'* ]]
 [[ "$(cat "$FIXTURE/commands")" != *'volume rm foreign-volume'* ]]
 [[ "$(cat "$FIXTURE/commands")" != *'download image'* ]]
@@ -187,6 +205,7 @@ echo 'Failed Docker startup and runtime rollback/retry passed'
  DOCKER_DIR="$FIXTURE/tls-wizard"
  mkdir -p "$DOCKER_DIR/source"
  cp "$TASK_ROOT/install.sh" "$DOCKER_DIR/source/install.sh"
+ cp "$TASK_ROOT/deploy/firewall-ui" "$DOCKER_DIR/source/firewall-manager"
  cp "$TASK_ROOT/compose.tls.yaml" "$DOCKER_DIR/source/compose.tls.yaml"
  printf admin > "$DOCKER_DIR/username"; printf 1 > "$DOCKER_DIR/password"
  unset FIREWALL_UI_DOCKER_HOST FIREWALL_UI_PORT
