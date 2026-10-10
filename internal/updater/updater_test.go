@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"strings"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/SawaMEN/Firewall-UI/internal/buildinfo"
