@@ -5,6 +5,11 @@ DOCKER_DIR="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui}"
 DOCKER_CONFIG_DIR="${FIREWALL_UI_CONFIG_DIR:-/etc/firewall-ui}"
 DOCKER_STATE_DIR="${FIREWALL_UI_STATE_DIR:-/var/lib/firewall-ui}"
 LEGACY_DOCKER_DIR="${FIREWALL_UI_LEGACY_DOCKER_DIR:-/opt/firewall-ui-docker}"
+# Older installations had Docker volumes and a separate certificate tree.
+if [[ "$DOCKER_DIR" == "$LEGACY_DOCKER_DIR" ]]; then
+  DOCKER_CONFIG_DIR="$DOCKER_DIR/access"
+  DOCKER_STATE_DIR="$DOCKER_DIR/access/state"
+fi
 DOCKER_MANAGER="${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}"
 DOCKER_PROJECT="${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}"
 PUBLIC_MANAGER="${FIREWALL_UI_MANAGER:-/usr/local/bin/fw-ui}"
@@ -325,12 +330,73 @@ docker_require_exclusive() {
   fi
 }
 
+# Copy legacy Docker data onto the host before switching Compose from named
+# volumes to the same bind paths used by the native systemd installation.
+# The original containers, volumes and metadata are retained until startup
+# succeeds; on failure the old installation can be restarted unchanged.
+docker_migrate_legacy_layout() {
+  DOCKER_MIGRATED=0
+  [[ "$DOCKER_DIR" != "$LEGACY_DOCKER_DIR" && -f "$LEGACY_DOCKER_DIR/.installer-managed" ]] || return 0
+  [[ ! -e "$DOCKER_DIR" ]] || { echo "Целевой каталог $DOCKER_DIR уже занят; миграция остановлена." >&2; return 1; }
+  local path volume role mount volumes config_mount='' data_mount='' cid
+  for path in "$DOCKER_CONFIG_DIR" "$DOCKER_STATE_DIR"; do
+    if [[ -d "$path" && -n "$(find "$path" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+      echo "В $path уже есть данные. Смешивать установки небезопасно." >&2
+      return 1
+    fi
+  done
+  volumes="$(docker_owned_volumes)" || return 1
+  for volume in $volumes; do
+    role="$(docker volume inspect --format '{{index .Labels "com.docker.compose.volume"}}' "$volume")" || return 1
+    mount="$(docker volume inspect --format '{{.Mountpoint}}' "$volume")" || return 1
+    [[ "$mount" == /* && -d "$mount" && -r "$mount" ]] || { echo "Недоступен том $volume." >&2; return 1; }
+    case "$role" in
+      firewall-ui-config) [[ -z "$config_mount" ]] || return 1; config_mount="$mount";;
+      firewall-ui-data) [[ -z "$data_mount" ]] || return 1; data_mount="$mount";;
+    esac
+  done
+  [[ -n "$config_mount" && -n "$data_mount" && -f "$config_mount/config.json" && -f "$config_mount/environment" ]] || {
+    echo 'Не найдены полные данные старой Docker-установки.' >&2; return 1;
+  }
+  local containers
+  containers="$(docker_owned_containers)" || return 1
+  for cid in $containers; do docker stop --time 15 "$cid" >/dev/null || return 1; done
+  DOCKER_MIGRATED=1
+  install -d -m 0700 "$DOCKER_CONFIG_DIR" "$DOCKER_STATE_DIR" "$DOCKER_DIR"
+  cp -a "$config_mount/." "$DOCKER_CONFIG_DIR/" || return 1
+  cp -a "$data_mount/." "$DOCKER_STATE_DIR/" || return 1
+  for path in tls acme; do
+    if [[ -d "$LEGACY_DOCKER_DIR/access/$path" ]]; then
+      if [[ ! -e "$DOCKER_CONFIG_DIR/$path" ]]; then
+        cp -a "$LEGACY_DOCKER_DIR/access/$path" "$DOCKER_CONFIG_DIR/" || return 1
+      fi
+    fi
+  done
+  for path in access-rules access-ufw; do
+    if [[ -f "$LEGACY_DOCKER_DIR/access/state/$path" && ! -e "$DOCKER_STATE_DIR/$path" ]]; then
+      cp -a "$LEGACY_DOCKER_DIR/access/state/$path" "$DOCKER_STATE_DIR/$path" || return 1
+    fi
+  done
+  cp -a "$LEGACY_DOCKER_DIR/." "$DOCKER_DIR/" || return 1
+  # The old certificate paths were host binds, whereas config/state already
+  # use canonical in-container paths. Rewrite only the old host certificates.
+  sed -i "s|$LEGACY_DOCKER_DIR/access/|$DOCKER_CONFIG_DIR/|g" "$DOCKER_CONFIG_DIR/config.json" "$DOCKER_DIR/docker.env" || return 1
+  echo 'Старая Docker-конфигурация и сертификаты перенесены в общие пути Firewall-UI.'
+}
+
 docker_install() (
   set -Eeuo pipefail
-  local action="${1:-install}" first=0 old_mode='' stage succeeded=0 stopped=0 runtime_saved=0 old_image='' up_attempted=0 managers_replaced=0
+  local action="${1:-install}" first=0 old_mode='' stage succeeded=0 stopped=0 runtime_saved=0 old_image='' up_attempted=0 managers_replaced=0 DOCKER_MIGRATED=0
   docker_require_engine || return 1
   docker_require_exclusive || return 1
-  umask 077; mkdir -p "$DOCKER_DIR"; chmod 700 "$DOCKER_DIR"
+  docker_migrate_legacy_layout || {
+    if ((DOCKER_MIGRATED)); then
+      rm -rf -- "$DOCKER_DIR" "$DOCKER_CONFIG_DIR" "$DOCKER_STATE_DIR"
+      FIREWALL_UI_DOCKER_DIR="$LEGACY_DOCKER_DIR" bash "$DOCKER_MANAGER" start || true
+    fi
+    return 1
+  }
+  umask 077; install -d -m 0700 "$DOCKER_DIR" "$DOCKER_CONFIG_DIR" "$DOCKER_STATE_DIR"
   printf 'Firewall-UI Docker installer\n' > "$DOCKER_DIR/.installer-managed"
   [[ -f "$DOCKER_DIR/deployment" ]] || first=1
   stage="$(mktemp -d "$DOCKER_DIR/.settings-XXXXXX")"
@@ -358,7 +424,13 @@ docker_install() (
         if [[ -f "$stage/public-manager" ]]; then cp -p "$stage/public-manager" "$PUBLIC_MANAGER"; else rm -f -- "$PUBLIC_MANAGER"; fi
       fi
       [[ -z "$old_image" ]] || docker tag "$old_image" firewall-ui:stable || true
-      if ((stopped)) && [[ -n "$old_mode" ]]; then
+      if ((DOCKER_MIGRATED)); then
+        # The original named volumes were never modified.
+        docker_compose down --remove-orphans >/dev/null 2>&1 || true
+        rm -rf -- "$DOCKER_DIR" "$DOCKER_CONFIG_DIR" "$DOCKER_STATE_DIR"
+        FIREWALL_UI_DOCKER_DIR="$LEGACY_DOCKER_DIR" bash "$DOCKER_MANAGER" start ||
+          echo 'Не удалось запустить прежнюю Docker-панель.' >&2
+      elif ((stopped)) && [[ -n "$old_mode" ]]; then
         if docker_compose_mode "$old_mode" up -d --no-build; then
           docker_wait_for_service || echo 'Предыдущая Docker-панель не прошла проверку запуска.' >&2
         else echo 'Не удалось запустить предыдущую панель Docker Compose.' >&2; fi
@@ -417,7 +489,7 @@ docker_install() (
   managers_replaced=1
   install -m 0755 "${BASH_SOURCE[0]}" "$DOCKER_MANAGER" || return 1
   install -m 0700 "$DOCKER_DIR/source/install.sh" "$DOCKER_DIR/install.sh" || return 1
-  if ((first)) || [[ "$action" == configure ]]; then
+  if ((first || DOCKER_MIGRATED)) || [[ "$action" == configure ]]; then
     docker_setup_renewal || return 1
     (
       source "$DOCKER_DIR/source/install.sh"
@@ -434,6 +506,13 @@ docker_install() (
   docker_setup_updates || return 1
   docker_update_status success
   docker_remove_legacy_manager || return 1
+  if ((DOCKER_MIGRATED)); then
+    local old_volume
+    for old_volume in $(docker_owned_volumes); do
+      docker volume rm "$old_volume" >/dev/null || echo "Не удалось удалить старый том $old_volume; сохранён для ручной проверки." >&2
+    done
+    rm -rf -- "$LEGACY_DOCKER_DIR" || echo 'Старые метаданные Docker оставлены для ручной проверки.' >&2
+  fi
   echo 'Версия Docker Compose Firewall-UI готова.'
   docker_show_access
 )
@@ -544,13 +623,19 @@ docker_uninstall() (
     done
     docker_cleanup_image || { echo 'Не удалось загрузить инструмент очистки; контейнеры остановлены, данные сохранены.' >&2; return 1; }
     local -a mounts=()
-    for volume in $volumes; do
-      role="$(docker volume inspect --format '{{index .Labels "com.docker.compose.volume"}}' "$volume")" || return 1
-      case "$role" in
-        firewall-ui-config) mounts+=(--mount "type=volume,src=$volume,dst=/etc/firewall-ui");;
-        firewall-ui-data) mounts+=(--mount "type=volume,src=$volume,dst=/var/lib/firewall-ui");;
-      esac
-    done
+    if [[ "$DOCKER_DIR" != "$LEGACY_DOCKER_DIR" && -d "$DOCKER_CONFIG_DIR" && -d "$DOCKER_STATE_DIR" ]]; then
+      mounts+=(--mount "type=bind,src=$DOCKER_CONFIG_DIR,dst=/etc/firewall-ui")
+      mounts+=(--mount "type=bind,src=$DOCKER_STATE_DIR,dst=/var/lib/firewall-ui")
+    fi
+    if [[ "${#mounts[@]}" == 0 ]]; then
+      for volume in $volumes; do
+        role="$(docker volume inspect --format '{{index .Labels "com.docker.compose.volume"}}' "$volume")" || return 1
+        case "$role" in
+          firewall-ui-config) mounts+=(--mount "type=volume,src=$volume,dst=/etc/firewall-ui");;
+          firewall-ui-data) mounts+=(--mount "type=volume,src=$volume,dst=/var/lib/firewall-ui");;
+        esac
+      done
+    fi
     if ! docker run --rm --pull never --network host --pid host --privileged "${mounts[@]}" \
       -e FIREWALL_UI_HOST_FIREWALL=1 --entrypoint /usr/local/bin/firewall-ui firewall-ui:stable -cleanup-firewall; then
       echo 'Не удалось очистить правила и запрет пинга. Данные сохранены.' >&2; return 1
@@ -568,7 +653,12 @@ docker_uninstall() (
     echo "Каталог $DOCKER_DIR не отмечен как установка Firewall-UI; его содержимое сохранено." >&2; return 1
   fi
   docker_cleanup_access || return 1
+  local owned_shared=0
+  if [[ "$DOCKER_DIR" != "$LEGACY_DOCKER_DIR" && -f "$DOCKER_DIR/.installer-managed" ]]; then owned_shared=1; fi
   rm -rf -- "$DOCKER_DIR" || return 1
+  if ((owned_shared)) && [[ ! -e "${FIREWALL_UI_NATIVE_BINARY:-/usr/local/firewall-ui/firewall-ui}" && ! -e /etc/systemd/system/firewall-ui.service ]]; then
+    rm -rf -- "$DOCKER_CONFIG_DIR" "$DOCKER_STATE_DIR" || return 1
+  fi
   rm -f -- "$DOCKER_MANAGER" || return 1
   docker_remove_legacy_manager || return 1
   if [[ ! -x "${FIREWALL_UI_NATIVE_BINARY:-/usr/local/firewall-ui/firewall-ui}" && -f "$PUBLIC_MANAGER" ]] &&
@@ -663,14 +753,12 @@ docker_auto_update() (
   }
   trap finish_auto_update EXIT
   docker_update_status checking
-  local channel manifest_url tag_pattern
+  local channel manifest_url
   channel="$(docker_update_channel)"
   if [[ "$channel" == dev ]]; then
     manifest_url=https://github.com/SawaMEN/Firewall-UI/releases/download/dev/update.json
-    tag_pattern=dev
   else
     manifest_url=https://github.com/SawaMEN/Firewall-UI/releases/latest/download/update.json
-    tag_pattern='v[0-9.]+'
   fi
   curl -fLsS --retry 3 --connect-timeout 15 --max-time 60 "$manifest_url" -o "$stage/update.json" || return 1
   case "$(uname -m)" in x86_64|amd64) arch=amd64;; aarch64|arm64) arch=arm64;; *) return 1;; esac
