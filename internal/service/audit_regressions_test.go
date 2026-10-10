@@ -125,7 +125,7 @@ func TestDuplicateAdvancedIDDoesNotRemoveExistingRule(t *testing.T) {
 	old := statePath
 	defer func() { statePath = old }()
 	statePath = filepath.Join(t.TempDir(), "state.json")
-	existing := FirewallAdvancedRule{ID: "one", Action: "allow", Protocol: "tcp", PortStart: 80, PortEnd: 80}
+	existing := FirewallAdvancedRule{ID: "one", Action: "allow", Protocol: "tcp", PortStart: 80, PortEnd: 80, IPVersion: "any"}
 	if err := saveFirewallJSON(firewallAdvancedRulesKey, []FirewallAdvancedRule{existing}); err != nil {
 		t.Fatal(err)
 	}
