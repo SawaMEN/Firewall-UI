@@ -8,6 +8,7 @@ import {
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 
+import { UpdateNotice } from '@/hooks/useUpdates';
 import AppSidebar, { type PageKey } from '@/layouts/AppSidebar';
 const DashboardPage = lazy(() => import('@/pages/dashboard/DashboardPage'));
 const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage'));
@@ -85,6 +86,7 @@ export default function FirewallPage() {
               size="middle"
               style={{ width: '100%' }}
             >
+              <UpdateNotice />
               <Suspense fallback={<Spin />}>
                 {page === 'overview' ? <DashboardPage /> : null}
                 {page === 'firewall' ? <FirewallManager /> : null}

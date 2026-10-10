@@ -17,6 +17,9 @@ const { chromium } = require(path.join(process.env.PLAYWRIGHT_TOOLS, 'node_modul
     await target.getByLabel('Пароль', { exact: true }).fill('1');
     await target.getByRole('button', { name: 'Войти', exact: true }).click();
   }
+  const updateStatus = { currentVersion: '1.3.2', currentChannel: 'stable', selectedChannel: 'stable', latestVersion: '1.3.99', latestCommit: 'fixture-next', available: true };
+  const json = (route, obj) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, obj, msg: '' }) });
+  await page.route('**/api/update/status', route => json(route, updateStatus));
   await page.goto(base);
   await page.getByRole('button', { name: 'Войти', exact: true }).waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'cyberpunk');
@@ -38,6 +41,24 @@ const { chromium } = require(path.join(process.env.PLAYWRIGHT_TOOLS, 'node_modul
   await page.locator('.ant-layout-sider-collapsed').waitFor();
   await page.screenshot({ path: path.join(output, 'sidebar-collapsed.png') });
   await trigger.click();
+  await page.locator('.update-banner').getByText('Доступно обновление Firewall-UI 1.3.99').waitFor();
+  let finishUpdate;
+  let markUpdateStarted;
+  const updateStarted = new Promise(resolve => { markUpdateStarted = resolve; });
+  await page.route('**/api/update/apply', async route => {
+    await new Promise(resolve => { finishUpdate = resolve; markUpdateStarted(); });
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: false, msg: 'fixture: checksum mismatch' }) });
+  });
+  await page.locator('.update-banner').getByRole('button', { name: 'Обновить', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Установить', exact: true }).click();
+  await page.getByRole('dialog').getByText('Не закрывайте и не обновляйте страницу.').waitFor();
+  await page.waitForFunction(() => document.querySelector('.ant-modal .ant-spin-spinning') !== null);
+  // The POST remains pending while the progress window is already visible.
+  await updateStarted;
+  assert.ok(finishUpdate, 'Update POST did not start');
+  finishUpdate();
+  await page.getByRole('dialog').getByText('fixture: checksum mismatch').waitFor();
+  await page.getByRole('dialog').locator('.ant-modal-close').click();
   await page.getByRole('menuitem', { name: 'Настройки' }).click();
   await page.getByRole('button', { name: 'Сохранить настройки' }).waitFor();
   assert.equal(await page.locator('input[type=file]').evaluate(input => getComputedStyle(input).display), 'none');
@@ -90,6 +111,37 @@ const { chromium } = require(path.join(process.env.PLAYWRIGHT_TOOLS, 'node_modul
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'Rules mobile layout overflows');
   await page.screenshot({ path: path.join(output, 'paired-rules-mobile.png'), fullPage: true });
   assert.deepEqual(errors, []);
+  // Verify that a successful POST cannot reload the old server version.
+  const updating = await browser.newContext({ storageState: await context.storageState() });
+  const updatePage = await updating.newPage();
+  let newBuildReady = false;
+  let healthChecks = 0;
+  let navigations = 0;
+  updatePage.on('framenavigated', frame => { if (frame === updatePage.mainFrame()) navigations++; });
+  await updatePage.route('**/api/update/status', route => json(route, updateStatus));
+  await updatePage.route('**/api/update/apply', route => json(route, { ...updateStatus, available: false, restarting: true }));
+  await updatePage.route('**/api/health', route => {
+    healthChecks++;
+    return json(route, { version: newBuildReady ? '1.3.99' : '1.3.2', commit: newBuildReady ? 'fixture-next' : 'fixture-old' });
+  });
+  await updatePage.goto(base);
+  await updatePage.locator('.update-banner').getByRole('button', { name: 'Обновить', exact: true }).click();
+  await updatePage.getByRole('dialog').getByRole('button', { name: 'Установить', exact: true }).click();
+  await updatePage.getByRole('dialog').getByText('Перезапуск и проверка новой версии…').waitFor();
+  await updatePage.waitForResponse('**/api/health');
+  assert.equal(navigations, 1, 'Reloaded before the new build answered');
+  newBuildReady = true;
+  await updatePage.waitForEvent('framenavigated', { predicate: frame => frame === updatePage.mainFrame() });
+  assert.ok(healthChecks >= 2, 'Did not verify the running build');
+  await updating.close();
+  // Docker availability uses the same banner, with instructions instead of self-update.
+  const docker = await browser.newContext({ storageState: await context.storageState() });
+  const dockerPage = await docker.newPage();
+  await dockerPage.route('**/api/update/status', route => json(route, { ...updateStatus, manualInstall: true }));
+  await dockerPage.goto(base);
+  await dockerPage.locator('.update-banner').getByRole('button', { name: 'Как обновить' }).click();
+  await dockerPage.getByRole('dialog').getByText(/curl -fsSL/).waitFor();
+  await docker.close();
   // The login response alone must never mount protected pages without a cookie.
   const blocked = await browser.newContext();
   const blockedPage = await blocked.newPage();
@@ -99,5 +151,5 @@ const { chromium } = require(path.join(process.env.PLAYWRIGHT_TOOLS, 'node_modul
   await blockedPage.getByText(/Браузер не сохранил сессию/).waitFor();
   assert.equal(await blockedPage.locator('.page-header').count(), 0);
   await browser.close();
-  console.log('Browser login/session, cookie rejection, protocol-specific deletion and cyberpunk desktop/mobile checks passed');
+  console.log('Browser login/session, update banner/progress/restart verification, Docker instructions, protocol deletion and desktop/mobile checks passed');
 })().catch(error => { console.error(error); process.exit(1); });

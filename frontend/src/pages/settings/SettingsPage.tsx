@@ -1,3 +1,4 @@
+import { useUpdates } from '@/hooks/useUpdates';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
@@ -48,14 +49,6 @@ type FormSettings = Omit<RuntimeSettings, 'allowedCidrs' | 'tlsEnabled' | 'resta
   allowedCidrsText: string;
 };
 
-type UpdateStatus = {
-  currentVersion: string;
-  currentChannel: string;
-  latestVersion: string;
-  available: boolean;
-  restarting?: boolean;
-};
-
 type AuditEntry = {
   time: string;
   user?: string;
@@ -80,10 +73,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
-  const [checkingUpdate, setCheckingUpdate] = useState(false);
-  const [applyingUpdate, setApplyingUpdate] = useState(false);
-  const [updateError, setUpdateError] = useState('');
+  const { status: updateStatus, checking: checkingUpdate, busy: applyingUpdate, error: updateError, check: loadUpdateStatus, confirm: confirmUpdate } = useUpdates();
   const [credentials, setCredentials] = useState({ username: '', password: '', currentPassword: '' });
   const [credentialsBusy, setCredentialsBusy] = useState(false);
   const [credentialError, setCredentialError] = useState('');
@@ -194,18 +184,6 @@ export default function SettingsPage() {
     [ru],
   );
 
-  async function loadUpdateStatus() {
-    setCheckingUpdate(true);
-    setUpdateError('');
-    try {
-      const result = await HttpUtil.get<UpdateStatus>('/api/update/status');
-      if (result.success && result.obj) setUpdateStatus(result.obj);
-      else setUpdateError(result.msg);
-    } finally {
-      setCheckingUpdate(false);
-    }
-  }
-
   async function loadActivity() {
     const [auditResult, historyResult] = await Promise.all([
       HttpUtil.get<AuditEntry[]>('/api/audit'),
@@ -241,7 +219,6 @@ export default function SettingsPage() {
           portScanInterval: result.obj.portScanInterval,
           allowedCidrsText: (result.obj.allowedCidrs || []).join('\n'),
         });
-        void loadUpdateStatus();
         void loadActivity();
       })
       .catch(() => !cancelled && setError(text.failed))
@@ -292,6 +269,7 @@ export default function SettingsPage() {
         }, 2200);
       } else {
         void message.success(ru ? 'Настройки сохранены' : 'Settings saved');
+        void loadUpdateStatus();
       }
     } finally {
       setSaving(false);
@@ -309,17 +287,6 @@ export default function SettingsPage() {
         window.dispatchEvent(new Event('session-expired'));
       } else setCredentialError(result.msg);
     } finally { setCredentialsBusy(false); }
-  }
-
-  async function applyStableUpdate() {
-    setApplyingUpdate(true);
-    try {
-      const result = await HttpUtil.post<UpdateStatus>('/api/update/apply', {});
-      if (result.success && result.obj) {
-        setUpdateStatus(result.obj);
-        if (result.obj.restarting) window.setTimeout(() => window.location.reload(), 2600);
-      }
-    } finally { setApplyingUpdate(false); }
   }
 
   async function downloadBackup() {
@@ -462,16 +429,14 @@ export default function SettingsPage() {
               { value: 'dev', label: text.dev },
             ]} />
           </Form.Item>
-          <Alert type={channel === 'dev' ? 'warning' : 'info'} showIcon title={channel === 'dev' ? text.dev : text.stable} description={channel === 'dev' ? text.devHint : text.stableHint} style={{ marginBottom: 16 }} />
+          <Alert type={channel === 'dev' ? 'warning' : 'info'} showIcon title={channel === 'dev' ? text.dev : text.stable} description={updateStatus?.manualInstall ? (ru ? 'Docker обновляется через установщик на сервере: пункт 1, затем 2.' : 'Update Docker using the server installer: select 1, then 2.') : channel === 'dev' ? text.devHint : text.stableHint} style={{ marginBottom: 16 }} />
           {updateError ? <Alert type="error" showIcon title={updateError} style={{ marginBottom: 16 }} /> : null}
           <Space wrap>
             <Typography.Text>{text.current}: <Tag>{updateStatus?.currentVersion || '—'}</Tag></Typography.Text>
             <Typography.Text>{text.latest}: <Tag color={updateStatus?.available ? 'processing' : undefined}>{updateStatus?.latestVersion || '—'}</Tag></Typography.Text>
             <Button icon={<ReloadOutlined />} loading={checkingUpdate} onClick={() => void loadUpdateStatus()}>{text.check}</Button>
-            {channel === 'stable' && updateStatus?.available ? (
-              <Popconfirm title={text.updateConfirm} onConfirm={() => void applyStableUpdate()}>
-                <Button type="primary" icon={<SyncOutlined />} loading={applyingUpdate}>{text.update}</Button>
-              </Popconfirm>
+            {(channel === 'stable' || updateStatus?.manualInstall) && updateStatus?.available ? (
+              <Button type="primary" icon={<SyncOutlined />} loading={applyingUpdate} onClick={confirmUpdate}>{updateStatus.manualInstall ? (ru ? "Как обновить" : "How to update") : text.update}</Button>
             ) : updateStatus && !updateStatus.available ? <Typography.Text type="secondary">{text.noUpdate}</Typography.Text> : null}
           </Space>
         </Card>

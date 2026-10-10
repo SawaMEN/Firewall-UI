@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.3
+
+- Show an update banner on every page, including Docker installations.
+- Display download/install/restart progress and verify the running version before reloading the panel.
+- Cache update metadata and suppress background error popups; provide Docker update instructions instead of replacing a container binary.
+
 ## 1.3.2
 
 - Shorten the Russian README, document sudo installation and show binary/Docker choices in one installation section.

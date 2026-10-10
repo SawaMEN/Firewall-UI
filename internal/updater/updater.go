@@ -54,6 +54,9 @@ type Status struct {
 	LatestCommit    string `json:"latestCommit"`
 	Available       bool   `json:"available"`
 	Restarting      bool   `json:"restarting,omitempty"`
+	Applying        bool   `json:"applying,omitempty"`
+	Phase           string `json:"phase,omitempty"`
+	ManualInstall   bool   `json:"manualInstall,omitempty"`
 }
 
 type Manager struct {
@@ -62,6 +65,13 @@ type Manager struct {
 	mu       sync.Mutex
 	applying bool
 	trigger  chan struct{}
+	progress Status
+	cache    map[string]cachedManifest
+}
+
+type cachedManifest struct {
+	manifest Manifest
+	expires  time.Time
 }
 
 func New(restart func()) *Manager {
@@ -69,6 +79,7 @@ func New(restart func()) *Manager {
 		client:  &http.Client{Timeout: 30 * time.Second},
 		restart: restart,
 		trigger: make(chan struct{}, 1),
+		cache:   make(map[string]cachedManifest),
 	}
 }
 
@@ -176,10 +187,24 @@ func (m *Manager) Check(ctx context.Context, channel string) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
+	m.mu.Lock()
+	if m.applying || m.progress.Restarting {
+		status := m.progress
+		m.mu.Unlock()
+		return status, nil
+	}
+	cached, ok := m.cache[channel]
+	m.mu.Unlock()
+	if ok && time.Now().Before(cached.expires) {
+		return statusFor(channel, cached.manifest), nil
+	}
 	manifest, err := m.fetchManifest(ctx, channel)
 	if err != nil {
 		return Status{}, err
 	}
+	m.mu.Lock()
+	m.cache[channel] = cachedManifest{manifest: manifest, expires: time.Now().Add(5 * time.Minute)}
+	m.mu.Unlock()
 	return statusFor(channel, manifest), nil
 }
 
@@ -260,15 +285,20 @@ func (m *Manager) Apply(ctx context.Context, channel string) (Status, error) {
 	}
 
 	m.mu.Lock()
-	if m.applying {
+	if m.applying || m.progress.Restarting {
 		m.mu.Unlock()
 		return Status{}, errors.New("an update is already in progress")
 	}
 	m.applying = true
+	current := buildinfo.Current()
+	m.progress = Status{CurrentVersion: current.Version, CurrentChannel: current.Channel, CurrentCommit: current.Commit, SelectedChannel: channel, Applying: true, Phase: "checking"}
 	m.mu.Unlock()
 	defer func() {
 		m.mu.Lock()
 		m.applying = false
+		if !m.progress.Restarting {
+			m.progress = Status{}
+		}
 		m.mu.Unlock()
 	}()
 
@@ -286,6 +316,11 @@ func (m *Manager) Apply(ctx context.Context, channel string) (Status, error) {
 	if os.Geteuid() != 0 {
 		return Status{}, errors.New("self-update requires root privileges")
 	}
+	m.mu.Lock()
+	m.progress = status
+	m.progress.Applying = true
+	m.progress.Phase = "downloading"
+	m.mu.Unlock()
 	asset := manifest.Assets[runtime.GOARCH]
 	if err := m.downloadAndReplace(ctx, asset); err != nil {
 		return Status{}, err
@@ -296,6 +331,13 @@ func (m *Manager) Apply(ctx context.Context, channel string) (Status, error) {
 	status.CurrentCommit = manifest.Commit
 	status.Available = false
 	status.Restarting = m.restart != nil
+	if status.Restarting {
+		status.Phase = "restarting"
+	}
+	m.mu.Lock()
+	m.progress = status
+	m.cache = make(map[string]cachedManifest)
+	m.mu.Unlock()
 	if m.restart != nil {
 		go func() {
 			time.Sleep(600 * time.Millisecond)
@@ -358,6 +400,9 @@ func (m *Manager) downloadAndReplace(ctx context.Context, asset Asset) error {
 		_ = tmp.Close()
 		return fmt.Errorf("update checksum mismatch: got %s", got)
 	}
+	m.mu.Lock()
+	m.progress.Phase = "installing"
+	m.mu.Unlock()
 	if err := tmp.Chmod(0755); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("set update permissions: %w", err)

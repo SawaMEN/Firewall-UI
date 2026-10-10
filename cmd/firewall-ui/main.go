@@ -166,9 +166,8 @@ func main() {
 		}
 	}
 	updateManager := updater.New(app.Restart)
-	if !containerMode {
-		app.Updater = updateManager
-	}
+	app.Updater = updateManager
+	app.ContainerMode = containerMode
 	dataDir := filepath.Dir(cfg.StatePath)
 	app.Audit = audit.New(filepath.Join(dataDir, "audit.jsonl"))
 	app.History = history.New(filepath.Join(dataDir, "history.jsonl"))

@@ -4,6 +4,16 @@ export type Response<T> = { success: boolean; obj?: T; msg: string };
 type RollbackEnvelope = { rollback?: { token?: string } };
 
 let csrf = '';
+let sessionRestarting = false;
+let expirationPending = false;
+
+export function setSessionRestarting(value: boolean) {
+  sessionRestarting = value;
+  if (!value && expirationPending) {
+    expirationPending = false;
+    window.dispatchEvent(new Event('session-expired'));
+  }
+}
 
 export function setCSRF(value: string) {
   csrf = value;
@@ -31,23 +41,26 @@ async function confirmRollback(token: string) {
 export async function request<T>(
   path: string,
   data?: Record<string, unknown>,
+  options: { silent?: boolean; signal?: AbortSignal; ignoreUnauthorized?: boolean } = {},
 ): Promise<Response<T>> {
   const res = await fetch(path, {
+    signal: options.signal,
     method: data === undefined ? 'GET' : 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
     body: data === undefined ? undefined : JSON.stringify(data),
   });
-  if (res.status === 401 && path !== '/api/login' && path !== '/api/session') {
-    window.dispatchEvent(new Event('session-expired'));
+  if (!options.ignoreUnauthorized && res.status === 401 && path !== '/api/login' && path !== '/api/session') {
+    if (sessionRestarting) expirationPending = true;
+    else window.dispatchEvent(new Event('session-expired'));
   }
   const result: Response<T> = await res.json();
-  if (!result.success && path === '/api/login') {
+  if (!options.silent && !result.success && path === '/api/login') {
     void message.error(result.msg === 'invalid credentials'
       ? 'Неверный логин или пароль'
       : result.msg || 'Не удалось войти');
   }
-  if (!result.success && path !== '/api/session' && path !== '/api/login' && res.status !== 401) {
+  if (!options.silent && !result.success && path !== '/api/session' && path !== '/api/login' && res.status !== 401) {
     void message.error(result.msg || 'Ошибка запроса');
   }
 

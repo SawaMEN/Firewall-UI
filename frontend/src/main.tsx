@@ -17,6 +17,7 @@ import { initReactI18next, useTranslation } from 'react-i18next';
 
 import { ThemeProvider, useTheme } from '@/hooks/useTheme';
 import FirewallPage from '@/pages/firewall/FirewallPage';
+import { UpdateProvider } from '@/hooks/useUpdates';
 import { request, setCSRF } from '@/utils';
 import './styles/theme.css';
 import './styles/app.css';
@@ -87,7 +88,7 @@ function Application() {
         {loading ? (
           <div className="login-shell"><Spin /></div>
         ) : authenticated ? (
-          <FirewallPage />
+          <UpdateProvider><FirewallPage /></UpdateProvider>
         ) : (
           <div className="login-shell">
             <Card title="Firewall-UI" style={{ width: 390, maxWidth: '100%' }}>

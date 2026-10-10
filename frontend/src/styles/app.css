@@ -451,3 +451,9 @@ body {
   gap: 8px;
   overflow-wrap: anywhere;
 }
+
+.update-banner { width: 100%; }
+@media (max-width: 600px) {
+  .update-banner { flex-wrap: wrap; gap: 8px; }
+  .update-banner .ant-alert-actions { margin-inline-start: 0; }
+}

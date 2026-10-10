@@ -110,3 +110,43 @@ func TestManifestRejectsTrailingAndOversizedData(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckCacheAndProgress(t *testing.T) {
+	calls := 0
+	m := New(nil)
+	m.client.Transport = manifestTransport(func(r *http.Request) (*http.Response, error) {
+		calls++
+		manifest := Manifest{Version: "9.0.0", Channel: "stable", Commit: "next", Assets: map[string]Asset{
+			runtime.GOARCH: {URL: "https://github.com/SawaMEN/Firewall-UI/releases/download/v9.0.0/firewall-ui-linux-" + runtime.GOARCH, SHA256: strings.Repeat("a", 64)},
+		}}
+		body, err := json.Marshal(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(string(body)))}, nil
+	})
+	for i := 0; i < 3; i++ {
+		status, err := m.Check(context.Background(), "stable")
+		if err != nil || status.LatestVersion != "9.0.0" {
+			t.Fatalf("check: %+v, %v", status, err)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("repeated checks fetched %d manifests", calls)
+	}
+	m.mu.Lock()
+	m.applying = true
+	m.progress = Status{Applying: true, Phase: "downloading", LatestVersion: "9.0.0"}
+	m.mu.Unlock()
+	status, err := m.Check(context.Background(), "stable")
+	if err != nil || !status.Applying || status.Phase != "downloading" || calls != 1 {
+		t.Fatalf("progress check fetched metadata or lost progress: %+v, %v", status, err)
+	}
+	m.mu.Lock()
+	m.applying = false
+	m.progress = Status{Restarting: true, Phase: "restarting"}
+	m.mu.Unlock()
+	if _, err := m.Apply(context.Background(), "stable"); err == nil {
+		t.Fatal("accepted a second update during restart")
+	}
+}

@@ -22,6 +22,7 @@ import (
 
 	"github.com/SawaMEN/Firewall-UI/internal/appconfig"
 	"github.com/SawaMEN/Firewall-UI/internal/audit"
+	"github.com/SawaMEN/Firewall-UI/internal/buildinfo"
 	"github.com/SawaMEN/Firewall-UI/internal/firewall"
 	"github.com/SawaMEN/Firewall-UI/internal/history"
 	"github.com/SawaMEN/Firewall-UI/internal/rollback"
@@ -51,6 +52,7 @@ type Server struct {
 	RuntimeConfig appconfig.Config
 	Restart       func()
 	Updater       *updater.Manager
+	ContainerMode bool
 	PortMonitor   *service.PortMonitor
 	Audit         *audit.Logger
 	History       *history.Store
@@ -142,6 +144,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodPost && r.Header.Get("Sec-Fetch-Site") == "cross-site" {
 		reply(w, http.StatusForbidden, nil, fmt.Errorf("cross-site request"))
+		return
+	}
+
+	if r.URL.Path == "/api/health" {
+		w.Header().Set("Cache-Control", "no-store")
+		if r.Method != http.MethodGet {
+			reply(w, http.StatusMethodNotAllowed, nil, fmt.Errorf("method not allowed"))
+			return
+		}
+		reply(w, http.StatusOK, buildinfo.Current(), nil)
 		return
 	}
 
@@ -475,7 +487,11 @@ func (s *Server) updateStatus(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
+	if s.ContainerMode {
+		channel = "stable"
+	}
 	status, err := s.Updater.Check(ctx, channel)
+	status.ManualInstall = s.ContainerMode
 	reply(w, http.StatusOK, status, err)
 }
 
@@ -486,6 +502,10 @@ func (s *Server) applyUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.Updater == nil {
 		reply(w, http.StatusServiceUnavailable, nil, fmt.Errorf("updater is not configured"))
+		return
+	}
+	if s.ContainerMode {
+		reply(w, http.StatusConflict, nil, fmt.Errorf("Docker updates must be installed using the installer"))
 		return
 	}
 	s.mu.Lock()
