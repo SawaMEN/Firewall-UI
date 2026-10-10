@@ -48,6 +48,45 @@ ssh -L 8088:127.0.0.1:8088 user@server
 
 Затем перейдите в браузере на `http://127.0.0.1:8088`.
 
+## Docker
+
+Нужен Docker Engine с Compose на Linux. Контейнер использует сеть и процессы хоста и запускается с расширенными правами для управления файрволлом.
+
+```bash
+git clone https://github.com/SawaMEN/Firewall-UI.git
+cd Firewall-UI
+cp .env.example .env
+chmod 600 .env
+nano .env  # Укажите FIREWALL_UI_PASSWORD
+docker compose up -d --build
+```
+
+Логин по умолчанию — `admin`. Панель доступна на `http://127.0.0.1:8088`; для подключения с другого компьютера используйте SSH-туннель выше. Доступ по IP/домену, порт и HTTPS настраиваются в панели. Сертификаты разместите в её томе `/etc/firewall-ui`.
+
+Настройки, изменённые логин и пароль, история и резервные копии сохраняются в Docker-томах. Контейнер управляет nftables/iptables хоста. При конфликтующих входящих правилах UFW/firewalld включение блокируется; для управления ими используйте обычную установку.
+
+```bash
+docker compose logs -f                 # Журнал
+git pull && docker compose up -d --build  # Обновление
+docker compose restart                # Перезапуск
+docker compose down                   # Остановка с сохранением данных
+```
+
+Обновления выполняются пересборкой образа; встроенное обновление бинарника в контейнере отключено. Для отображения опубликованных Docker-портов запустите с дополнительным файлом:
+
+```bash
+docker compose -f compose.yaml -f compose.docker-ports.yaml up -d --build
+```
+
+Этот вариант подключает Docker socket, который даёт доступ к управлению Docker.
+
+Перед полным удалением очистите только правила панели, затем удалите контейнер и его тома:
+
+```bash
+docker compose exec firewall-ui firewall-ui -cleanup-firewall
+docker compose down -v
+```
+
 ## Управление на сервере
 
 Команда `sudo firewall-ui` открывает меню. Основные действия доступны отдельно:

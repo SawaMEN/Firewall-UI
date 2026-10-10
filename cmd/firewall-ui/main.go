@@ -131,14 +131,21 @@ func main() {
 		fmt.Println("Configuration is valid")
 		return
 	}
+	containerMode := os.Getenv("FIREWALL_UI_CONTAINER") == "1"
+	user := strings.TrimSpace(os.Getenv("FIREWALL_UI_USERNAME"))
 	password := os.Getenv("FIREWALL_UI_PASSWORD")
+	if containerMode {
+		user, password, err = appconfig.ContainerCredentials(filepath.Join(filepath.Dir(*configPath), "environment"), user, password)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
 	if password == "" {
 		log.Fatal("FIREWALL_UI_PASSWORD must not be empty")
 	}
 	if len(password) < 12 {
 		log.Print("Recommendation: use a long unique password")
 	}
-	user := strings.TrimSpace(os.Getenv("FIREWALL_UI_USERNAME"))
 	if user == "" {
 		user = "admin"
 	}
@@ -160,7 +167,9 @@ func main() {
 		}
 	}
 	updateManager := updater.New(app.Restart)
-	app.Updater = updateManager
+	if !containerMode {
+		app.Updater = updateManager
+	}
 	dataDir := filepath.Dir(cfg.StatePath)
 	app.Audit = audit.New(filepath.Join(dataDir, "audit.jsonl"))
 	app.History = history.New(filepath.Join(dataDir, "history.jsonl"))
@@ -184,7 +193,9 @@ func main() {
 	defer stop()
 	app.XUI.Start(ctx)
 	portMonitor.Start(ctx)
-	go updateManager.Run(ctx, *configPath)
+	if !containerMode {
+		go updateManager.Run(ctx, *configPath)
+	}
 	go func() {
 		<-ctx.Done()
 		deadline, cancel := context.WithTimeout(context.Background(), 10*time.Second)

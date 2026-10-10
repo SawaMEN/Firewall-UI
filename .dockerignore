@@ -1,0 +1,12 @@
+.git
+.github
+frontend/node_modules
+internal/webassets/dist
+firewall-ui
+dist
+dist-dev
+dist-stable
+release-assets
+.env
+.env.*
+*.log

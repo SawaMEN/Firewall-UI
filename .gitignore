@@ -8,3 +8,6 @@ internal/webassets/dist/*
 /dist-dev/
 /dist-stable/
 /release-assets/
+
+.env.*
+!.env.example

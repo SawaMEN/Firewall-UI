@@ -1,0 +1,58 @@
+name: Docker build
+on:
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - compose*.yaml
+      - deploy/docker/**
+      - cmd/**
+      - internal/**
+      - frontend/**
+      - go.mod
+      - VERSION
+      - .github/workflows/docker.yml
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - compose*.yaml
+      - deploy/docker/**
+      - cmd/**
+      - internal/**
+      - frontend/**
+      - go.mod
+      - VERSION
+      - .github/workflows/docker.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose and build image
+        env:
+          FIREWALL_UI_PASSWORD: ci-compose-validation
+        run: |
+          docker compose config --quiet
+          docker compose -f compose.yaml -f compose.docker-ports.yaml config --quiet
+          docker build --build-arg VCS_REF="$GITHUB_SHA" -t firewall-ui:test .
+      - name: Verify startup and shutdown
+        run: |
+          docker run --rm firewall-ui:test -version
+          docker run --rm firewall-ui:test -check-config
+          trap 'docker logs firewall-ui-smoke; docker rm -f firewall-ui-smoke' EXIT
+          docker run -d --name firewall-ui-smoke -e FIREWALL_UI_PASSWORD=ci-smoke -p 127.0.0.1:18088:8088 firewall-ui:test -listen 0.0.0.0:8088
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18088/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:18088/ >/dev/null
+          docker stop --timeout 15 firewall-ui-smoke
+          test "$(docker inspect -f '{{.State.ExitCode}}' firewall-ui-smoke)" = 0
