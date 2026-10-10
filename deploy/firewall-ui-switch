@@ -99,7 +99,7 @@ switch_docker_environment() {
 
 switch_native_to_docker() (
   set -Eeuo pipefail
-  local docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}" old_active=0 old_enabled=0 stage succeeded=0 imported=0
+  local docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}" old_active=0 old_enabled=0 stage succeeded=0 committed=0 imported=0
   [[ -f "$CONFIG_DIR/config.json" && -f "$CONFIG_DIR/environment" ]] || {
     echo 'Не найдены конфигурация или учётные данные обычной версии.' >&2; return 1;
   }
@@ -110,7 +110,9 @@ switch_native_to_docker() (
   systemctl is-enabled --quiet firewall-ui.service && old_enabled=1 || true
   rollback() {
     local result=$?
-    if ((!succeeded)); then
+    if ((committed && !succeeded)); then
+      echo 'Новая Docker-панель работает, но старые файлы удалены не полностью. Они оставлены для проверки.' >&2
+    elif ((!succeeded)); then
       echo 'Переключение не завершено. Восстанавливаем обычную версию.' >&2
       if ((imported)); then
         switch_remove_docker || echo 'Не удалось очистить новую Docker-установку; исходные данные сохранены.' >&2
@@ -200,6 +202,7 @@ switch_native_to_docker() (
   if [[ "$mode" == letsencrypt ]]; then
     ( source "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}"; docker_setup_renewal ) || return 1
   fi
+  committed=1
   switch_remove_native || return 1
   succeeded=1
   echo 'Обычная версия заменена на Docker. Настройки и данные перенесены.'
@@ -207,7 +210,7 @@ switch_native_to_docker() (
 
 switch_docker_to_native() (
   set -Eeuo pipefail
-  local docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}" stage succeeded=0 old_running=0 native_started=0 native_attempted=0 copied=0
+  local docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}" stage succeeded=0 committed=0 old_running=0 native_started=0 native_attempted=0 copied=0
   local docker_update_active=0 docker_renew_active=0
   [[ -f "$docker_dir/deployment" && -f "$docker_dir/.installer-managed" ]] || {
     echo 'Docker-версия не распознана. Данные не изменены.' >&2; return 1;
@@ -229,7 +232,9 @@ switch_docker_to_native() (
   [[ ! -f "$MANAGER" ]] || cp -p "$MANAGER" "$stage/docker-public-manager"
   rollback() {
     local result=$?
-    if ((!succeeded)); then
+    if ((committed && !succeeded)); then
+      echo 'Новая обычная панель работает, но удаление старой Docker-версии не завершено.' >&2
+    elif ((!succeeded)); then
       echo 'Переключение не завершено. Восстанавливаем Docker-версию.' >&2
       if ((native_attempted)); then
         systemctl disable --now firewall-ui.service firewall-ui-cert-renew.timer >/dev/null 2>&1 || true
@@ -301,6 +306,7 @@ switch_docker_to_native() (
     systemctl enable --now firewall-ui-cert-renew.timer || return 1
   fi
   # Do not call docker_uninstall: it would remove the firewall rules now used by native.
+  committed=1
   switch_remove_docker || return 1
   succeeded=1
   echo 'Docker-версия заменена обычной. Настройки и данные перенесены.'
