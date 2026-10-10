@@ -18,7 +18,8 @@ prepare() {
     *) echo "Unknown CI distribution: $ID" >&2; return 1;;
   esac
   # A container has no physical consoles or disks to configure.
-  systemctl mask systemd-remount-fs.service systemd-udevd.service systemd-udevd-control.socket systemd-udevd-kernel.socket systemd-udevd-varlink.socket console-getty.service getty.target systemd-networkd.service systemd-networkd-wait-online.service systemd-networkd-wait-online@.service systemd-resolved.service
+  systemd-machine-id-setup
+  systemctl mask systemd-firstboot.service systemd-remount-fs.service systemd-udevd.service systemd-udevd-control.socket systemd-udevd-kernel.socket systemd-udevd-varlink.socket console-getty.service getty.target systemd-networkd.service systemd-networkd-wait-online.service systemd-networkd-wait-online@.service systemd-resolved.service
 }
 
 verify() {
