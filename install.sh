@@ -423,6 +423,22 @@ installer_detect_installations() {
   fi
 }
 
+installer_require_native_exclusive() {
+  command -v docker >/dev/null 2>&1 || return 0
+  local running
+  running="$(docker ps --filter "label=com.docker.compose.project=${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}" --filter status=running --format '{{.Names}}' 2>/dev/null)" || {
+    if installer_directory_has_data "${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}"; then
+      echo 'Не удалось проверить Docker-панель. Проверьте Docker Engine перед обычной установкой.' >&2
+      return 1
+    fi
+    return 0
+  }
+  [[ -z "$running" ]] || {
+    echo 'Остановите Docker-панель перед обычной установкой. Одновременно используйте один вариант управления файрволлом.' >&2
+    return 1
+  }
+}
+
 installer_status() {
   installer_detect_installations
   local native='не установлена' compose='не установлен' state
@@ -565,6 +581,7 @@ main() {
     configure) FIREWALL_UI_RECONFIGURE=1;;
   esac
   check_system
+  installer_require_native_exclusive || return 1
   UPDATE_CHANNEL="${FIREWALL_UI_UPDATE_CHANNEL:-}"
   if [[ -z "$UPDATE_CHANNEL" && -f "$CONFIG_DIR/config.json" ]]; then UPDATE_CHANNEL="$(sed -n 's/.*"updateChannel":[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG_DIR/config.json" | head -n 1)"; fi
   UPDATE_CHANNEL="${UPDATE_CHANNEL:-stable}"

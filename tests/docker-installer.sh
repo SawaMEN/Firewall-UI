@@ -21,6 +21,7 @@ docker_download_source() {
 }
 docker() {
  printf '%s\n' "$*" >> "$FIXTURE/commands"
+ if [[ "$1 ${2:-}" == 'image inspect' && "$*" == *'{{.Id}}'* ]]; then echo previous-image; return 0; fi
  if [[ "$1" == inspect && "$*" == *'.State.Running'* ]]; then echo 'true false'; return; fi
  if [[ "$1" == network && "$2" == inspect ]]; then return 1; fi
  if [[ "$1" == ps && "${MOCK_RESOURCES:-0}" == 1 ]]; then echo fixture-container; return 0; fi
@@ -123,3 +124,31 @@ docker_uninstall
  if docker_install install; then echo 'Ignored first image download failure'; exit 1; fi
  [[ ! -e "$DOCKER_DIR" ]]
 )
+
+# A failed first startup must stop partial containers and restore the absent
+# runtime config. A retry must still perform first-install configuration.
+(
+ DOCKER_DIR="$FIXTURE/failed-startup"
+ docker_apply_runtime_settings() { printf 'new runtime settings' > "$FIXTURE/volume/config.json"; }
+ docker_wait_for_service() { return "${MOCK_START_RESULT:-0}"; }
+ rm -f "$FIXTURE/volume/config.json"
+ : > "$FIXTURE/commands"
+ export MOCK_START_RESULT=1
+ if docker_install install; then echo 'Ignored failed first startup'; exit 1; fi
+ [[ ! -e "$DOCKER_DIR/deployment" && ! -e "$FIXTURE/volume/config.json" ]]
+ [[ "$(cat "$FIXTURE/commands")" == *' stop'* ]]
+ export MOCK_START_RESULT=0
+ docker_install install
+ [[ -e "$DOCKER_DIR/deployment" && -s "$FIXTURE/volume/config.json" ]]
+ # Configuration failure must restore the runtime file, metadata and image.
+ cp "$DOCKER_DIR/docker.env" "$FIXTURE/start-env-before"
+ printf 'previous runtime settings' > "$FIXTURE/volume/config.json"
+ export MOCK_START_RESULT=1 FIREWALL_UI_PORT=10090
+ : > "$FIXTURE/commands"
+ if docker_install configure; then echo 'Ignored failed reconfiguration'; exit 1; fi
+ cmp "$FIXTURE/start-env-before" "$DOCKER_DIR/docker.env"
+ [[ "$(cat "$FIXTURE/volume/config.json")" == 'previous runtime settings' ]]
+ [[ "$(cat "$FIXTURE/commands")" == *'tag previous-image firewall-ui:stable'* ]]
+ [[ "$(cat "$FIXTURE/commands")" == *' up -d --no-build'* ]]
+)
+echo 'Failed Docker startup and runtime rollback/retry passed'

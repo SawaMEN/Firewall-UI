@@ -189,6 +189,9 @@ func (s *FirewallService) SetManagedEnabledSafe(ctx context.Context, enabled boo
 			return FirewallManagedStatus{}, err
 		}
 	}
+	if err := s.reconcileManagedPingStateLocked(enabled); err != nil {
+		return FirewallManagedStatus{}, err
+	}
 	return s.managedStatusSafeLocked(ctx, safetyPort)
 }
 

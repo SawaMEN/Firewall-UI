@@ -65,3 +65,11 @@ cleanup
 [[ "$(cat "$MANAGER")" == 'old manager' && "$(cat "$SERVICE_FILE")" == 'old unit' ]]
 [[ "$(tail -n 1 "$FIXTURE/systemctl")" == 'restart firewall-ui.service' ]]
 printf 'Installer firewall detection, repeat-install, checksum and rollback tests passed\n'
+
+# Native installation must not run alongside an active Compose panel.
+MOCK_COMMANDS=docker
+docker() { printf '%s' "${MOCK_RUNNING_COMPOSE:-}"; }
+MOCK_RUNNING_COMPOSE=firewall-ui
+if installer_require_native_exclusive; then echo 'Allowed simultaneous panels'; exit 1; fi
+MOCK_RUNNING_COMPOSE=''
+installer_require_native_exclusive

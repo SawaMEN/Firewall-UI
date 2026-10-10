@@ -182,7 +182,7 @@ docker_write_volume_credentials() {
 docker_apply_runtime_settings() {
   docker_compose run --rm --no-deps -T firewall-ui -save-config \
     -listen "$(docker_read_setting FIREWALL_UI_DOCKER_HOST 127.0.0.1):$(docker_read_setting FIREWALL_UI_DOCKER_PORT 8088)" \
-    -public-host '' -external-port 0 -secure-cookies=false
+    -public-host '' -external-port 0 -tls-cert '' -tls-key '' -secure-cookies=false
 }
 
 docker_runtime_backup() {
@@ -229,7 +229,7 @@ docker_show_access() {
 
 docker_install() (
   set -Eeuo pipefail
-  local action="${1:-install}" first=0 old_mode='' stage succeeded=0 stopped=0 runtime_saved=0 old_image=''
+  local action="${1:-install}" first=0 old_mode='' stage succeeded=0 stopped=0 runtime_saved=0 old_image='' up_attempted=0
   docker_require_engine || return 1
   if systemctl is-active --quiet firewall-ui.service 2>/dev/null; then
     echo 'Остановите обычную панель: systemctl stop firewall-ui. Одновременно используйте один вариант управления файрволлом.' >&2
@@ -247,14 +247,20 @@ docker_install() (
   rollback() {
     local result=$?
     if (( !succeeded )); then
+      # A failed `up` can leave a new container running. Stop it before
+      # restoring the volume and restarting the previous deployment.
+      if ((up_attempted)); then docker_compose stop || echo 'Не удалось остановить новую Docker-панель.' >&2; fi
+      if ((runtime_saved)); then docker_runtime_backup restore || echo 'Не удалось восстановить конфигурацию в Docker-томе.' >&2; fi
       for file in deployment docker.env username password; do
-        if [[ -f "$stage/$file" ]]; then cp -p "$stage/$file" "$DOCKER_DIR/$file"; fi
+        if [[ -f "$stage/$file" ]]; then cp -p "$stage/$file" "$DOCKER_DIR/$file"
+        else rm -f -- "$DOCKER_DIR/$file"; fi
       done
       if [[ -d "$DOCKER_DIR/source.previous" ]]; then rm -rf -- "$DOCKER_DIR/source"; mv "$DOCKER_DIR/source.previous" "$DOCKER_DIR/source"; fi
+      [[ -z "$old_image" ]] || docker tag "$old_image" firewall-ui:stable || true
       if ((stopped)) && [[ -n "$old_mode" ]]; then
-        [[ -z "$old_image" ]] || docker tag "$old_image" firewall-ui:stable || true
-        if ((runtime_saved)); then docker_runtime_backup restore || echo 'Не удалось восстановить конфигурацию в Docker-томе.' >&2; fi
-        docker_compose_mode "$old_mode" up -d --no-build || echo 'Не удалось запустить предыдущую панель Docker Compose.' >&2
+        if docker_compose_mode "$old_mode" up -d --no-build; then
+          docker_wait_for_service || echo 'Предыдущая Docker-панель не прошла проверку запуска.' >&2
+        else echo 'Не удалось запустить предыдущую панель Docker Compose.' >&2; fi
       fi
       echo 'Установка Docker Compose не завершена. Настройки сохранены для повторной попытки.' >&2
     fi
@@ -272,8 +278,8 @@ docker_install() (
   old_image="$(docker image inspect firewall-ui:stable --format '{{.Id}}' 2>/dev/null || true)"
   docker_download_image || return 1
   if [[ -n "$old_mode" ]]; then
-    docker_compose_mode "$old_mode" stop || return 1
     stopped=1
+    docker_compose_mode "$old_mode" stop || return 1
   fi
   if ((first)) || [[ "$action" == configure || "$old_mode" != host ]]; then
     docker_runtime_backup save || return 1
@@ -281,6 +287,7 @@ docker_install() (
     docker_apply_runtime_settings || return 1
   fi
   if ((first)); then docker_write_volume_credentials || return 1; fi
+  up_attempted=1
   docker_compose up -d --no-build || return 1
   docker_wait_for_service || return 1
   install -m 0755 "${BASH_SOURCE[0]}" "$DOCKER_MANAGER" || return 1

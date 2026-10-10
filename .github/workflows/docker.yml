@@ -95,6 +95,13 @@ jobs:
           python3 tests/docker_host.py
           sudo -E bash install.sh --compose
           sudo -E bash install.sh --compose-configure
+          # An occupied port must fail and restore the previous running panel.
+          if sudo -E env FIREWALL_UI_PORT=18889 bash install.sh --compose-configure; then
+            echo 'Reconfiguration unexpectedly accepted an occupied port' >&2
+            exit 1
+          fi
+          sudo grep -qx 'FIREWALL_UI_DOCKER_PORT=18089' "$FIREWALL_UI_DOCKER_DIR/docker.env"
+          python3 tests/docker_host.py
           sudo -E bash install.sh --compose-reset-password
           python3 tests/docker_host.py
           docker run --rm --network host --privileged --mount type=volume,src=firewall-ui-installer-ci_firewall-ui-data,dst=/var/lib/firewall-ui --entrypoint sh firewall-ui:stable -c '

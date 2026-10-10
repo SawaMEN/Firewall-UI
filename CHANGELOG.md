@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.19
+
+- Prevent native installation while the Compose panel is running.
+- Stop partial Docker deployments and restore runtime configuration, metadata and image after failed updates; allow failed first installations to be retried correctly.
+- Clear retained TLS settings when explicitly selecting Docker HTTP access.
+- Apply ping preferences only while panel firewall management is enabled; restore echo replies immediately when disabling it.
+- Verify Docker rollback with an occupied port on both supported architectures.
+
 ## 1.2.18
 
 - Restore owned IPv4/IPv6 ping bans during removal; tolerate missing systemd units and recover cleanup when installed binaries or Compose metadata are missing.

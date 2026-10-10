@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -84,5 +85,43 @@ func TestFirewallPingDisabledIfEitherFamilyIgnoresEcho(t *testing.T) {
 	}
 	if enabled {
 		t.Fatal("ping reported enabled while IPv6 echo replies are disabled")
+	}
+}
+
+func TestPingPreferenceRespectsDisabledManagementWithActiveUFW(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ping")
+	writePingTestFile(t, path, "0")
+	useFirewallPingTestPaths(t, path)
+	if err := os.WriteFile(filepath.Join(dir, "ufw"), []byte("#!/bin/sh\ncase \"$*\" in status*) echo 'Status: active';; esac\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	Configure(filepath.Join(dir, "state.json"), 8088, 0)
+	if err := setFirewallManagedEnabledPreference(false); err != nil {
+		t.Fatal(err)
+	}
+	s := &FirewallService{}
+	ctx := context.Background()
+	if _, err := s.SetManagedPingEnabledSafe(ctx, false, 8088); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ReconcileManagedPingState(ctx, 8088); err != nil {
+		t.Fatal(err)
+	}
+	if on, err := readFirewallPingEnabled(); err != nil || !on {
+		t.Fatalf("disabled management applied ping ban: %v, %v", on, err)
+	}
+	if _, err := s.SetManagedEnabledSafe(ctx, true, 8088); err != nil {
+		t.Fatal(err)
+	}
+	if on, err := readFirewallPingEnabled(); err != nil || on {
+		t.Fatalf("enable did not apply saved ping ban: %v, %v", on, err)
+	}
+	if _, err := s.SetManagedEnabledSafe(ctx, false, 8088); err != nil {
+		t.Fatal(err)
+	}
+	if on, err := readFirewallPingEnabled(); err != nil || !on {
+		t.Fatalf("disable did not immediately restore ping: %v, %v", on, err)
 	}
 }
