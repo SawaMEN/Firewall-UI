@@ -277,13 +277,13 @@ switch_docker_to_native() (
 )
 
 installer_switch_variant() {
-  local target="$1" source_label target_label answer
+  local target="$1" source_label target_label answer display_label
   if [[ "$target" == docker ]]; then
-    source_label='обычную'; target_label='Docker'; 
+    source_label='обычную'; display_label='обычная'; target_label='Docker'; 
   else
-    source_label='Docker'; target_label='обычную';
+    source_label='Docker'; display_label='Docker'; target_label='обычную';
   fi
-  echo "Обнаружена установленная $source_label версия Firewall-UI."
+  echo "Обнаружена установленная $display_label версия Firewall-UI."
   if [[ "${INSTALL_INTERACTIVE:-0}" == 1 ]]; then
     ask answer "Удалить $source_label версию и установить $target_label с сохранением настроек? (y/n)" n || return 1
     case "${answer,,}" in
