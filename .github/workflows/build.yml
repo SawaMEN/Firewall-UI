@@ -132,8 +132,8 @@ jobs:
         run: |
           set -euo pipefail
           docker build -f tests/linux-distro.Dockerfile --build-arg "DISTRO=$DISTRO" -t firewall-ui-distro .
-          docker run -d --name firewall-ui-distro --privileged --cgroupns=private --tmpfs /run --tmpfs /run/lock -v /sys/fs/cgroup:/sys/fs/cgroup:rw firewall-ui-distro
-          trap 'docker logs firewall-ui-distro; docker exec firewall-ui-distro journalctl --no-pager -u firewall-ui.service || true; docker rm -f firewall-ui-distro' EXIT
+          docker run -dt --name firewall-ui-distro --privileged --cgroupns=host --tmpfs /run --tmpfs /run/lock -v /sys/fs/cgroup:/sys/fs/cgroup:rw firewall-ui-distro
+          trap 'docker inspect firewall-ui-distro --format "{{json .State}}"; docker logs firewall-ui-distro; docker exec firewall-ui-distro journalctl --no-pager -u firewall-ui.service || true; docker rm -f firewall-ui-distro' EXIT
           for attempt in {1..30}; do
             if docker exec firewall-ui-distro systemctl list-units --no-pager >/dev/null 2>&1; then break; fi
             sleep 1
