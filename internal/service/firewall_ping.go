@@ -183,3 +183,30 @@ func (s *FirewallService) SetManagedPingEnabledSafe(ctx context.Context, enabled
 	}
 	return s.managedStatusSafeLocked(ctx, safetyPort)
 }
+
+// Restore echo replies only when the panel saved a ping policy. Missing state
+// is a read-only no-op, including cleanup of incomplete installations.
+func cleanupManagedPing() error {
+	setting, err := (&SettingService{}).getSetting(firewallPingEnabledKey)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	enabled, err := strconv.ParseBool(strings.TrimSpace(setting.Value))
+	if err != nil {
+		return err
+	}
+	if enabled {
+		return nil
+	}
+	states, err := readFirewallPingSysctls()
+	if err != nil {
+		return err
+	}
+	if len(states) == 0 {
+		return nil
+	}
+	return writeFirewallPingEnabled(true)
+}

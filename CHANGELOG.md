@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.18
+
+- Restore owned IPv4/IPv6 ping bans during removal; tolerate missing systemd units and recover cleanup when installed binaries or Compose metadata are missing.
+- Build and test amd64/arm64 container images on GitHub and publish verified ready-to-load images with releases. Install/update without server-side builds or Buildx.
+- Avoid recreating state during cleanup, omit unused data directories and reject missing bind paths instead of creating empty host folders.
+
 ## 1.2.17
 
 - Select installation type with 1 (native), 2 (Docker Compose), or 0 (back to the main menu).

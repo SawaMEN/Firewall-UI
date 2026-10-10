@@ -56,7 +56,7 @@ main --docker-uninstall
 for action in --compose --compose-configure --compose-reset-password --compose-uninstall; do main "$action"; done
 [[ "$(tail -n 4 "$FIXTURE/actions")" == $'docker install\ndocker configure\ndocker reset-password\ndocker uninstall' ]]
 # A single purge removes both variants, even if the first reports failure.
-mkdir -p "$FIREWALL_UI_DOCKER_DIR"
+mkdir -p "$FIREWALL_UI_DOCKER_DIR"; touch "$FIREWALL_UI_DOCKER_DIR/.installer-managed"
 : > "$FIXTURE/actions"
 main --uninstall
 [[ "$(cat "$FIXTURE/actions")" == $'docker uninstall\nuninstall --purge' ]]
@@ -71,6 +71,13 @@ run_installer_docker_action() { printf 'docker %s\n' "$1" >> "$TASK_MENU_LOG"; }
 main --reset-password
 main --configure
 [[ "$(cat "$FIXTURE/actions")" == $'docker reset-password\ndocker configure' ]]
+# Empty folders are neither installed panels nor recreated by deletion.
+rm -rf "$INSTALL_DIR" "$FIREWALL_UI_DOCKER_DIR"
+mkdir -p "$INSTALL_DIR" "$CONFIG_DIR" "$STATE_DIR" "$FIREWALL_UI_DOCKER_DIR"
+installer_detect_installations
+[[ "$NATIVE_INSTALLED" == 0 && "$COMPOSE_INSTALLED" == 0 ]]
+main --uninstall
+[[ ! -d "$INSTALL_DIR" && ! -d "$CONFIG_DIR" && ! -d "$STATE_DIR" && ! -d "$FIREWALL_UI_DOCKER_DIR" ]]
 source "$TASK_ROOT/deploy/firewall-ui"
 require_root() { :; }
 BIN="$FIXTURE/binary"; ENV_FILE="$FIXTURE/environment"

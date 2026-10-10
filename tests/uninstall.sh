@@ -60,6 +60,29 @@ uninstall_service <<< 'y'
 [[ "$(cat "$FIXTURE/systemctl")" == *'stop --no-block firewall-ui.service'* ]]
 [[ "$(cat "$FIXTURE/systemctl")" == *'stop --no-block firewall-ui-cert-renew.timer'* ]]
 [[ "$(cat "$FIXTURE/systemctl")" == *'kill --kill-whom=all --signal=SIGKILL firewall-ui.service'* ]]
+# Old binary cleanup also restores owned IPv4/IPv6 ping restrictions.
+prepare
+export FIREWALL_UI_SYSCTL_DIR="$FIXTURE/sysctl"
+mkdir -p "$FIREWALL_UI_SYSCTL_DIR/net/ipv4" "$FIREWALL_UI_SYSCTL_DIR/net/ipv6/icmp"
+printf '1\n' > "$FIREWALL_UI_SYSCTL_DIR/net/ipv4/icmp_echo_ignore_all"
+printf '1\n' > "$FIREWALL_UI_SYSCTL_DIR/net/ipv6/icmp/echo_ignore_all"
+printf '{"firewallPingEnabled":"false"}' > "$STATE_DIR/state.json"
+uninstall_service --purge
+[[ "$(cat "$FIREWALL_UI_SYSCTL_DIR/net/ipv4/icmp_echo_ignore_all")" == 0 ]]
+[[ "$(cat "$FIREWALL_UI_SYSCTL_DIR/net/ipv6/icmp/echo_ignore_all")" == 0 ]]
+prepare
+rm -f "$BIN"
+cleanup_missing_binary() { printf 'recovered\n' > "$FIXTURE/recovery"; }
+uninstall_service --purge
+[[ -f "$FIXTURE/recovery" && ! -d "$INSTALL_DIR" ]]
+# systemd can return an error for units that were never installed.
+(
+ systemctl() {
+   if [[ "$*" == *LoadState* ]]; then echo not-found; return 1; fi
+   return 1
+ }
+ stop_uninstall_unit firewall-ui-cert-renew.timer
+)
 # Installer records only a newly added firewalld layer; existing runtime ports
 # belong to the administrator and must survive removal.
 source "$TASK_ROOT/install.sh"

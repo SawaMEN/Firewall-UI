@@ -5,11 +5,13 @@ FIXTURE="$(mktemp -d)"; trap 'rm -rf -- "$FIXTURE"' EXIT
 source "$TASK_ROOT/deploy/firewall-ui-docker"
 DOCKER_DIR="$FIXTURE/install"; DOCKER_MANAGER="$FIXTURE/manager"
 DOCKER_INTERACTIVE=0
+export MOCK_RESOURCES=1
 export FIREWALL_UI_USERNAME=admin FIREWALL_UI_PASSWORD='1$HOME`id`"\' FIREWALL_UI_DOCKER_HOST=127.0.0.1
 export FIREWALL_UI_DOCKER_PORTS=1 FIREWALL_UI_PORT=8088
 mkdir -p "$FIXTURE/volume"
 # No real Docker, firewall, package or service operations are permitted here.
 docker_require_engine() { :; }
+docker_download_image() { printf 'download image\n' >> "$FIXTURE/commands"; return "${MOCK_IMAGE_RESULT:-0}"; }
 systemctl() { return 1; }
 sleep() { :; }
 docker_download_source() {
@@ -21,10 +23,16 @@ docker() {
  printf '%s\n' "$*" >> "$FIXTURE/commands"
  if [[ "$1" == inspect && "$*" == *'.State.Running'* ]]; then echo 'true false'; return; fi
  if [[ "$1" == network && "$2" == inspect ]]; then return 1; fi
+ if [[ "$1" == ps && "${MOCK_RESOURCES:-0}" == 1 ]]; then echo fixture-container; return 0; fi
+ if [[ "$1 ${2:-}" == 'volume ls' && "${MOCK_RESOURCES:-0}" == 1 ]]; then printf 'fixture-config\nfixture-data\n'; return 0; fi
+ if [[ "$1 ${2:-}" == 'volume inspect' ]]; then
+  case "${@: -1}" in fixture-config) echo firewall-ui-config;; fixture-data) echo firewall-ui-data;; esac
+  return 0
+ fi
+ if [[ "$1" == run && "$*" == *-cleanup-firewall* ]]; then return "${MOCK_CLEANUP_RESULT:-0}"; fi
  if [[ "$1" == compose ]]; then
   case "$*" in
    *'ps -q firewall-ui') echo fixture-container;;
-   *'build') return "${MOCK_BUILD_RESULT:-0}";;
    *'-cleanup-firewall') return "${MOCK_CLEANUP_RESULT:-0}";;
    *'--entrypoint sh firewall-ui -c'*)
     local -a args=("$@")
@@ -67,13 +75,13 @@ FIREWALL_UI_PASSWORD='new$`id`"\'
 docker_reset_password
 [[ "$(cat "$FIXTURE/volume/environment")" == *'FIREWALL_UI_USERNAME="web-user"'* ]]
 [[ "$(cat "$FIXTURE/volume/environment")" == *'FIREWALL_UI_PASSWORD="new$`id`\"\\"'* ]]
-# A build failure restores installer settings without deleting the installation.
+# An image download failure restores installer settings without deleting the installation.
 cp "$DOCKER_DIR/docker.env" "$FIXTURE/env-before"
-export MOCK_BUILD_RESULT=1 FIREWALL_UI_PORT=9090
-if (docker_install configure); then echo 'Ignored failed Docker build'; exit 1; fi
+export MOCK_IMAGE_RESULT=1 FIREWALL_UI_PORT=9090
+if (docker_install configure); then echo 'Ignored failed image download'; exit 1; fi
 cmp "$FIXTURE/env-before" "$DOCKER_DIR/docker.env"
 [[ -d "$DOCKER_DIR/source" ]]
-unset MOCK_BUILD_RESULT
+unset MOCK_IMAGE_RESULT
 # Never remove files/volumes after failed cleanup; remove them after success.
 export MOCK_CLEANUP_RESULT=1
 if docker_uninstall; then echo 'Ignored failed Docker cleanup'; exit 1; fi
@@ -81,5 +89,37 @@ if docker_uninstall; then echo 'Ignored failed Docker cleanup'; exit 1; fi
 export MOCK_CLEANUP_RESULT=0
 docker_uninstall
 [[ ! -e "$DOCKER_DIR" && ! -e "$DOCKER_MANAGER" ]]
-[[ "$(cat "$FIXTURE/commands")" == *'down -v --remove-orphans'* ]]
+[[ "$(cat "$FIXTURE/commands")" == *'volume rm fixture-data'* ]]
 echo 'Docker installer settings, literal passwords, update preservation, reset and purge passed'
+
+# Missing metadata and empty leftovers no longer require an installed binary.
+mkdir -p "$DOCKER_DIR"; touch "$DOCKER_DIR/.installer-managed"
+docker_uninstall
+[[ ! -e "$DOCKER_DIR" ]]
+export MOCK_RESOURCES=0
+mkdir -p "$DOCKER_DIR"
+: > "$FIXTURE/commands"
+docker_uninstall
+[[ ! -e "$DOCKER_DIR" && "$(cat "$FIXTURE/commands")" != *'download image'* ]]
+
+# Verify checksums before loading ready images; never invoke a local build.
+(
+ source "$TASK_ROOT/deploy/firewall-ui-docker"
+ printf 'ready-image-fixture' > "$FIXTURE/image.tar.gz"
+ export FIREWALL_UI_DOCKER_IMAGE_ARCHIVE="$FIXTURE/image.tar.gz"
+ export FIREWALL_UI_DOCKER_IMAGE_SHA256="$(sha256sum "$FIREWALL_UI_DOCKER_IMAGE_ARCHIVE" | awk '{print $1}')"
+ : > "$FIXTURE/commands"
+ docker_download_image
+ [[ "$(cat "$FIXTURE/commands")" == *'load -i'* ]]
+ : > "$FIXTURE/commands"
+ export FIREWALL_UI_DOCKER_IMAGE_SHA256="$(printf '%064d' 0)"
+ if docker_download_image; then echo 'Loaded corrupt image'; exit 1; fi
+ [[ "$(cat "$FIXTURE/commands")" != *'load -i'* ]]
+)
+# A failed first download leaves no fake installation folder behind.
+(
+ DOCKER_DIR="$FIXTURE/failed-first-install"
+ export MOCK_IMAGE_RESULT=1
+ if docker_install install; then echo 'Ignored first image download failure'; exit 1; fi
+ [[ ! -e "$DOCKER_DIR" ]]
+)

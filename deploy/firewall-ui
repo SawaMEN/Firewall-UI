@@ -253,7 +253,8 @@ cleanup_access_rules() {
 wait_uninstall_unit() {
   local unit="$1" state attempt
   for ((attempt=0; attempt<10; attempt++)); do
-    state="$(systemctl show "$unit" --property=ActiveState --value 2>/dev/null)" || return 1
+    state="$(systemctl show "$unit" --property=ActiveState --value 2>/dev/null)" || true
+    if [[ "$(systemctl show "$unit" --property=LoadState --value 2>/dev/null || true)" == not-found ]]; then return 0; fi
     case "$state" in inactive|failed) return 0;; esac
     sleep 0.5
   done
@@ -279,6 +280,33 @@ stop_uninstall_unit() {
   return 1
 }
 
+cleanup_ping_rules() {
+  # Also repair ping policy left by older binaries without the new cleanup.
+  [[ -f "$STATE_DIR/state.json" ]] || return 0
+  if ! grep -Eq '"firewallPingEnabled"[[:space:]]*:[[:space:]]*"false"' "$STATE_DIR/state.json"; then return 0; fi
+  local path root="${FIREWALL_UI_SYSCTL_DIR:-/proc/sys}"
+  for path in "$root/net/ipv4/icmp_echo_ignore_all" "$root/net/ipv6/icmp/echo_ignore_all"; do
+    [[ -e "$path" ]] || continue
+    printf '0\n' > "$path" || { echo "Не удалось снять запрет пинга: $path" >&2; return 1; }
+  done
+}
+
+cleanup_missing_binary() (
+  local stage arch block url expected actual
+  stage="$(mktemp -d)"; trap 'rm -rf -- "$stage"' EXIT
+  arch="$(arch_name)" || return 1
+  curl -fLsS --retry 3 --connect-timeout 15 "https://github.com/$REPO/releases/latest/download/update.json" -o "$stage/update.json" || return 1
+  block="$(sed -n "/\"$arch\"[[:space:]]*:/,/^[[:space:]]*}/p" "$stage/update.json")"
+  url="$(printf '%s\n' "$block" | sed -n 's/.*"url":[[:space:]]*"\([^" ]*\)".*/\1/p' | head -n 1)"
+  expected="$(printf '%s\n' "$block" | sed -n 's/.*"sha256":[[:space:]]*"\([0-9A-Fa-f]*\)".*/\1/p' | head -n 1)"
+  [[ "$url" =~ ^https://github.com/${REPO}/releases/download/[A-Za-z0-9._-]+/firewall-ui-linux-${arch}$ && "$expected" =~ ^[0-9A-Fa-f]{64}$ ]] || return 1
+  curl -fLsS --retry 3 --connect-timeout 15 "$url" -o "$stage/binary" || return 1
+  actual="$(sha256_file "$stage/binary")"
+  [[ "${actual,,}" == "${expected,,}" ]] || return 1
+  chmod 0755 "$stage/binary" || return 1
+  "$stage/binary" -config "$CONFIG" -cleanup-firewall
+)
+
 uninstall_service() {
   require_root
   local mode="${1:-}" answer
@@ -291,14 +319,15 @@ uninstall_service() {
   for unit in firewall-ui-cert-renew.timer firewall-ui-cert-renew.service "${SERVICE}.service"; do
     stop_uninstall_unit "$unit" || return 1
   done
+  cleanup_ping_rules || return 1
   if [[ -x "$BIN" ]]; then
     if ! "$BIN" -config "$CONFIG" -cleanup-firewall; then
       echo 'Очистка правил не выполнена. Файлы сохранены; исправьте ошибку и повторите удаление.' >&2
       return 1
     fi
-  else
-    echo 'Нет бинарного файла для очистки правил. Восстановите установку перед удалением.' >&2
-    return 1
+  elif [[ -f "$CONFIG" || -f "$STATE_DIR/state.json" || -f "$UNIT_DIR/${SERVICE}.service" ]]; then
+    echo 'Бинарник отсутствует. Загружаем проверенный инструмент очистки без переустановки панели.'
+    cleanup_missing_binary || { echo 'Не удалось очистить правила. Файлы сохранены.' >&2; return 1; }
   fi
   if ! cleanup_access_rules; then
     echo 'Не удалось очистить правила доступа. Файлы сохранены для повторной попытки.' >&2

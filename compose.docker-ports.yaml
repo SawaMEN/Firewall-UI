@@ -1,5 +1,10 @@
-# Optional access to published Docker ports. This socket grants Docker control.
+# Optional socket access grants Docker control. The path must already exist.
 services:
   firewall-ui:
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        read_only: true
+        bind:
+          create_host_path: false

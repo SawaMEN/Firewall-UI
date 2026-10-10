@@ -106,3 +106,37 @@ func TestOwnedUFWDeleteArgs(t *testing.T) {
 		}
 	}
 }
+
+func TestCleanupRestoresOwnedPingAndDoesNotCreateEmptyState(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("PATH", root)
+	ipv4 := filepath.Join(root, "icmp4")
+	ipv6 := filepath.Join(root, "icmp6")
+	writePingTestFile(t, ipv4, "1")
+	writePingTestFile(t, ipv6, "1")
+	useFirewallPingTestPaths(t, ipv4, ipv6)
+	parent := filepath.Join(root, "missing-data")
+	Configure(filepath.Join(parent, "state.json"), 8088, 0)
+	if err := (&FirewallService{}).CleanupOwnedRules(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(parent); !os.IsNotExist(err) {
+		t.Fatalf("cleanup created data folder: %v", err)
+	}
+	raw, _ := os.ReadFile(ipv4)
+	if string(raw) != "1\n" {
+		t.Fatal("unmanaged ping policy changed")
+	}
+	if err := (&SettingService{}).setBool(firewallPingEnabledKey, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&FirewallService{}).CleanupOwnedRules(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{ipv4, ipv6} {
+		raw, err := os.ReadFile(path)
+		if err != nil || string(raw) != "0\n" {
+			t.Fatalf("ping ban remains: %s %s %v", path, raw, err)
+		}
+	}
+}

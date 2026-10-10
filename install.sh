@@ -401,6 +401,7 @@ cleanup() {
   fi
   [[ -z "${ACCESS_CANDIDATE:-}" ]] || rm -f -- "$ACCESS_CANDIDATE"
   [[ -z "$TEMP_DIR" ]] || rm -rf -- "$TEMP_DIR"
+  rmdir "$INSTALL_DIR" "$CONFIG_DIR" "$STATE_DIR" 2>/dev/null || true
   return "$result"
 }
 
@@ -408,13 +409,17 @@ require_installer_root() {
   [[ ${EUID:-$(id -u)} -eq 0 ]] || { echo 'Запустите установщик от root.' >&2; return 1; }
 }
 
+installer_directory_has_data() {
+  [[ -d "$1" && -n "$(find "$1" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]
+}
+
 installer_detect_installations() {
   NATIVE_INSTALLED=0; COMPOSE_INSTALLED=0
   local docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}"
-  if [[ -e "$INSTALL_DIR/firewall-ui" || -e "$SERVICE_FILE" || -d "$CONFIG_DIR" || -d "$STATE_DIR" ]]; then NATIVE_INSTALLED=1; fi
-  if [[ -d "$docker_dir" || -e "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/firewall-ui-docker}" ]]; then COMPOSE_INSTALLED=1; fi
+  if [[ -e "$INSTALL_DIR/firewall-ui" || -e "$SERVICE_FILE" ]] || installer_directory_has_data "$INSTALL_DIR" || installer_directory_has_data "$CONFIG_DIR" || installer_directory_has_data "$STATE_DIR"; then NATIVE_INSTALLED=1; fi
+  if installer_directory_has_data "$docker_dir" || [[ -e "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/firewall-ui-docker}" ]]; then COMPOSE_INSTALLED=1; fi
   if command -v docker >/dev/null 2>&1; then
-    if [[ -n "$(docker ps -aq --filter "label=com.docker.compose.project=${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}" 2>/dev/null)" ]]; then COMPOSE_INSTALLED=1; fi
+    if [[ -n "$(docker ps -aq --filter "label=com.docker.compose.project=${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}" 2>/dev/null)$(docker volume ls -q --filter "label=com.docker.compose.project=${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}" 2>/dev/null)" ]]; then COMPOSE_INSTALLED=1; fi
   fi
 }
 
@@ -495,6 +500,9 @@ select_installer_action() {
 installer_uninstall_all() {
   installer_detect_installations
   local result=0
+  # Empty leftovers are removable without downloading binaries or creating state.
+  rmdir "$INSTALL_DIR" "$CONFIG_DIR" "$STATE_DIR" "${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}" 2>/dev/null || true
+  installer_detect_installations
   if ((!NATIVE_INSTALLED && !COMPOSE_INSTALLED)); then echo 'Firewall-UI не установлен.'; return 0; fi
   # Try both variants even if one fails; retain failure status and diagnostics.
   if ((COMPOSE_INSTALLED)); then run_installer_docker_action uninstall || result=1; fi
@@ -570,7 +578,7 @@ main() {
   fetch_repo_file deploy/firewall-ui "$TEMP_DIR/manager"
   fetch_repo_file deploy/firewall-ui.service "$TEMP_DIR/service"
   install -d -m 0755 "$INSTALL_DIR"
-  install -d -m 0700 "$CONFIG_DIR" "$STATE_DIR"
+  install -d -m 0700 "$CONFIG_DIR"
   if [[ -f "$CONFIG_DIR/config.json" ]]; then cp -p "$CONFIG_DIR/config.json" "$TEMP_DIR/previous-config"; fi
   create_settings
   "$TEMP_DIR/binary" -config "$CONFIG_FILE" -check-config

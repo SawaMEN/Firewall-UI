@@ -1,7 +1,7 @@
 name: Publish releases
 on:
   workflow_run:
-    workflows: ['Build and test']
+    workflows: ['Build and test', 'Docker build']
     types: [completed]
 permissions:
   contents: write
@@ -21,14 +21,37 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Find verified binary and image builds
+        id: builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_COMMIT: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$BUILD_COMMIT&per_page=100" > /tmp/firewall-ui-runs.json
+          BINARY_RUN=$(jq -r '[.workflow_runs[] | select(.name == "Build and test" and .conclusion == "success")] | first | .id // empty' /tmp/firewall-ui-runs.json)
+          DOCKER_RUN=$(jq -r '[.workflow_runs[] | select(.name == "Docker build" and .conclusion == "success")] | first | .id // empty' /tmp/firewall-ui-runs.json)
+          if [[ -z "$BINARY_RUN" || -z "$DOCKER_RUN" ]]; then echo 'Both builds must pass before release.'; exit 0; fi
+          echo "binary_run=$BINARY_RUN" >> "$GITHUB_OUTPUT"
+          echo "docker_run=$DOCKER_RUN" >> "$GITHUB_OUTPUT"
+          echo 'ready=true' >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
+        if: steps.builds.outputs.ready == 'true'
         with:
           pattern: firewall-ui-linux-*
           merge-multiple: true
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ steps.builds.outputs.binary_run }}
           github-token: ${{ github.token }}
           path: .
+      - uses: actions/download-artifact@v4
+        if: steps.builds.outputs.ready == 'true'
+        with:
+          pattern: firewall-ui-docker-*
+          merge-multiple: true
+          run-id: ${{ steps.builds.outputs.docker_run }}
+          github-token: ${{ github.token }}
+          path: release-images
       - name: Publish verified artifacts
+        if: steps.builds.outputs.ready == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           BUILD_COMMIT: ${{ github.event.workflow_run.head_sha }}
@@ -54,4 +77,10 @@ jobs:
           fi
           python3 scripts/release-manifest.py stable "$STABLE_VERSION" "$TAG"
           gh release create "$TAG" --target "$BUILD_COMMIT" --title "Firewall-UI $STABLE_VERSION" --generate-notes \
-            dist-stable/firewall-ui-linux-amd64 dist-stable/firewall-ui-linux-arm64 dist-stable/update.json install.sh
+            dist-stable/firewall-ui-linux-amd64 dist-stable/firewall-ui-linux-arm64 dist-stable/update.json install.sh release-images/*.tar.gz release-images/docker-update.json
+      - name: Verify public ready-image download
+        if: steps.builds.outputs.ready == 'true'
+        run: |
+          source deploy/firewall-ui-docker
+          docker_download_image
+          test "$(docker run --rm --entrypoint /usr/local/bin/firewall-ui firewall-ui:stable -version)" = "$(tr -d '[:space:]' < VERSION)"

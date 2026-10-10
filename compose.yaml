@@ -1,7 +1,7 @@
 services:
   firewall-ui:
-    build: .
-    image: firewall-ui:local
+    image: firewall-ui:stable
+    pull_policy: never
     restart: unless-stopped
     network_mode: host
     pid: host
@@ -13,7 +13,12 @@ services:
     volumes:
       - firewall-ui-config:/etc/firewall-ui
       - firewall-ui-data:/var/lib/firewall-ui
-      - /etc/ssh:/etc/ssh:ro
+      - type: bind
+        source: /etc/ssh
+        target: /etc/ssh
+        read_only: true
+        bind:
+          create_host_path: false
     logging:
       driver: json-file
       options:

@@ -41,7 +41,15 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - name: Validate Compose and build image
@@ -51,6 +59,11 @@ jobs:
           docker compose config --quiet
           docker compose -f compose.yaml -f compose.docker-ports.yaml config --quiet
           docker build --build-arg VCS_REF="$GITHUB_SHA" -t firewall-ui:test .
+      - name: Export ready image
+        run: |
+          docker tag firewall-ui:test firewall-ui:stable
+          mkdir -p release-images
+          docker save firewall-ui:stable | gzip -1 > release-images/firewall-ui-docker-linux-${{ matrix.arch }}.tar.gz
       - name: Verify startup and shutdown
         run: |
           docker run --rm firewall-ui:test -version
@@ -75,15 +88,29 @@ jobs:
         run: |
           python3 -m http.server 18889 --bind 127.0.0.1 >/tmp/firewall-ui-host-probe.log 2>&1 &
           PROBE_PID=$!
-          trap 'kill "$PROBE_PID" || true; sudo -E bash deploy/firewall-ui-docker uninstall || true' EXIT
+          export FIREWALL_UI_DOCKER_IMAGE_ARCHIVE="$PWD/release-images/firewall-ui-docker-linux-${{ matrix.arch }}.tar.gz"
+          export FIREWALL_UI_DOCKER_IMAGE_SHA256="$(sha256sum "$FIREWALL_UI_DOCKER_IMAGE_ARCHIVE" | awk '{print $1}')"
+          trap 'sudo sysctl -w net.ipv4.icmp_echo_ignore_all=0 >/dev/null; kill "$PROBE_PID" || true; sudo -E bash deploy/firewall-ui-docker uninstall || true' EXIT
           sudo -E bash install.sh --compose
           python3 tests/docker_host.py
           sudo -E bash install.sh --compose
           sudo -E bash install.sh --compose-configure
           sudo -E bash install.sh --compose-reset-password
           python3 tests/docker_host.py
-          sudo -E bash install.sh --compose-uninstall
+          docker run --rm --network host --privileged --mount type=volume,src=firewall-ui-installer-ci_firewall-ui-data,dst=/var/lib/firewall-ui --entrypoint sh firewall-ui:stable -c '
+            printf "{\"firewallPingEnabled\":\"false\"}" > /var/lib/firewall-ui/state.json
+            printf "1\n" > /proc/sys/net/ipv4/icmp_echo_ignore_all
+            if [ -f /proc/sys/net/ipv6/icmp/echo_ignore_all ]; then printf "1\n" > /proc/sys/net/ipv6/icmp/echo_ignore_all; fi
+          '
+          sudo -E bash install.sh --uninstall
+          test "$(sysctl -n net.ipv4.icmp_echo_ignore_all)" = 0
+          if [ -f /proc/sys/net/ipv6/icmp/echo_ignore_all ]; then test "$(sysctl -n net.ipv6.icmp.echo_ignore_all)" = 0; fi
           test ! -e "$FIREWALL_UI_DOCKER_DIR"
           test ! -e "$FIREWALL_UI_DOCKER_MANAGER"
           test -z "$(docker ps -aq --filter label=com.docker.compose.project=firewall-ui-installer-ci)"
           test -z "$(docker volume ls -q --filter label=com.docker.compose.project=firewall-ui-installer-ci)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firewall-ui-docker-${{ matrix.arch }}
+          path: release-images/*
+          retention-days: 3

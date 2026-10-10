@@ -60,12 +60,11 @@ docker_install_plugin() (
   set -Eeuo pipefail
   local plugin="$1" version arch asset stage expected actual base
   case "$(uname -m)" in x86_64|amd64) arch=amd64;; aarch64|arm64) arch=arm64;; *) return 1;; esac
-  if [[ "$plugin" == compose ]]; then
-    version=v5.6.0
-    [[ "$arch" != amd64 ]] || arch=x86_64
-    [[ "$arch" != arm64 ]] || arch=aarch64
-    asset="docker-compose-linux-$arch"
-  else version=v0.38.0; asset="buildx-${version}.linux-$arch"; fi
+  [[ "$plugin" == compose ]] || return 1
+  version=v5.6.0
+  [[ "$arch" != amd64 ]] || arch=x86_64
+  [[ "$arch" != arm64 ]] || arch=aarch64
+  asset="docker-compose-linux-$arch"
   stage="$(mktemp -d)"; trap 'rm -rf -- "$stage"' EXIT
   base="https://github.com/docker/$plugin/releases/download/$version"
   curl -fLsS --retry 3 "$base/checksums.txt" -o "$stage/checksums"
@@ -82,7 +81,7 @@ docker_require_engine() {
   case "$(uname -m)" in x86_64|amd64|aarch64|arm64) ;; *) echo 'Поддерживаются amd64 и arm64.' >&2; return 1;; esac
   if ! command -v docker >/dev/null; then
     echo 'Docker не найден. Устанавливаем Docker Engine...'
-    if command -v pacman >/dev/null; then pacman -S --needed --noconfirm docker docker-compose docker-buildx
+    if command -v pacman >/dev/null; then pacman -S --needed --noconfirm docker docker-compose
     elif command -v apt-get >/dev/null; then apt-get update; DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io curl ca-certificates
     elif command -v dnf >/dev/null; then dnf install -y moby-engine curl ca-certificates
     elif command -v zypper >/dev/null; then zypper --non-interactive install docker curl ca-certificates
@@ -95,7 +94,6 @@ docker_require_engine() {
   [[ "$(docker info --format '{{json .SecurityOptions}}')" != *rootless* ]] || { echo 'Нужен обычный Docker Engine, не rootless: панель управляет файрволлом хоста.' >&2; return 1; }
   if ! command -v curl >/dev/null; then echo 'Установите curl и ca-certificates.' >&2; return 1; fi
   docker compose version >/dev/null 2>&1 || docker_install_plugin compose || return 1
-  docker buildx version >/dev/null 2>&1 || docker_install_plugin buildx || return 1
 }
 
 docker_select_settings() {
@@ -130,21 +128,40 @@ docker_initial_credentials() {
 
 docker_download_source() (
   set -Eeuo pipefail
-  local stage
+  local stage file
   stage="$(mktemp -d "$DOCKER_DIR/.download-XXXXXX")"; trap 'rm -rf -- "$stage"' EXIT
   mkdir "$stage/source"
-  if [[ -n "${FIREWALL_UI_DOCKER_SOURCE:-}" ]]; then
-    tar --exclude=.git --exclude=node_modules --exclude=internal/webassets/dist --exclude=.env --exclude='.env.*' \
-      -cf "$stage/source.tar" -C "$FIREWALL_UI_DOCKER_SOURCE" .
-    tar -xf "$stage/source.tar" -C "$stage/source" || return 1
-  else
-    curl -fLsS --retry 3 https://github.com/SawaMEN/Firewall-UI/archive/refs/heads/main.tar.gz -o "$stage/source.tar.gz" || return 1
-    tar -xzf "$stage/source.tar.gz" --strip-components=1 -C "$stage/source" || return 1
-  fi
-  [[ -f "$stage/source/Dockerfile" && -f "$stage/source/compose.yaml" ]] || return 1
+  for file in compose.yaml compose.docker-ports.yaml; do
+    if [[ -n "${FIREWALL_UI_DOCKER_SOURCE:-}" ]]; then cp "$FIREWALL_UI_DOCKER_SOURCE/$file" "$stage/source/$file" || return 1
+    else curl -fLsS --retry 3 "https://raw.githubusercontent.com/SawaMEN/Firewall-UI/main/$file" -o "$stage/source/$file" || return 1; fi
+  done
   rm -rf -- "$DOCKER_DIR/source.previous"
   if [[ -d "$DOCKER_DIR/source" ]]; then mv "$DOCKER_DIR/source" "$DOCKER_DIR/source.previous"; fi
   mv "$stage/source" "$DOCKER_DIR/source"
+)
+
+docker_download_image() (
+  set -Eeuo pipefail
+  local stage arch block url expected actual archive
+  stage="$(mktemp -d)"; trap 'rm -rf -- "$stage"' EXIT
+  if [[ -n "${FIREWALL_UI_DOCKER_IMAGE_ARCHIVE:-}" ]]; then
+    archive="$FIREWALL_UI_DOCKER_IMAGE_ARCHIVE"; expected="${FIREWALL_UI_DOCKER_IMAGE_SHA256:-}"
+  else
+    case "$(uname -m)" in x86_64|amd64) arch=amd64;; aarch64|arm64) arch=arm64;; *) return 1;; esac
+    curl -fLsS --retry 3 --connect-timeout 15 https://github.com/SawaMEN/Firewall-UI/releases/latest/download/docker-update.json -o "$stage/update.json" || return 1
+    block="$(sed -n "/\"$arch\"[[:space:]]*:/,/^[[:space:]]*}/p" "$stage/update.json")"
+    url="$(printf '%s\n' "$block" | sed -n 's/.*"url":[[:space:]]*"\([^" ]*\)".*/\1/p' | head -n 1)"
+    expected="$(printf '%s\n' "$block" | sed -n 's/.*"sha256":[[:space:]]*"\([0-9A-Fa-f]*\)".*/\1/p' | head -n 1)"
+    [[ "$url" =~ ^https://github.com/SawaMEN/Firewall-UI/releases/download/v[0-9.]+/firewall-ui-docker-linux-${arch}\.tar\.gz$ ]] || { echo 'Неверный адрес готового образа.' >&2; return 1; }
+    archive="$stage/image.tar.gz"
+    echo "Скачиваем готовый образ Linux/$arch из релиза GitHub..."
+    curl -fLsS --retry 3 --connect-timeout 15 "$url" -o "$archive" || return 1
+  fi
+  [[ "$expected" =~ ^[0-9A-Fa-f]{64}$ ]] || { echo 'Нет контрольной суммы образа.' >&2; return 1; }
+  actual="$(sha256sum "$archive" | awk '{print $1}')" || return 1
+  [[ "${actual,,}" == "${expected,,}" ]] || { echo 'SHA-256 образа не совпадает.' >&2; return 1; }
+  docker load -i "$archive" || return 1
+  docker image inspect firewall-ui:stable >/dev/null || return 1
 )
 
 docker_write_volume_credentials() {
@@ -235,7 +252,7 @@ docker_install() (
       done
       if [[ -d "$DOCKER_DIR/source.previous" ]]; then rm -rf -- "$DOCKER_DIR/source"; mv "$DOCKER_DIR/source.previous" "$DOCKER_DIR/source"; fi
       if ((stopped)) && [[ -n "$old_mode" ]]; then
-        [[ -z "$old_image" ]] || docker tag "$old_image" firewall-ui:local || true
+        [[ -z "$old_image" ]] || docker tag "$old_image" firewall-ui:stable || true
         if ((runtime_saved)); then docker_runtime_backup restore || echo 'Не удалось восстановить конфигурацию в Docker-томе.' >&2; fi
         docker_compose_mode "$old_mode" up -d --no-build || echo 'Не удалось запустить предыдущую панель Docker Compose.' >&2
       fi
@@ -243,6 +260,7 @@ docker_install() (
     fi
     rm -f -- "$DOCKER_DIR/docker.env.previous"
     rm -rf -- "$stage"
+    if ((first && !succeeded && !runtime_saved)); then rm -rf -- "$DOCKER_DIR"; fi
     return "$result"
   }
   trap rollback EXIT
@@ -251,8 +269,8 @@ docker_install() (
   if ((first)) || [[ "$action" == configure || "$old_mode" != host ]]; then docker_select_settings || return 1; fi
   if [[ "$action" != configure || ! -d "$DOCKER_DIR/source" ]]; then docker_download_source || return 1; fi
   docker_compose config --quiet || return 1
-  old_image="$(docker image inspect firewall-ui:local --format '{{.Id}}' 2>/dev/null || true)"
-  docker_compose build || return 1
+  old_image="$(docker image inspect firewall-ui:stable --format '{{.Id}}' 2>/dev/null || true)"
+  docker_download_image || return 1
   if [[ -n "$old_mode" ]]; then
     docker_compose_mode "$old_mode" stop || return 1
     stopped=1
@@ -306,21 +324,45 @@ docker_existing_installation() {
   [[ "$(cat "$DOCKER_DIR/deployment")" =~ ^[a-z]+$ ]]
 }
 
-docker_uninstall() {
-  docker_existing_installation || return 1
-  docker_compose stop || return 1
-  if ! docker_compose run --rm --no-deps -T firewall-ui -cleanup-firewall; then
-    echo 'Не удалось очистить правила. Контейнер остановлен; файлы и тома сохранены для повторной попытки.' >&2
-    return 1
+docker_uninstall() (
+  local containers='' volumes='' volume role
+  if command -v docker >/dev/null 2>&1; then
+    docker info >/dev/null 2>&1 || { systemctl start docker || return 1; }
+    containers="$(docker ps -aq --filter "label=com.docker.compose.project=$DOCKER_PROJECT")" || return 1
+    volumes="$(docker volume ls -q --filter "label=com.docker.compose.project=$DOCKER_PROJECT")" || return 1
   fi
-  docker_compose down -v --remove-orphans || return 1
-  if ! docker image rm firewall-ui:local >/dev/null 2>&1; then
-    echo 'Образ уже отсутствует или используется другим контейнером; общий Docker-кэш сохранён.'
+  if [[ -n "$containers$volumes" ]]; then
+    # Resource labels allow recovery even when installer metadata was lost.
+    local cid
+    for cid in $containers; do
+      docker stop --time 15 "$cid" >/dev/null || docker kill "$cid" >/dev/null || return 1
+    done
+    docker_download_image || { echo 'Не удалось загрузить инструмент очистки; контейнеры остановлены, данные сохранены.' >&2; return 1; }
+    local -a mounts=()
+    for volume in $volumes; do
+      role="$(docker volume inspect --format '{{index .Labels "com.docker.compose.volume"}}' "$volume")" || return 1
+      case "$role" in
+        firewall-ui-config) mounts+=(--mount "type=volume,src=$volume,dst=/etc/firewall-ui");;
+        firewall-ui-data) mounts+=(--mount "type=volume,src=$volume,dst=/var/lib/firewall-ui");;
+      esac
+    done
+    if ! docker run --rm --network host --pid host --privileged "${mounts[@]}" \
+      --entrypoint /usr/local/bin/firewall-ui firewall-ui:stable -cleanup-firewall; then
+      echo 'Не удалось очистить правила и запрет пинга. Данные сохранены.' >&2; return 1
+    fi
+    for cid in $containers; do docker rm -f "$cid" >/dev/null || return 1; done
+    for volume in $volumes; do docker volume rm "$volume" >/dev/null || return 1; done
+  fi
+  if [[ -d "$DOCKER_DIR" && ! -f "$DOCKER_DIR/.installer-managed" && -n "$(find "$DOCKER_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+    echo "Каталог $DOCKER_DIR не отмечен как установка Firewall-UI; его содержимое сохранено." >&2; return 1
   fi
   rm -rf -- "$DOCKER_DIR" || return 1
   rm -f -- "$DOCKER_MANAGER" || return 1
-  echo 'Версия Docker Compose полностью удалена: контейнер, настройки, данные и собственные правила. Docker сохранён.'
-}
+  if command -v docker >/dev/null 2>&1; then
+    docker image rm firewall-ui:stable firewall-ui:local >/dev/null 2>&1 || true
+  fi
+  echo 'Версия Docker Compose полностью удалена: контейнеры, тома, настройки, данные, собственные правила и запрет пинга. Docker сохранён.'
+)
 
 docker_menu() {
   local choice

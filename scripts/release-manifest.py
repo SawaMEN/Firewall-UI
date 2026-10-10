@@ -22,3 +22,15 @@ for arch in ("amd64", "arm64"):
     "buildTime": os.environ["BUILD_TIME"],
     "assets": assets,
 }, indent=2) + "\n")
+
+if channel == "stable":
+    images = {}
+    for arch in ("amd64", "arm64"):
+        archive = pathlib.Path("release-images") / f"firewall-ui-docker-linux-{arch}.tar.gz"
+        images[arch] = {
+            "url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{tag}/{archive.name}",
+            "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+        }
+    (pathlib.Path("release-images") / "docker-update.json").write_text(json.dumps({
+        "version": version, "commit": os.environ["BUILD_COMMIT"], "assets": images,
+    }, indent=2) + "\n")

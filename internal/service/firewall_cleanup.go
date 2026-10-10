@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -13,6 +14,9 @@ import (
 func (s *FirewallService) CleanupOwnedRules(ctx context.Context) error {
 	firewallMu.Lock()
 	defer firewallMu.Unlock()
+	if err := cleanupManagedPing(); err != nil {
+		return err
+	}
 	if binary, err := exec.LookPath("ufw"); err == nil {
 		text, err := runFirewallCommand(ctx, binary, "show", "added")
 		if err != nil {
@@ -85,6 +89,15 @@ func (s *FirewallService) CleanupOwnedRules(ctx context.Context) error {
 		if _, err := runFirewallCommand(ctx, binary, "-X", managedIPTablesChain); err != nil {
 			return err
 		}
+	}
+	// Cleanup without a state file must not create a new data directory.
+	if _, err := os.Stat(statePath); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if err := (&SettingService{}).setBool(firewallPingEnabledKey, true); err != nil {
+		return err
 	}
 	if err := saveFirewallJSON(firewallManagedRulesKey, []FirewallRule{}); err != nil {
 		return err
