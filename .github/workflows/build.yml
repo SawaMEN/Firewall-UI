@@ -118,9 +118,9 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/browser-tools" --no-audit --no-fund --ignore-scripts playwright@1.56.1
           node "$RUNNER_TEMP/browser-tools/node_modules/playwright/cli.js" install --with-deps chromium
           chmod +x browser-binary/dist-dev/firewall-ui-linux-amd64
-          FIREWALL_UI_USERNAME=admin FIREWALL_UI_PASSWORD=1 browser-binary/dist-dev/firewall-ui-linux-amd64 -config "$RUNNER_TEMP/browser-config.json" -listen 127.0.0.1:18123 -state "$RUNNER_TEMP/browser-state/state.json" > "$RUNNER_TEMP/browser-server.log" 2>&1 &
+          sudo -E env FIREWALL_UI_USERNAME=admin FIREWALL_UI_PASSWORD=1 browser-binary/dist-dev/firewall-ui-linux-amd64 -config "$RUNNER_TEMP/browser-config.json" -listen 127.0.0.1:18123 -state "$RUNNER_TEMP/browser-state/state.json" > "$RUNNER_TEMP/browser-server.log" 2>&1 &
           TASK_PANEL_PID=$!
-          trap 'kill "$TASK_PANEL_PID"' EXIT
+          trap 'sudo kill "$TASK_PANEL_PID" || true' EXIT
           for attempt in {1..20}; do curl -fsS http://127.0.0.1:18123/ >/dev/null && break; sleep 1; done
           PLAYWRIGHT_TOOLS="$RUNNER_TEMP/browser-tools" FIREWALL_UI_SCREENSHOTS="$RUNNER_TEMP/browser-shots" node tests/browser.cjs
       - uses: actions/upload-artifact@v4
