@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.17
+
+- Select installation type with 1 (native), 2 (Docker Compose), or 0 (back to the main menu).
+
 ## 1.2.16
 
 - Unify installer actions, display installed/running variants, ask for Docker Compose on installation/update, and purge both variants with one action. Route settings and password reset to the installed variant automatically.

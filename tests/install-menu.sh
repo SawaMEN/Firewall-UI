@@ -13,16 +13,23 @@ mkdir -p "$INSTALL_DIR"; printf '#!/bin/sh\nexit 0\n' > "$INSTALL_DIR/firewall-u
 INSTALL_INTERACTIVE=1
 for selection in '1 install' '2 configure' '3 reset-password' '4 uninstall' '6 logs' '0 exit'; do
   read -r answer expected <<< "$selection"
-  printf '%s\nn\n' "$answer" > "$FIXTURE/answer"
+  printf '%s\n1\n' "$answer" > "$FIXTURE/answer"
   exec 3<>"$FIXTURE/answer"
   select_installer_action
   [[ "$INSTALL_ACTION" == "$expected" ]]
   exec 3>&-
 done
-printf '1\ny\n' > "$FIXTURE/answer"; exec 3<>"$FIXTURE/answer"
+printf '1\n2\n' > "$FIXTURE/answer"; exec 3<>"$FIXTURE/answer"
 select_installer_action
 [[ "$INSTALL_ACTION" == docker-install ]]
-printf '5\n0\n' > "$FIXTURE/answer"; exec 3<>"$FIXTURE/answer"
+# Back returns to the main menu; invalid choices stay in the variant menu.
+printf '1\n9\n0\n4\n' > "$FIXTURE/answer"; exec 3<>"$FIXTURE/answer"
+select_installer_action
+[[ "$INSTALL_ACTION" == uninstall ]]
+printf '1\n0\n1\n2\n' > "$FIXTURE/answer"; exec 3<>"$FIXTURE/answer"
+select_installer_action
+[[ "$INSTALL_ACTION" == docker-install ]]
+printf '5\n0\n'  > "$FIXTURE/answer"; exec 3<>"$FIXTURE/answer"
 select_installer_action > "$FIXTURE/status"
 [[ "$(cat "$FIXTURE/status")" == *'Обычная установка: установлена, остановлена'* ]]
 [[ "$(cat "$FIXTURE/status")" == *'Docker Compose: не установлен'* ]]

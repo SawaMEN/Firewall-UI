@@ -437,20 +437,26 @@ installer_status() {
 }
 
 installer_select_target() {
-  local action="$1" choice default=n
+  local action="$1" choice default=1
   installer_detect_installations
   if [[ "$action" != install ]]; then
     if ((NATIVE_INSTALLED && !COMPOSE_INSTALLED)); then return 0; fi
     if ((COMPOSE_INSTALLED && !NATIVE_INSTALLED)); then INSTALL_ACTION="docker-$action"; return 0; fi
     if ((!NATIVE_INSTALLED && !COMPOSE_INSTALLED)); then echo 'Firewall-UI ещё не установлен.' >&2; return 1; fi
   fi
-  if ((!NATIVE_INSTALLED && COMPOSE_INSTALLED)); then default=y; fi
+  if ((!NATIVE_INSTALLED && COMPOSE_INSTALLED)); then default=2; fi
   while true; do
-    ask choice 'Использовать Docker Compose? (y — Docker Compose, n — обычная установка)' "$default" || return 1
+    echo
+    echo 'Выберите вариант Firewall-UI:'
+    echo '1) Обычная установка'
+    echo '2) Docker Compose'
+    echo '0) Обратно в главное меню'
+    ask choice 'Выберите вариант' "$default" || return 1
     case "$choice" in
-      y|Y) INSTALL_ACTION="docker-$action"; return 0;;
-      n|N) INSTALL_ACTION="$action"; return 0;;
-      *) echo 'Введите y или n.' >&2; [[ "${INSTALL_INTERACTIVE:-0}" == 1 ]] || return 1;;
+      1) INSTALL_ACTION="$action"; return 0;;
+      2) INSTALL_ACTION="docker-$action"; return 0;;
+      0) INSTALL_ACTION=back; return 0;;
+      *) echo 'Введите 1, 2 или 0.' >&2; [[ "${INSTALL_INTERACTIVE:-0}" == 1 ]] || return 1;;
     esac
   done
 }
@@ -473,15 +479,16 @@ select_installer_action() {
     echo '0) Выход'
     ask choice 'Выберите действие' 1 || return 1
     case "$choice" in
-      1) INSTALL_ACTION=install; installer_select_target install; return;;
-      2) INSTALL_ACTION=configure; installer_select_target configure; return;;
-      3) INSTALL_ACTION=reset-password; installer_select_target reset-password; return;;
+      1) INSTALL_ACTION=install; installer_select_target install || return 1;;
+      2) INSTALL_ACTION=configure; installer_select_target configure || return 1;;
+      3) INSTALL_ACTION=reset-password; installer_select_target reset-password || return 1;;
       4) INSTALL_ACTION=uninstall; return 0;;
-      5) installer_status;;
-      6) INSTALL_ACTION=logs; installer_select_target logs; return;;
+      5) installer_status; continue;;
+      6) INSTALL_ACTION=logs; installer_select_target logs || return 1;;
       0) INSTALL_ACTION=exit; return 0;;
-      *) echo 'Неизвестный пункт меню.' >&2;;
+      *) echo 'Неизвестный пункт меню.' >&2; continue;;
     esac
+    [[ "$INSTALL_ACTION" == back ]] || return 0
   done
 }
 
@@ -538,7 +545,9 @@ main() {
   INSTALL_INTERACTIVE=0
   if [[ "${FIREWALL_UI_NONINTERACTIVE:-0}" != 1 ]] && { exec 3<>/dev/tty; } 2>/dev/null; then INSTALL_INTERACTIVE=1; fi
   if [[ -z "${1:-}" ]]; then select_installer_action || return 1
-  elif [[ "$INSTALL_ACTION" == configure || "$INSTALL_ACTION" == reset-password ]]; then installer_select_target "$INSTALL_ACTION" || return 1; fi
+  elif [[ "$INSTALL_ACTION" == configure || "$INSTALL_ACTION" == reset-password ]]; then installer_select_target "$INSTALL_ACTION" || return 1
+    if [[ "$INSTALL_ACTION" == back ]]; then select_installer_action || return 1; fi
+  fi
   case "$INSTALL_ACTION" in
     exit) return 0;;
     docker-*) run_installer_docker_action "${INSTALL_ACTION#docker-}"; return;;
