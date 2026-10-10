@@ -61,6 +61,7 @@ docker_install() {
   [[ "$FIREWALL_UI_DOCKER_SOURCE_REF" == "$COMMIT" ]]
   [[ -f "$FIREWALL_UI_DOCKER_MANIFEST_FILE" ]]
   [[ -z "${FIREWALL_UI_DOCKER_IMAGE_ARCHIVE:-}" ]]
+  cp "$FIREWALL_UI_DOCKER_MANIFEST_FILE" "$FIXTURE/last-installed-manifest"
   printf 'install called\n' >> "$FIXTURE/install"
   return "${MOCK_UPDATE_FAILURE:-0}"
 }
@@ -87,7 +88,7 @@ sed -i -e 's/"version": "1.3.99"/"version": "dev-bbbbbbb"/' \
 unset MOCK_UPDATE_FAILURE
 docker_auto_update
 grep -q '/releases/download/dev/update.json' "$FIXTURE/curl"
-grep -q '"version":"dev-bbbbbbb"' "$DOCKER_DIR/update-status.json"
+grep -q '"version": "dev-bbbbbbb"' "$FIXTURE/last-installed-manifest"
 grep -q 'install called' "$FIXTURE/install"
 
 docker_compose() { return 0; }
