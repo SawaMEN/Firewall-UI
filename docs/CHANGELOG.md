@@ -3,6 +3,7 @@
 ## 1.3.2
 
 - Shorten the Russian README, document sudo installation and show binary/Docker choices in one installation section.
+- Support installer execution from stdin for the documented curl-to-sudo command.
 - Publish one update.json with binary and Docker image URLs/checksums; preserve native manifest compatibility and read older image manifests when needed.
 
 ## 1.3.1

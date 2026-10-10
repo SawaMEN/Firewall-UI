@@ -8,7 +8,10 @@ CONFIG_DIR="/etc/firewall-ui"
 STATE_DIR="/var/lib/firewall-ui"
 SERVICE_FILE="/etc/systemd/system/firewall-ui.service"
 MANAGER="${FIREWALL_UI_MANAGER:-/usr/local/bin/fw-ui}"
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd || true)"
+SCRIPT_DIR=""
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+  SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd || true)"
+fi
 TEMP_DIR=""
 REPLACED=0
 SUCCEEDED=0
@@ -870,4 +873,4 @@ main() {
   installer_execute_action "$INSTALL_ACTION"
 
 }
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi
+if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then main "$@"; fi

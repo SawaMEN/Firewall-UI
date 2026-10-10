@@ -76,3 +76,7 @@ MOCK_RUNNING_COMPOSE=firewall-ui
 if installer_require_native_exclusive; then echo 'Allowed simultaneous panels'; exit 1; fi
 MOCK_RUNNING_COMPOSE=''
 installer_require_native_exclusive
+# The documented curl | sudo bash command runs the installer from stdin.
+stdin_help="$(bash -s -- --help < "$SCRIPT_ROOT/install.sh")"
+[[ "$stdin_help" == 'Использование: install.sh '* ]]
+echo 'Installer stdin entry point passed'
