@@ -15,9 +15,12 @@ for arch in ("amd64", "arm64"):
         "url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{tag}/{binary.name}",
         "sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
     }
-if channel == "stable":
-    for arch in ("amd64", "arm64"):
-        archive = pathlib.Path("release-images") / f"firewall-ui-docker-linux-{arch}.tar.gz"
+image_files = [
+    pathlib.Path("release-images") / channel / f"firewall-ui-docker-linux-{arch}.tar.gz"
+    for arch in ("amd64", "arm64")
+]
+if channel == "stable" or all(archive.is_file() for archive in image_files):
+    for arch, archive in zip(("amd64", "arm64"), image_files):
         assets[f"docker-{arch}"] = {
             "url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{tag}/{archive.name}",
             "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),

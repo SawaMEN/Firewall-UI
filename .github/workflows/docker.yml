@@ -45,8 +45,8 @@ jobs:
       - name: Export ready image
         run: |
           docker tag firewall-ui:test firewall-ui:stable
-          mkdir -p release-images
-          docker save firewall-ui:stable | gzip -1 > release-images/firewall-ui-docker-linux-${{ matrix.arch }}.tar.gz
+          mkdir -p release-images/stable
+          docker save firewall-ui:stable | gzip -1 > release-images/stable/firewall-ui-docker-linux-${{ matrix.arch }}.tar.gz
       - name: Verify startup and shutdown
         run: |
           docker run --rm firewall-ui:test -version
@@ -74,7 +74,7 @@ jobs:
           sudo apt-get install -y ufw
           python3 -m http.server 18889 --bind 127.0.0.1 >/tmp/firewall-ui-host-probe.log 2>&1 &
           PROBE_PID=$!
-          export FIREWALL_UI_DOCKER_IMAGE_ARCHIVE="$PWD/release-images/firewall-ui-docker-linux-${{ matrix.arch }}.tar.gz"
+          export FIREWALL_UI_DOCKER_IMAGE_ARCHIVE="$PWD/release-images/stable/firewall-ui-docker-linux-${{ matrix.arch }}.tar.gz"
           export FIREWALL_UI_DOCKER_IMAGE_SHA256="$(sha256sum "$FIREWALL_UI_DOCKER_IMAGE_ARCHIVE" | awk '{print $1}')"
           trap 'sudo sysctl -w net.ipv4.icmp_echo_ignore_all=0 >/dev/null; kill "$PROBE_PID" || true; sudo -E bash deploy/firewall-ui-docker uninstall || true' EXIT
           sudo -E bash install.sh --compose
@@ -125,8 +125,16 @@ jobs:
           test ! -e /usr/local/bin/fw-ui
           test -z "$(docker ps -aq --filter label=com.docker.compose.project=firewall-ui-installer-ci)"
           test -z "$(docker volume ls -q --filter label=com.docker.compose.project=firewall-ui-installer-ci)"
+      - name: Build ready dev image for this commit
+        run: |
+          docker build -f deploy/docker/Dockerfile --build-arg VCS_REF="$GITHUB_SHA" --build-arg BUILD_CHANNEL=dev -t firewall-ui:dev .
+          test "$(docker run --rm --entrypoint /usr/local/bin/firewall-ui firewall-ui:dev -version)" = "dev-${GITHUB_SHA::7}"
+          docker tag firewall-ui:dev firewall-ui:stable
+          mkdir -p release-images/dev
+          docker save firewall-ui:stable | gzip -1 > release-images/dev/firewall-ui-docker-linux-${{ matrix.arch }}.tar.gz
       - uses: actions/upload-artifact@v4
         with:
           name: firewall-ui-docker-${{ matrix.arch }}
-          path: release-images/*
+          path: release-images/**/*
+          retention-days: 3
           retention-days: 3

@@ -60,6 +60,15 @@ jobs:
           run-id: ${{ steps.builds.outputs.binary_run }}
           github-token: ${{ github.token }}
           path: .
+      - name: Download verified Docker images
+        if: steps.builds.outputs.docker_ready == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: firewall-ui-docker-*
+          merge-multiple: true
+          run-id: ${{ steps.builds.outputs.docker_run }}
+          github-token: ${{ github.token }}
+          path: release-images
       - name: Publish dev for every verified main commit
         if: steps.builds.outputs.binary_ready == 'true'
         env:
@@ -74,8 +83,14 @@ jobs:
           fi
           DEV_TARGET="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/dev" --jq '.object.sha' 2>/dev/null || true)"
           if [[ "$DEV_TARGET" == "$BUILD_COMMIT" ]] && gh release view dev >/dev/null 2>&1; then
-            echo 'This commit is already published in dev.'
-            exit 0
+            if [[ "${{ steps.builds.outputs.docker_ready }}" != true ]]; then
+              echo 'This commit is already published in dev.'
+              exit 0
+            fi
+            if gh release view dev --json assets --jq '.assets[].name' | grep -qx 'firewall-ui-docker-linux-amd64.tar.gz'; then
+              echo 'Dev release already has verified Docker images.'
+              exit 0
+            fi
           fi
           test -s dist-dev/firewall-ui-linux-amd64
           test -s dist-dev/firewall-ui-linux-arm64
@@ -83,18 +98,13 @@ jobs:
           DEV_VERSION="dev-${BUILD_COMMIT::7}"
           python3 scripts/release-manifest.py dev "$DEV_VERSION" dev
           gh release delete dev --cleanup-tag -y >/dev/null 2>&1 || true
+          dev_assets=(dist-dev/firewall-ui-linux-amd64 dist-dev/firewall-ui-linux-arm64 dist-dev/update.json)
+          if [[ "${{ steps.builds.outputs.docker_ready }}" == true ]]; then
+            dev_assets+=(release-images/dev/*.tar.gz)
+          fi
           gh release create dev --target "$BUILD_COMMIT" --prerelease \
             --title 'Firewall-UI Dev' --notes "Verified build from commit $BUILD_COMMIT." \
-            dist-dev/firewall-ui-linux-amd64 dist-dev/firewall-ui-linux-arm64 dist-dev/update.json
-      - name: Download verified Docker images
-        if: steps.builds.outputs.docker_ready == 'true'
-        uses: actions/download-artifact@v4
-        with:
-          pattern: firewall-ui-docker-*
-          merge-multiple: true
-          run-id: ${{ steps.builds.outputs.docker_run }}
-          github-token: ${{ github.token }}
-          path: release-images
+            "${dev_assets[@]}"
       - name: Publish stable only for a new VERSION
         id: stable
         if: steps.builds.outputs.docker_ready == 'true'
@@ -121,12 +131,12 @@ jobs:
           fi
           test -s dist-stable/firewall-ui-linux-amd64
           test -s dist-stable/firewall-ui-linux-arm64
-          test -s release-images/firewall-ui-docker-linux-amd64.tar.gz
-          test -s release-images/firewall-ui-docker-linux-arm64.tar.gz
+          test -s release-images/stable/firewall-ui-docker-linux-amd64.tar.gz
+          test -s release-images/stable/firewall-ui-docker-linux-arm64.tar.gz
           export BUILD_TIME="$(cat dist-dev/build-time.txt)"
           python3 scripts/release-manifest.py stable "$STABLE_VERSION" "$TAG"
           gh release create "$TAG" --target "$BUILD_COMMIT" --title "Firewall-UI $STABLE_VERSION" --generate-notes \
-            dist-stable/firewall-ui-linux-amd64 dist-stable/firewall-ui-linux-arm64 dist-stable/update.json release-images/*.tar.gz
+            dist-stable/firewall-ui-linux-amd64 dist-stable/firewall-ui-linux-arm64 dist-stable/update.json release-images/stable/*.tar.gz
           echo 'released=true' >> "$GITHUB_OUTPUT"
       - name: Verify published stable Docker image
         if: steps.stable.outputs.released == 'true'

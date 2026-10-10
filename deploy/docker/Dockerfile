@@ -15,9 +15,10 @@ COPY VERSION ./VERSION
 COPY --from=frontend /src/internal/webassets/dist/ ./internal/webassets/dist/
 ARG TARGETARCH
 ARG VCS_REF=unknown
+ARG BUILD_CHANNEL=stable
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOARCH=${TARGETARCH} go build -trimpath \
-    -ldflags="-s -w -X github.com/SawaMEN/Firewall-UI/internal/buildinfo.Version=$(cat VERSION) -X github.com/SawaMEN/Firewall-UI/internal/buildinfo.Channel=stable -X github.com/SawaMEN/Firewall-UI/internal/buildinfo.Commit=${VCS_REF}" \
+    -ldflags="-s -w -X github.com/SawaMEN/Firewall-UI/internal/buildinfo.Version=$(if [ \"${BUILD_CHANNEL}\" = dev ]; then echo dev-$(printf \"%s\" \"${VCS_REF}\" | cut -c1-7); else cat VERSION; fi) -X github.com/SawaMEN/Firewall-UI/internal/buildinfo.Channel=${BUILD_CHANNEL} -X github.com/SawaMEN/Firewall-UI/internal/buildinfo.Commit=${VCS_REF}" \
     -o /out/firewall-ui ./cmd/firewall-ui
 
 FROM alpine:3.22
