@@ -23,12 +23,13 @@ test-frontend: frontend/node_modules/.firewall-ui-installed
 	cd frontend && npm run typecheck
 
 test-shell:
-	bash -n install.sh deploy/firewall-ui deploy/firewall-ui-docker scripts/build-release.sh
+	bash -n install.sh deploy/firewall-ui deploy/firewall-ui-docker deploy/firewall-ui-switch scripts/build-release.sh
 	bash tests/installer.sh
 	bash tests/manager.sh
 	bash tests/access.sh
 	bash tests/uninstall.sh
 	bash tests/install-menu.sh
+	bash tests/switch-install.sh
 	bash tests/docker-installer.sh
 	bash tests/docker-updates.sh
 	python3 tests/release-manifest.py
