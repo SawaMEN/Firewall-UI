@@ -231,7 +231,11 @@ docker_download_image() (
     if [[ -n "${FIREWALL_UI_DOCKER_MANIFEST_FILE:-}" ]]; then
       cp "$FIREWALL_UI_DOCKER_MANIFEST_FILE" "$stage/update.json" || return 1
     else
-      curl -fLsS --retry 3 --connect-timeout 15 --max-time 60 https://github.com/SawaMEN/Firewall-UI/releases/latest/download/update.json -o "$stage/update.json" || return 1
+      local endpoint=https://github.com/SawaMEN/Firewall-UI/releases/latest/download/update.json
+      if [[ "$(docker_update_channel)" == dev ]]; then
+        endpoint=https://github.com/SawaMEN/Firewall-UI/releases/download/dev/update.json
+      fi
+      curl -fLsS --retry 3 --connect-timeout 15 --max-time 60 "$endpoint" -o "$stage/update.json" || return 1
     fi
     block="$(sed -n "/\"docker-$arch\"[[:space:]]*:/,/^[[:space:]]*}/p" "$stage/update.json")"
     # Releases through 1.3.1 used a separate image manifest.

@@ -79,6 +79,17 @@ export MOCK_UPDATE_FAILURE=7
 if docker_auto_update; then echo 'Failed update reported success' >&2; exit 1; fi
 grep -q '"phase":"failed"' "$DOCKER_DIR/update-status.json"
 grep -qx old "$DOCKER_DIR/image.sha256"
+# A dev panel follows the dev manifest and pinned commit without confirmation.
+printf '{"updateChannel":"dev"}\n' > "$DOCKER_CONFIG_DIR/config.json"
+sed -i -e 's/"version": "1.3.99"/"version": "dev-bbbbbbb"/' \
+  -e 's/"channel": "stable"/"channel": "dev"/' \
+  -e 's|/releases/download/v1.3.99/|/releases/download/dev/|g' "$FIXTURE/manifest"
+unset MOCK_UPDATE_FAILURE
+docker_auto_update
+grep -q '/releases/download/dev/update.json' "$FIXTURE/curl"
+grep -q '"version":"dev-bbbbbbb"' "$DOCKER_DIR/update-status.json"
+grep -q 'install called' "$FIXTURE/install"
+
 docker_compose() { return 0; }
 COUNT="$(wc -l < "$FIXTURE/curl")"
 docker_auto_update
