@@ -112,6 +112,34 @@ jobs:
           path: release-assets
           retention-days: 7
 
+  distributions:
+    needs: [binaries]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: ['archlinux:base', 'debian:13', 'fedora:44', 'opensuse/leap:16.0']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: firewall-ui-linux-amd64
+          path: distro-binary
+      - name: Install and exercise the native service with systemd and real packages
+        env:
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          set -euo pipefail
+          docker build -f tests/linux-distro.Dockerfile --build-arg "DISTRO=$DISTRO" -t firewall-ui-distro .
+          docker run -d --name firewall-ui-distro --privileged --cgroupns=private --tmpfs /run --tmpfs /run/lock -v /sys/fs/cgroup:/sys/fs/cgroup:rw firewall-ui-distro
+          trap 'docker logs firewall-ui-distro; docker exec firewall-ui-distro journalctl --no-pager -u firewall-ui.service || true; docker rm -f firewall-ui-distro' EXIT
+          for attempt in {1..30}; do
+            if docker exec firewall-ui-distro systemctl list-units --no-pager >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          docker exec firewall-ui-distro bash /opt/checks/tests/linux-distro.sh verify
+
   browser:
     needs: [binaries]
     runs-on: ubuntu-latest

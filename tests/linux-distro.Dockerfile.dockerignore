@@ -1,0 +1,10 @@
+*
+!install.sh
+!deploy/
+!deploy/**
+!tests/
+!tests/linux-distro.sh
+!tests/linux-distro.py
+!distro-binary/
+!distro-binary/dist-dev/
+!distro-binary/dist-dev/firewall-ui-linux-amd64
