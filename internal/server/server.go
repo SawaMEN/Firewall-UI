@@ -516,7 +516,7 @@ func (s *Server) applyUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
-		status, err := s.Updater.Check(ctx, "stable")
+		status, err := s.Updater.Check(ctx, s.RuntimeConfig.UpdateChannel)
 		if err == nil && status.Available {
 			err = s.DockerUpdater.Start(ctx)
 			status.Docker = true

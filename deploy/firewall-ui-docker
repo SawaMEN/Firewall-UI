@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-DOCKER_DIR="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}"
+DOCKER_DIR="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui}"
+DOCKER_CONFIG_DIR="${FIREWALL_UI_CONFIG_DIR:-/etc/firewall-ui}"
+DOCKER_STATE_DIR="${FIREWALL_UI_STATE_DIR:-/var/lib/firewall-ui}"
+LEGACY_DOCKER_DIR="${FIREWALL_UI_LEGACY_DOCKER_DIR:-/opt/firewall-ui-docker}"
 DOCKER_MANAGER="${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}"
 DOCKER_PROJECT="${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}"
 PUBLIC_MANAGER="${FIREWALL_UI_MANAGER:-/usr/local/bin/fw-ui}"
@@ -50,14 +53,16 @@ docker_compose_mode() {
   local -a files=(-f "$source/$file")
   # Keep existing certificates readable while -save-config loads the previous
   # TLS configuration, including transitions back to local HTTP.
-  if [[ -f "$source/compose.tls.yaml" && ( -n "$(docker_read_setting FIREWALL_UI_TLS_CERT '')" || -d "$DOCKER_DIR/access" ) ]]; then
+  if [[ -f "$source/compose.tls.yaml" && -d "$DOCKER_DIR/access" ]]; then
     files+=(-f "$source/compose.tls.yaml")
   fi
   if [[ "$(docker_read_setting FIREWALL_UI_DOCKER_PORTS 0)" == 1 ]]; then
     files+=(-f "$source/compose.docker-ports.yaml")
   fi
   FIREWALL_UI_DOCKER_INSTALL_DIR="$DOCKER_DIR" \
-  FIREWALL_UI_DOCKER_ACCESS_DIR="$DOCKER_DIR/access" \
+  FIREWALL_UI_DOCKER_ACCESS_DIR="$DOCKER_CONFIG_DIR" \
+  FIREWALL_UI_CONFIG_DIR="$DOCKER_CONFIG_DIR" \
+  FIREWALL_UI_STATE_DIR="$DOCKER_STATE_DIR" \
   FIREWALL_UI_USERNAME="$(cat "$DOCKER_DIR/username")" \
   FIREWALL_UI_PASSWORD="$(cat "$DOCKER_DIR/password")" \
     docker compose --project-name "$DOCKER_PROJECT" --project-directory "$source" \
@@ -111,7 +116,7 @@ docker_select_settings() (
   local installer="$DOCKER_DIR/source/install.sh" ports choice
   [[ -f "$installer" ]] || { echo 'Не найден общий мастер настройки.' >&2; return 1; }
   source "$installer"
-  CONFIG_DIR="$DOCKER_DIR/access"; STATE_DIR="$DOCKER_DIR/access/state"
+  CONFIG_DIR="$DOCKER_CONFIG_DIR"; STATE_DIR="$DOCKER_STATE_DIR"
   INSTALL_INTERACTIVE="$DOCKER_INTERACTIVE"
   SAVED_PANEL_PORT="$(docker_read_setting FIREWALL_UI_DOCKER_PORT 8088)"
   SAVED_PUBLIC_HOST="$(docker_read_setting FIREWALL_UI_PUBLIC_HOST '')"
@@ -139,7 +144,7 @@ docker_select_settings() (
     cp -L -- "$TLS_KEY" "$imported/privkey.pem" || return 1
     chmod 0600 "$imported/privkey.pem"
     TLS_CERT="$imported/fullchain.pem"; TLS_KEY="$imported/privkey.pem"
-    echo 'PEM-файлы скопированы в защищённый каталог Docker-панели.'
+    echo 'PEM-файлы скопированы в общий каталог сертификатов Firewall-UI.'
   fi
   ports="${FIREWALL_UI_DOCKER_PORTS:-$(docker_read_setting FIREWALL_UI_DOCKER_PORTS 0)}"
   choice=n; [[ "$ports" != 1 ]] || choice=y
@@ -168,16 +173,16 @@ docker_renew_certificates() {
   docker_existing_installation || return 1
   local hook
   printf -v hook '%q restart' "$DOCKER_MANAGER"
-  certbot renew --quiet --config-dir "$DOCKER_DIR/access/acme" \
-    --work-dir "$DOCKER_DIR/access/state/acme" --logs-dir "$DOCKER_DIR/access/state/acme-logs" --deploy-hook "$hook"
+  certbot renew --quiet --config-dir "$DOCKER_CONFIG_DIR/acme" \
+    --work-dir "$DOCKER_STATE_DIR/acme" --logs-dir "$DOCKER_STATE_DIR/acme-logs" --deploy-hook "$hook"
 }
 
 docker_cleanup_access() (
-  [[ -f "$DOCKER_DIR/access/state/access-rules" || -f "$DOCKER_DIR/access/state/access-ufw" ]] || return 0
+  [[ -f "$DOCKER_STATE_DIR/access-rules" || -f "$DOCKER_STATE_DIR/access-ufw" ]] || return 0
   local helper="$DOCKER_DIR/source/firewall-manager"
   [[ -f "$helper" ]] || { echo 'Для очистки правил доступа нужен сохранённый инструмент Firewall-UI.' >&2; return 1; }
   source "$helper"
-  STATE_DIR="$DOCKER_DIR/access/state"
+  STATE_DIR="$DOCKER_STATE_DIR"
   cleanup_access_rules
 )
 
@@ -227,7 +232,7 @@ docker_download_image() (
     fi
     url="$(printf '%s\n' "$block" | sed -n 's/.*"url":[[:space:]]*"\([^" ]*\)".*/\1/p' | head -n 1)"
     expected="$(printf '%s\n' "$block" | sed -n 's/.*"sha256":[[:space:]]*"\([0-9A-Fa-f]*\)".*/\1/p' | head -n 1)"
-    [[ "$url" =~ ^https://github.com/SawaMEN/Firewall-UI/releases/download/v[0-9.]+/firewall-ui-docker-linux-${arch}\.tar\.gz$ ]] || { echo 'Неверный адрес готового образа.' >&2; return 1; }
+    [[ "$url" =~ ^https://github.com/SawaMEN/Firewall-UI/releases/download/(v[0-9.]+|dev)/firewall-ui-docker-linux-${arch}\.tar\.gz$ ]] || { echo 'Неверный адрес готового образа.' >&2; return 1; }
     archive="$stage/image.tar.gz"
     echo "Скачиваем готовый образ Linux/$arch из релиза GitHub..."
     curl -fLsS --retry 3 --connect-timeout 15 --max-time 180 "$url" -o "$archive" || return 1
@@ -309,8 +314,8 @@ docker_show_access() {
   [[ "$host" != *:* ]] || host="[$host]"
   [[ -z "$(docker_read_setting FIREWALL_UI_TLS_CERT '')" ]] || scheme=https
   echo "Панель: $scheme://$host:$port/"
-  echo "Управление: fw-ui; настройки сохранены в $DOCKER_DIR."
-  if [[ "$(docker_read_auto_update)" == 1 ]]; then echo 'Автообновление Docker: включено, проверка stable-релизов каждый час.'; else echo 'Автообновление Docker: отключено.'; fi
+  echo "Управление: fw-ui; конфигурация — $DOCKER_CONFIG_DIR, данные — $DOCKER_STATE_DIR."
+  if [[ "$(docker_read_auto_update)" == 1 ]]; then echo "Автообновление Docker: включено, канал $(docker_update_channel), каждый час без подтверждения."; else echo 'Автообновление Docker: отключено.'; fi
 }
 
 docker_require_exclusive() {
@@ -382,16 +387,16 @@ docker_install() (
   docker_update_status downloading
   docker_download_image || return 1
   if [[ "${FIREWALL_UI_SWITCH_PREPARE:-0}" == 1 ]]; then
-    # Migration from the native service: create volumes but never start the
-    # privileged panel with an empty configuration or firewall state.
+    # Native data are already in the shared host directories. Do not touch
+    # configuration or start the privileged container before migration commits.
     ((first)) || { echo 'Предварительная миграция допустима только при первой установке Docker.' >&2; return 1; }
-    docker_compose run --rm --no-deps -T --entrypoint /bin/true firewall-ui || return 1
+    [[ -f "$DOCKER_CONFIG_DIR/config.json" && -f "$DOCKER_CONFIG_DIR/environment" ]] || return 1
     install -m 0755 "${BASH_SOURCE[0]}" "$DOCKER_MANAGER" || return 1
     install -m 0700 "$DOCKER_DIR/source/install.sh" "$DOCKER_DIR/install.sh" || return 1
     install -m 0755 "$DOCKER_DIR/source/firewall-manager" "$PUBLIC_MANAGER" || return 1
     [[ ! -f "$DOCKER_DIR/.image-sha256.pending" ]] || mv "$DOCKER_DIR/.image-sha256.pending" "$DOCKER_DIR/image.sha256"
     succeeded=1
-    echo 'Docker-образ и пустые тома подготовлены. Панель ещё не запущена.'
+    echo 'Docker-образ подготовлен; общие настройки и данные сохранены. Панель ещё не запущена.'
     return 0
   fi
   docker_update_status installing
@@ -416,7 +421,7 @@ docker_install() (
     docker_setup_renewal || return 1
     (
       source "$DOCKER_DIR/source/install.sh"
-      STATE_DIR="$DOCKER_DIR/access/state"
+      STATE_DIR="$DOCKER_STATE_DIR"
       OPEN_PORTS="$(docker_read_setting FIREWALL_UI_OPEN_PORTS 0)"
       allow_access_port "$(docker_read_setting FIREWALL_UI_DOCKER_PORT 8088)"
     ) || return 1
@@ -499,6 +504,7 @@ docker_cleanup_image() {
   # 1.2.18 introduced complete owned-rule/ping cleanup without recreating state.
   # Probe without network, privileges, host paths or volumes.
   version="$(docker run --rm --pull never --network none --entrypoint /usr/local/bin/firewall-ui firewall-ui:stable -version 2>/dev/null)" || version=''
+  if [[ "$version" =~ ^dev-[0-9a-f]{7}$ ]]; then return 0; fi
   if [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
     if ((10#${BASH_REMATCH[1]} > 1 || (10#${BASH_REMATCH[1]} == 1 &&
       (10#${BASH_REMATCH[2]} > 2 || (10#${BASH_REMATCH[2]} == 2 && 10#${BASH_REMATCH[3]} >= 18))))); then return 0; fi
@@ -598,7 +604,7 @@ docker_prepare_host_firewall() (
 docker_choose_auto_update() {
   local choice=y current="$(docker_read_auto_update)"
   [[ "$current" != 0 ]] || choice=n
-  docker_ask choice 'Автоматически обновлять Docker-панель из stable-релизов каждый час? (y/n)' "$choice" || return 1
+  docker_ask choice 'Автоматически проверять выбранный канал (stable/dev) и обновлять Docker каждый час без подтверждения? (y/n)' "$choice" || return 1
   case "$choice" in y|Y) printf '1\n' > "$DOCKER_DIR/auto-update";; n|N) printf '0\n' > "$DOCKER_DIR/auto-update";; *) echo 'Введите y или n.' >&2; return 1;; esac
 }
 
@@ -613,7 +619,7 @@ docker_setup_updates() {
   [[ -d "$SYSTEMD_DIR" ]] || { echo 'Для обновлений Docker нужен systemd.' >&2; return 1; }
   printf '[Unit]\nDescription=Update Firewall-UI Docker image\nWants=network-online.target\nAfter=network-online.target docker.service\n\n[Service]\nType=oneshot\nEnvironment="FIREWALL_UI_DOCKER_DIR=%s"\nEnvironment="FIREWALL_UI_DOCKER_MANAGER=%s"\nEnvironment="FIREWALL_UI_MANAGER=%s"\nEnvironment="FIREWALL_UI_DOCKER_PROJECT=%s"\nEnvironment=FIREWALL_UI_NONINTERACTIVE=1\nExecStart=/usr/bin/env bash "%s" auto-update\nTimeoutStartSec=10min\nUMask=0077\n' \
     "$DOCKER_DIR" "$DOCKER_MANAGER" "$PUBLIC_MANAGER" "$DOCKER_PROJECT" "$DOCKER_MANAGER" > "$SYSTEMD_DIR/$unit.service" || return 1
-  printf '[Unit]\nDescription=Check Firewall-UI Docker stable releases\n\n[Timer]\nOnCalendar=hourly\nRandomizedDelaySec=300\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n' > "$SYSTEMD_DIR/$unit.timer" || return 1
+  printf '[Unit]\nDescription=Check selected Firewall-UI Docker release channel\n\n[Timer]\nOnCalendar=hourly\nRandomizedDelaySec=300\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n' > "$SYSTEMD_DIR/$unit.timer" || return 1
   chmod 644 "$SYSTEMD_DIR/$unit.service" "$SYSTEMD_DIR/$unit.timer" || return 1
   systemctl daemon-reload || return 1
   if [[ "$(docker_read_auto_update)" == 1 ]]; then systemctl enable --now "$unit.timer"
@@ -636,6 +642,12 @@ docker_remove_updates() {
   fi
 }
 
+docker_update_channel() {
+  local selected=''
+  selected="$(sed -n 's/.*"updateChannel":[[:space:]]*"\([^"]*\)".*/\1/p' "$DOCKER_CONFIG_DIR/config.json" 2>/dev/null | head -n 1)" || true
+  case "$selected" in dev) printf dev;; *) printf stable;; esac
+}
+
 docker_auto_update() (
   set -Eeuo pipefail
   docker_existing_installation || return 1
@@ -651,13 +663,29 @@ docker_auto_update() (
   }
   trap finish_auto_update EXIT
   docker_update_status checking
-  curl -fLsS --retry 3 --connect-timeout 15 --max-time 60 https://github.com/SawaMEN/Firewall-UI/releases/latest/download/update.json -o "$stage/update.json" || return 1
+  local channel manifest_url tag_pattern
+  channel="$(docker_update_channel)"
+  if [[ "$channel" == dev ]]; then
+    manifest_url=https://github.com/SawaMEN/Firewall-UI/releases/download/dev/update.json
+    tag_pattern=dev
+  else
+    manifest_url=https://github.com/SawaMEN/Firewall-UI/releases/latest/download/update.json
+    tag_pattern='v[0-9.]+'
+  fi
+  curl -fLsS --retry 3 --connect-timeout 15 --max-time 60 "$manifest_url" -o "$stage/update.json" || return 1
   case "$(uname -m)" in x86_64|amd64) arch=amd64;; aarch64|arm64) arch=arm64;; *) return 1;; esac
   block="$(sed -n "/\"docker-$arch\"[[:space:]]*:/,/^[[:space:]]*}/p" "$stage/update.json")"
   expected="$(printf '%s\n' "$block" | sed -n 's/.*"sha256":[[:space:]]*"\([0-9A-Fa-f]*\)".*/\1/p' | head -n 1)"
   commit="$(sed -n 's/^[[:space:]]*"commit":[[:space:]]*"\([0-9a-f]*\)".*/\1/p' "$stage/update.json" | head -n 1)"
-  version="$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([0-9.]*\)".*/\1/p' "$stage/update.json" | head -n 1)"
-  [[ "$expected" =~ ^[0-9A-Fa-f]{64}$ && "$commit" =~ ^[0-9a-f]{40}$ && "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Неверный манифест Docker-обновления.' >&2; return 1; }
+  version="$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$stage/update.json" | head -n 1)"
+  local manifest_channel
+  manifest_channel="$(sed -n 's/^[[:space:]]*"channel":[[:space:]]*"\([^"]*\)".*/\1/p' "$stage/update.json" | head -n 1)"
+  [[ "$expected" =~ ^[0-9A-Fa-f]{64}$ && "$commit" =~ ^[0-9a-f]{40}$ && "$manifest_channel" == "$channel" ]] || { echo 'Неверный манифест Docker-обновления.' >&2; return 1; }
+  if [[ "$channel" == dev ]]; then
+    [[ "$version" =~ ^dev-[0-9a-f]{7}$ ]] || return 1
+  else
+    [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  fi
   DOCKER_RELEASE_VERSION="$version"; DOCKER_RELEASE_COMMIT="$commit"
   current="$(cat "$DOCKER_DIR/image.sha256" 2>/dev/null || true)"
   if [[ "${expected,,}" == "$current" ]]; then docker_update_status success; echo 'Docker-панель уже актуальна.'; return 0; fi

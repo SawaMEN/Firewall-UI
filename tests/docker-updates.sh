@@ -11,6 +11,9 @@ printf 'host\n' > "$DOCKER_DIR/deployment"
 for file in docker.env username password; do printf 'fixture\n' > "$DOCKER_DIR/$file"; done
 printf 'fixture\n' > "$DOCKER_DIR/source/compose.yaml"
 export FIREWALL_UI_DOCKER_DIR="$DOCKER_DIR"
+DOCKER_CONFIG_DIR="$FIXTURE/etc/firewall-ui"; DOCKER_STATE_DIR="$FIXTURE/var/lib/firewall-ui"
+mkdir -p "$DOCKER_CONFIG_DIR" "$DOCKER_STATE_DIR"
+printf '{"updateChannel":"stable"}\n' > "$DOCKER_CONFIG_DIR/config.json"
 export FIREWALL_UI_DOCKER_AUTO_UPDATE=1
 systemctl() { printf '%s\n' "$*" >> "$FIXTURE/systemctl"; }
 docker_choose_auto_update

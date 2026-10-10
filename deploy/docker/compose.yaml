@@ -9,12 +9,21 @@ services:
     privileged: true
     environment:
       FIREWALL_UI_HOST_FIREWALL: "1"
-      FIREWALL_UI_HOST_UPDATE_DIR: ${FIREWALL_UI_DOCKER_INSTALL_DIR:-/opt/firewall-ui-docker}
+      FIREWALL_UI_HOST_UPDATE_DIR: ${FIREWALL_UI_DOCKER_INSTALL_DIR:-/opt/firewall-ui}
       FIREWALL_UI_USERNAME: ${FIREWALL_UI_USERNAME:-admin}
       FIREWALL_UI_PASSWORD: ${FIREWALL_UI_PASSWORD:?Set FIREWALL_UI_PASSWORD in .env}
     volumes:
-      - firewall-ui-config:/etc/firewall-ui
-      - firewall-ui-data:/var/lib/firewall-ui
+      # Identical host paths for native and Docker installations.
+      - type: bind
+        source: ${FIREWALL_UI_CONFIG_DIR:-/etc/firewall-ui}
+        target: /etc/firewall-ui
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${FIREWALL_UI_STATE_DIR:-/var/lib/firewall-ui}
+        target: /var/lib/firewall-ui
+        bind:
+          create_host_path: false
       - type: bind
         source: /etc/ssh
         target: /etc/ssh
@@ -27,6 +36,3 @@ services:
         max-size: 10m
         max-file: '3'
 
-volumes:
-  firewall-ui-config:
-  firewall-ui-data:
