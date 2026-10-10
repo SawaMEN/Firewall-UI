@@ -57,4 +57,48 @@ rm -rf -- "$DOCKER_DIR"
 echo unrelated > "$DOCKER_CONFIG_DIR/unrelated"
 if docker_migrate_legacy_layout; then echo 'Migration overwrote another installation' >&2; exit 1; fi
 grep -qx unrelated "$DOCKER_CONFIG_DIR/unrelated"
-echo 'Legacy Docker metadata, shared TLS/state and dev channel migration verified'
+
+# Switching native to Docker keeps the shared config and imports external PEM.
+source "$ROOT/install.sh"
+source "$ROOT/deploy/firewall-ui-switch"
+CONFIG_DIR="$FIXTURE/native-config"
+STATE_DIR="$FIXTURE/native-state"
+INSTALL_DIR="$FIXTURE/native-install"
+SERVICE_FILE="$FIXTURE/native.service"
+MANAGER="$FIXTURE/native-manager"
+export FIREWALL_UI_DOCKER_DIR="$FIXTURE/new-variant" FIREWALL_UI_DOCKER_MANAGER="$FIXTURE/docker-manager"
+mkdir -p "$CONFIG_DIR" "$STATE_DIR" "$INSTALL_DIR" "$FIXTURE/external"
+printf 'cert\n' > "$FIXTURE/external/fullchain.pem"
+printf 'key\n' > "$FIXTURE/external/privkey.pem"
+printf '{"listenHost":"127.0.0.1","listenPort":8443,"publicHost":"demo.example.org","tlsCert":"%s","tlsKey":"%s","updateChannel":"dev"}\n' \
+  "$FIXTURE/external/fullchain.pem" "$FIXTURE/external/privkey.pem" > "$CONFIG_DIR/config.json"
+printf 'FIREWALL_UI_USERNAME="admin"\nFIREWALL_UI_PASSWORD="password"\n' > "$CONFIG_DIR/environment"
+echo state > "$STATE_DIR/state.json"
+echo native > "$MANAGER"
+echo unit > "$SERVICE_FILE"
+systemctl() { return 0; }
+run_installer_docker_action() {
+  mkdir -p "$FIREWALL_UI_DOCKER_DIR"
+  printf 'host\n' > "$FIREWALL_UI_DOCKER_DIR/deployment"
+  printf '%s\n' \
+    'FIREWALL_UI_DOCKER_HOST=127.0.0.1' 'FIREWALL_UI_DOCKER_PORT=8088' \
+    'FIREWALL_UI_DOCKER_PORTS=0' 'FIREWALL_UI_PUBLIC_HOST=' \
+    'FIREWALL_UI_TLS_CERT=' 'FIREWALL_UI_TLS_KEY=' \
+    'FIREWALL_UI_TLS_MODE=' 'FIREWALL_UI_OPEN_PORTS=0' > "$FIREWALL_UI_DOCKER_DIR/docker.env"
+  cat > "$FIREWALL_UI_DOCKER_MANAGER" <<'MOCK'
+docker_compose() { return 0; }
+docker_wait_for_service() { return 0; }
+docker_setup_updates() { return 0; }
+docker_setup_renewal() { return 0; }
+docker_update_status() { return 0; }
+MOCK
+}
+switch_remove_native() { rm -rf -- "$INSTALL_DIR"; rm -f -- "$SERVICE_FILE"; }
+switch_native_to_docker
+[[ ! -d "$INSTALL_DIR" && ! -e "$SERVICE_FILE" ]]
+[[ -f "$CONFIG_DIR/environment" && -f "$STATE_DIR/state.json" ]]
+grep -Fq "$CONFIG_DIR/tls/import-" "$CONFIG_DIR/config.json"
+grep -Fq "$CONFIG_DIR/tls/import-" "$FIREWALL_UI_DOCKER_DIR/docker.env"
+grep -qx 'FIREWALL_UI_DOCKER_PORT=8443' "$FIREWALL_UI_DOCKER_DIR/docker.env"
+
+echo 'Legacy Docker metadata, shared TLS/state and dev channel migration and native-to-Docker switching verified'
