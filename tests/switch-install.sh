@@ -14,7 +14,7 @@ switch_docker_to_native() { echo 'to-native' >> "$FIXTURE/switched"; }
 printf 'n\n' > "$FIXTURE/answer"
 exec 3< "$FIXTURE/answer"
 installer_switch_variant docker > "$FIXTURE/prompt"
-[[ "$(cat "$FIXTURE/prompt")" == *'Удалить обычную версию и установить Docker'* ]]
+[[ "$(cat "$FIXTURE/prompt")" == *'Переключение отменено.'* ]]
 [[ ! -e "$FIXTURE/switched" ]]
 
 # Confirm both directions. No new credentials should be requested by the prompt.
