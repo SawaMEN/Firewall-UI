@@ -22,9 +22,10 @@ class ReleaseManifestTest(unittest.TestCase):
             (self.directory / f"dist-{channel}").mkdir()
             for arch in ("amd64", "arm64"):
                 (self.directory / f"dist-{channel}" / f"firewall-ui-linux-{arch}").write_bytes(arch.encode())
-        (self.directory / "release-images").mkdir()
-        for arch in ("amd64", "arm64"):
-            (self.directory / "release-images" / f"firewall-ui-docker-linux-{arch}.tar.gz").write_bytes(f"image-{arch}".encode())
+        for channel in ("stable", "dev"):
+            (self.directory / "release-images" / channel).mkdir(parents=True)
+            for arch in ("amd64", "arm64"):
+                (self.directory / "release-images" / channel / f"firewall-ui-docker-linux-{arch}.tar.gz").write_bytes(f"image-{channel}-{arch}".encode())
 
     def generate(self, channel="stable"):
         tag = "v1.3.2" if channel == "stable" else "dev"
@@ -45,7 +46,8 @@ class ReleaseManifestTest(unittest.TestCase):
             self.assertIn(f"/firewall-ui-linux-{arch}", result.stdout)
             self.assertNotIn("firewall-ui-docker", result.stdout)
         dev = self.generate("dev")
-        self.assertEqual(set(dev["assets"]), {"amd64", "arm64"})
+        self.assertEqual(set(dev["assets"]), {"amd64", "arm64", "docker-amd64", "docker-arm64"})
+        self.assertTrue(dev["assets"]["docker-amd64"]["url"].endswith("/dev/firewall-ui-docker-linux-amd64.tar.gz"))
 
     def download(self, arch, legacy=False, bad_checksum=False):
         manifest = self.generate()
@@ -67,7 +69,7 @@ curl() {
   case "$url" in
     */docker-update.json) cp "$TASK_FIXTURE/old-manifest.json" "$destination";;
     */update.json) cp "$TASK_FIXTURE/manifest.json" "$destination";;
-    */firewall-ui-docker-linux-*.tar.gz) cp "$TASK_FIXTURE/release-images/firewall-ui-docker-linux-$TASK_ARCH.tar.gz" "$destination";;
+    */firewall-ui-docker-linux-*.tar.gz) cp "$TASK_FIXTURE/release-images/stable/firewall-ui-docker-linux-$TASK_ARCH.tar.gz" "$destination";;
     *) return 1;;
   esac
 }
