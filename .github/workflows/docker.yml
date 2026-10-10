@@ -137,4 +137,3 @@ jobs:
           name: firewall-ui-docker-${{ matrix.arch }}
           path: release-images/**/*
           retention-days: 3
-          retention-days: 3
