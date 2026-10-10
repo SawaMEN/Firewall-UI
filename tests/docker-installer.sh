@@ -221,7 +221,7 @@ echo 'Failed Docker startup and runtime rollback/retry passed'
  [[ "$(docker_show_access)" == *https://panel.example.com:9443/* ]]
  : > "$FIXTURE/commands"
  docker_apply_runtime_settings
- [[ "$(cat "$FIXTURE/commands")" == *compose.tls.yaml* && "$(cat "$FIXTURE/commands")" == *'-secure-cookies=true'* ]]
+ [[ "$(cat "$FIXTURE/commands")" != *compose.tls.yaml* && "$(cat "$FIXTURE/commands")" == *'-secure-cookies=true'* ]]
  [[ "$(cat "$FIXTURE/commands")" == *'-public-host panel.example.com'* ]]
  # Switching back to local access explicitly clears all TLS/public-address fields.
  printf '1\n8088\nn\n' > "$FIXTURE/tls-answers"; exec 3<>"$FIXTURE/tls-answers"
