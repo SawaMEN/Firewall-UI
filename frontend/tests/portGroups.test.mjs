@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { formatProtocols, formatPortRanges, groupPortsByProcess, groupFirewallRules, summarizePorts } from '../src/pages/firewall/portGroups.ts';
+import { pairProtocolRules, formatProtocols, formatPortRanges, groupPortsByProcess, groupFirewallRules, summarizePorts } from '../src/pages/firewall/portGroups.ts';
 
 const socket = (port, processes, extra = {}) => ({ socketId: String(port), port, processes, protocol: 'tcp', address: '0.0.0.0', family: 'IPv4', state: 'LISTEN', listening: true, loopback: false, ...extra });
 test('ranges use hyphens and never fill gaps or duplicate ports', () => {
@@ -42,7 +42,7 @@ test('workers of the same executable show one range and retain every PID', () =>
 test('firewall ranges preserve protection, gaps, protocol and denied state', () => {
   const rule = (port, extra = {}) => ({ port, source: 'service', label: 'worker', protocol: 'tcp', exists: true, owned: true, ...extra });
   const groups = groupFirewallRules([rule(9000), rule(9002), rule(9003), rule(9001), rule(22, { source: 'ssh' }), rule(9000, { protocol: 'udp' }), rule(9100, { source: 'manual' })], new Set(['close-port-9001-tcp']));
-  assert.equal(groups.length, 6);
+  assert.equal(groups.length, 5);
   assert.equal(groups[0].range, '9000');
   assert.equal(groups[1].range, '9002-9003');
   assert.equal(groups[0].sparse, false);
@@ -59,7 +59,30 @@ test('large process gaps create separate rows while mixed sockets share a contig
 });
 
 test('combined protocols use a stable compact label', () => {
-  assert.equal(formatProtocols(['UDP', 'tcp', 'TCP']), 'tcp/udp');
-  assert.equal(formatProtocols(['both', 'udp']), 'tcp/udp');
-  assert.equal(formatProtocols(['tcp']), 'tcp');
+  assert.equal(formatProtocols(['UDP', 'tcp', 'TCP']), 'TCP + UDP');
+  assert.equal(formatProtocols(['both', 'udp']), 'TCP + UDP');
+  assert.equal(formatProtocols(['tcp']), 'TCP');
+});
+
+test('paired firewall ranges retain every original rule and never extend UDP coverage', () => {
+  const rule = (port, protocol, extra = {}) => ({ port, protocol, source: 'service', label: 'worker', owned: true, exists: true, ...extra });
+  const rules = [rule(9000, 'tcp'), rule(9001, 'tcp'), rule(9000, 'udp'), rule(9001, 'udp')];
+  const paired = groupFirewallRules(rules, new Set());
+  assert.equal(paired.length, 1);
+  assert.equal(paired[0].range, '9000-9001');
+  assert.deepEqual(new Set(paired[0].rules), new Set(rules));
+  assert.equal(formatProtocols(paired[0].rules.map(rule => rule.protocol), ' / '), 'TCP / UDP');
+  assert.equal(groupFirewallRules(rules.slice(0, 3), new Set()).length, 2);
+  assert.equal(groupFirewallRules(rules, new Set(['close-port-9001-udp'])).length, 3);
+});
+
+test('manual and advanced pairing preserves semantics and individual deletion identities', () => {
+  const a = { id: 'tcp-rule', protocol: 'tcp', action: 'allow', port: 443, source: '10.0.0.0/8' };
+  const b = { ...a, id: 'udp-rule', protocol: 'udp' };
+  const key = ({ action, port, source }) => JSON.stringify([action, port, source]);
+  const groups = pairProtocolRules([a, b, { ...a, id: 'duplicate' }, { ...b, id: 'denied', action: 'deny' }, { ...b, id: 'different-source', source: 'ANY' }, { ...a, id: 'any-rule', protocol: 'any' }], key);
+  assert.equal(groups.length, 5);
+  assert.deepEqual(groups[0].rules.map(rule => rule.id), ['tcp-rule', 'udp-rule']);
+  assert.equal(groups[0].rules[0], a);
+  assert.equal(groups[0].rules[1], b);
 });

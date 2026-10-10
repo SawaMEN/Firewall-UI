@@ -2,12 +2,49 @@
 set -Eeuo pipefail
 TASK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$TASK_ROOT/install.sh"
+# Public defaults are bounded, validated, and never substitute a private address.
+(
+ curl() { printf '%s' "${MOCK_PUBLIC_IP:-8.8.4.4}"; }
+ hostname() { printf '%s' "${MOCK_HOSTNAME:-panel.example.com}"; }
+ timeout() { shift; "$@"; }
+ getent() { printf '%s STREAM panel.example.com\n' "${MOCK_DNS_IP:-8.8.4.4}"; }
+ ip() { printf '2: eth0 inet 9.9.9.9/24 scope global eth0\n'; }
+ [[ "$(installer_suggest_host ip)" == 8.8.4.4 ]]
+ [[ "$(installer_suggest_host domain)" == panel.example.com ]]
+ MOCK_DNS_IP=1.1.1.1
+ [[ -z "$(installer_suggest_host domain)" ]]
+ MOCK_HOSTNAME=server.local
+ [[ -z "$(installer_suggest_host domain)" ]]
+ MOCK_PUBLIC_IP='not an IP'
+ [[ "$(installer_suggest_host ip)" == 9.9.9.9 ]]
+ curl() { return 1; }; ip() { return 1; }
+ [[ -z "$(installer_suggest_host ip)" ]]
+ for address in 127.0.0.1 10.0.0.1 172.16.0.1 192.168.0.1 100.64.0.1 999.1.1.1 2001:db8::1 fe80::1; do
+   if installer_public_ip "$address"; then echo "Invalid public default: $address"; exit 1; fi
+ done
+ installer_public_ip 2606:4700:4700::1111
+)
+# Other fixtures supply their own address and do not access external discovery.
+installer_suggest_host() { :; }
 FIXTURE="$(mktemp -d)"
 trap 'rm -rf -- "$FIXTURE"' EXIT
 CONFIG_DIR="$FIXTURE/config"; STATE_DIR="$FIXTURE/state"; TEMP_DIR="$FIXTURE/temp"
 mkdir -p "$CONFIG_DIR" "$STATE_DIR" "$TEMP_DIR"
 UPDATE_CHANNEL=stable
 FIREWALL_UI_NONINTERACTIVE=1; FIREWALL_UI_PASSWORD=1
+(
+ installer_suggest_host() { printf '8.8.4.4'; }
+ INSTALL_INTERACTIVE=1
+ FIREWALL_UI_ACCESS_MODE=ip; FIREWALL_UI_TLS_MODE=selfsigned
+ printf '\n\nN\n' > "$FIXTURE/default-answers"; exec 3<>"$FIXTURE/default-answers"
+ choose_access
+ [[ "$PUBLIC_HOST" == 8.8.4.4 && "$OPEN_PORTS" == 0 ]]
+ SAVED_PUBLIC_HOST=9.9.9.9
+ installer_suggest_host() { echo 'Unexpected discovery'; return 1; }
+ exec 3<>"$FIXTURE/default-answers"
+ choose_access
+ [[ "$PUBLIC_HOST" == 9.9.9.9 ]]
+)
 # A one-character password is persisted, not rejected or substituted.
 create_settings
 [[ "$(cat "$CONFIG_DIR/environment")" == *'FIREWALL_UI_PASSWORD="1"'* ]]

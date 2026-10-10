@@ -13,12 +13,40 @@ export type Port = {
 export type ProcessGroup = { id: string; processes: Process[]; ports: Port[] };
 
 // Combined protocol labels are compact and independent of socket order.
-export function formatProtocols(values: string[]): string {
+export function formatProtocols(values: string[], separator = ' + '): string {
   const protocols = new Set(values.flatMap((value) => {
     const protocol = value.toLowerCase();
     return protocol === 'both' ? ['tcp', 'udp'] : [protocol];
   }));
-  return [...protocols].sort().join('/');
+  return [...protocols].sort().map((value) => value.toUpperCase()).join(separator);
+}
+
+// Pair only opposite protocols with exactly matching semantics. Original rules
+// remain intact for expansion and deletion; ANY and duplicate TCP stay separate.
+export function pairProtocolRules<T extends { protocol: string }>(
+  rules: T[], identity: (rule: T) => string,
+): { id: string; rules: T[] }[] {
+  const groups: { id: string; rules: T[] }[] = [];
+  const pending = new Map<string, { id: string; rules: T[] }[]>();
+  for (const rule of rules) {
+    const key = identity(rule);
+    const protocol = rule.protocol.toLowerCase();
+    const opposite = protocol === 'tcp' ? 'udp' : protocol === 'udp' ? 'tcp' : '';
+    const oppositeKey = `${key}:${opposite}`;
+    const match = opposite ? pending.get(oppositeKey)?.pop() : undefined;
+    if (match) match.rules.push(rule);
+    else {
+      const group = { id: `${key}:${groups.length}`, rules: [rule] };
+      groups.push(group);
+      if (opposite) {
+        const ownKey = `${key}:${protocol}`;
+        const candidates = pending.get(ownKey) || [];
+        candidates.push(group);
+        pending.set(ownKey, candidates);
+      }
+    }
+  }
+  return groups;
 }
 
 // Summaries never include missing ports; every gap starts a separate interval.
@@ -156,7 +184,7 @@ export function groupFirewallRules<T extends RulePort>(
     if (group) group.rules.push(rule);
     else groups.set(id, { id, rules: [rule], range: '', sparse: false });
   }
-  return [...groups.values()].flatMap((group) =>
+  const segments = [...groups.values()].flatMap((group) =>
     splitPortSegments(group.rules, (rule) => rule.port || 0).map((rules) => {
       const summary = summarizePorts(
         rules.flatMap((rule) => (rule.port ? [rule.port] : [])),
@@ -169,4 +197,15 @@ export function groupFirewallRules<T extends RulePort>(
       };
     }),
   );
+  return pairProtocolRules(
+    segments.map((group) => ({ ...group, protocol: group.rules[0].protocol })),
+    (group) => JSON.stringify([group.range, group.rules.map((rule) => [
+      rule.port, rule.portRange, rule.source,
+      [...new Set(rule.label.split(',').map((name) => name.trim()).filter(Boolean))].sort(),
+      rule.owned, rule.exists, closedIds.has(`close-port-${rule.port}-${rule.protocol}`),
+    ])]),
+  ).map((pair) => ({
+    ...pair.rules[0], id: pair.id,
+    rules: pair.rules.flatMap((group) => group.rules),
+  }));
 }

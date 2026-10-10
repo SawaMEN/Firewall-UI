@@ -18,6 +18,7 @@ import { PlusOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { HttpUtil } from '@/utils';
 import { formatProtocols, groupFirewallRules } from './portGroups';
+import { ProtocolRulesTable } from './ProtocolRulesTable';
 import type { ColumnsType } from 'antd/es/table';
 
 type FirewallRule = {
@@ -57,6 +58,13 @@ type AdvancedRule = {
   priority: number;
 };
 type AdvancedResponse = { rules: AdvancedRule[] };
+
+const manualIdentity = (rule: FirewallManualRule) =>
+  JSON.stringify([rule.port, rule.label || '']);
+const advancedIdentity = (rule: AdvancedRule) =>
+  JSON.stringify([rule.action, rule.portStart, rule.portEnd,
+    rule.sourceCidr || '', rule.interface || '', rule.ipVersion || 'any',
+    rule.priority, rule.label || '']);
 
 function portLabel(rule: FirewallRule) {
   return rule.portRange || String(rule.port || '');
@@ -312,7 +320,7 @@ export function FirewallManager() {
           {rule.members && rule.members.length > 1 ? (
             <div>
               <Typography.Text type="secondary">
-                {ru ? 'Портов' : 'Ports'}: {rule.members.length}
+                {ru ? 'Портов' : 'Ports'}: {new Set(rule.members.map((member) => portLabel(member))).size}
                 {rule.sparse ? (ru ? ' · с пропусками' : ' · with gaps') : ''}
               </Typography.Text>
             </div>
@@ -325,7 +333,7 @@ export function FirewallManager() {
       title: text.protocol,
       dataIndex: 'protocol',
       width: 100,
-      render: (value: string) => <Tag>{formatProtocols([value])}</Tag>,
+      render: (_, rule) => <Tag>{formatProtocols((rule.members || [rule]).map((member) => member.protocol), ' / ')}</Tag>,
     },
     { title: text.source, render: (_, rule) => rule.label || rule.source },
     {
@@ -520,7 +528,7 @@ export function FirewallManager() {
             onChange={setBasicProtocol}
             style={{ width: 135 }}
             options={[
-              { value: 'both', label: 'tcp/udp' },
+              { value: 'both', label: 'TCP + UDP' },
               { value: 'tcp', label: 'TCP' },
               { value: 'udp', label: 'UDP' },
             ]}
@@ -554,18 +562,18 @@ export function FirewallManager() {
             {text.add}
           </Button>
         </Space>
-        <Table<FirewallManualRule>
-          size="small"
-          pagination={false}
+        <ProtocolRulesTable<FirewallManualRule>
+          ru={ru}
+          identity={manualIdentity}
           rowKey={(rule) => `${rule.port}-${rule.protocol}`}
-          dataSource={status.manualRules || []}
+          rules={status.manualRules || []}
           columns={[
             { title: text.port, dataIndex: 'port', width: 100 },
             {
               title: text.protocol,
               dataIndex: 'protocol',
               width: 110,
-              render: (v: string) => <Tag>{formatProtocols([v])}</Tag>,
+              render: (v: string) => <Tag>{formatProtocols([v], ' / ')}</Tag>,
             },
             {
               title: text.label,
@@ -693,11 +701,11 @@ export function FirewallManager() {
         </div>
 
         <Divider />
-        <Table<AdvancedRule>
-          size="small"
-          rowKey="id"
-          dataSource={advanced}
-          pagination={false}
+        <ProtocolRulesTable<AdvancedRule>
+          ru={ru}
+          identity={advancedIdentity}
+          rowKey={(rule) => rule.id}
+          rules={advanced}
           scroll={{ x: 1000 }}
           columns={[
             {
@@ -714,7 +722,7 @@ export function FirewallManager() {
               title: text.protocol,
               dataIndex: 'protocol',
               width: 100,
-              render: (value: string) => <Tag>{formatProtocols([value])}</Tag>,
+              render: (value: string) => <Tag>{formatProtocols([value], ' / ')}</Tag>,
             },
             {
               title: text.range,

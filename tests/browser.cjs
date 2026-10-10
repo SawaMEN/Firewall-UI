@@ -33,6 +33,50 @@ const { chromium } = require(path.join(process.env.PLAYWRIGHT_TOOLS, 'node_modul
   await page.setViewportSize({ width: 390, height: 844 });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'Mobile layout overflows');
   await page.screenshot({ path: path.join(output, 'settings-mobile.png'), fullPage: true });
+  // Exercise compact rules and deletion against isolated API fixtures.
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  let manual = ['tcp', 'udp'].map(protocol => ({ port: 9000, protocol, label: 'paired manual' }));
+  let advanced = ['tcp', 'udp'].map(protocol => ({ id: `paired-${protocol}`, protocol, action: 'allow', portStart: 9001, portEnd: 9002, sourceCidr: '', interface: '', ipVersion: 'any', priority: 100, label: 'paired advanced' }));
+  const requests = [];
+  const status = () => ({ supported: true, backend: 'ufw', enabled: true, autoSync: false, pingEnabled: true,
+    rules: manual.map(rule => ({ ...rule, source: 'manual', owned: true, exists: true })), manualRules: manual });
+  const response = (route, obj) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, obj, msg: '' }) });
+  await page.route('**/panel/api/server/firewall/status', route => response(route, status()));
+  await page.route('**/api/firewall/advanced', route => response(route, advanced));
+  await page.route('**/panel/api/server/firewall/rules/delete', route => {
+    const data = route.request().postDataJSON(); requests.push(data);
+    manual = manual.filter(rule => rule.port !== data.port || rule.protocol !== data.protocol);
+    return response(route, status());
+  });
+  await page.route('**/api/firewall/advanced/delete', route => {
+    const data = route.request().postDataJSON(); requests.push(data);
+    advanced = advanced.filter(rule => rule.id !== data.id);
+    return response(route, { rules: advanced });
+  });
+  await page.getByRole('menuitem', { name: 'Файрволл' }).click();
+  const manualCard = page.locator('.ant-card').filter({ has: page.getByText('Простые ручные правила', { exact: true }) });
+  const advancedCard = page.locator('.ant-card').filter({ has: page.getByText('Расширенные правила', { exact: true }) });
+  await manualCard.getByText('TCP / UDP', { exact: true }).waitFor();
+  await advancedCard.getByText('TCP / UDP', { exact: true }).waitFor();
+  assert.equal(await manualCard.getByRole('button', { name: 'Удалить', exact: true }).count(), 0);
+  await manualCard.locator('.ant-table-row-expand-icon-collapsed').click();
+  await advancedCard.locator('.ant-table-row-expand-icon-collapsed').click();
+  await page.screenshot({ path: path.join(output, 'paired-rules-desktop.png'), fullPage: true });
+  const manualTCP = manualCard.locator('.ant-table-expanded-row .ant-table-row').filter({ has: page.getByText('TCP', { exact: true }) });
+  await manualTCP.getByRole('button', { name: 'Удалить', exact: true }).click();
+  await page.locator('.ant-popconfirm').getByRole('button', { name: /OK|Да|ОК/ }).click();
+  await manualCard.getByText('UDP', { exact: true }).waitFor();
+  assert.deepEqual(requests[0], { port: 9000, protocol: 'tcp' });
+  assert.equal(await manualCard.getByText('TCP / UDP', { exact: true }).count(), 0);
+  const advancedTCP = advancedCard.locator('.ant-table-expanded-row .ant-table-row').filter({ has: page.getByText('TCP', { exact: true }) });
+  await advancedTCP.getByRole('button', { name: 'Удалить', exact: true }).click();
+  await page.locator('.ant-popconfirm').getByRole('button', { name: /OK|Да|ОК/ }).click();
+  await advancedCard.getByText('UDP', { exact: true }).waitFor();
+  assert.deepEqual(requests[1], { id: 'paired-tcp' });
+  assert.deepEqual(advanced.map(rule => rule.id), ['paired-udp']);
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'Rules mobile layout overflows');
+  await page.screenshot({ path: path.join(output, 'paired-rules-mobile.png'), fullPage: true });
   assert.deepEqual(errors, []);
   // The login response alone must never mount protected pages without a cookie.
   const blocked = await browser.newContext();
@@ -43,5 +87,5 @@ const { chromium } = require(path.join(process.env.PLAYWRIGHT_TOOLS, 'node_modul
   await blockedPage.getByText(/Браузер не сохранил сессию/).waitFor();
   assert.equal(await blockedPage.locator('.page-header').count(), 0);
   await browser.close();
-  console.log('Browser login/session, cookie rejection and cyberpunk desktop/mobile checks passed');
+  console.log('Browser login/session, cookie rejection, protocol-specific deletion and cyberpunk desktop/mobile checks passed');
 })().catch(error => { console.error(error); process.exit(1); });

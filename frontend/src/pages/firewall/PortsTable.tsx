@@ -715,7 +715,7 @@ export function PortsTable() {
           onChange={setProtocol}
           aria-label={ru ? 'Протокол' : 'Protocol'}
           options={[
-            { value: 'all', label: 'tcp/udp' },
+            { value: 'all', label: 'TCP + UDP' },
             { value: 'tcp', label: 'TCP' },
             { value: 'udp', label: 'UDP' },
           ]}

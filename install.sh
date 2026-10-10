@@ -123,6 +123,44 @@ json_text() {
   escape_env_value "$1"
 }
 
+# Suggest only public addresses; explicit/saved values always take precedence.
+installer_public_ip() {
+  local address octet a b c d
+  address="$1"
+  if [[ "$address" == *:* ]]; then
+    [[ "$address" =~ ^[23][0-9a-fA-F]{3}:[0-9a-fA-F:]+$ && "$address" != 2001:db8:* ]]
+    return
+  fi
+  [[ "$address" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+  IFS=. read -r a b c d <<< "$address"
+  for octet in "$a" "$b" "$c" "$d"; do ((10#$octet <= 255)) || return 1; done
+  a=$((10#$a)); b=$((10#$b)); c=$((10#$c))
+  ((a > 0 && a < 224 && a != 10 && a != 127)) || return 1
+  ((!(a == 100 && b >= 64 && b <= 127) && !(a == 169 && b == 254) && !(a == 172 && b >= 16 && b <= 31))) || return 1
+  ((!(a == 192 && (b == 168 || (b == 0 && (c == 0 || c == 2)))) && !(a == 198 && (b == 18 || b == 19 || (b == 51 && c == 100))) && !(a == 203 && b == 0 && c == 113)))
+}
+
+installer_suggest_host() {
+  local mode="$1" address='' candidate addresses candidate_address
+  # ipify also handles NAT and IPv6-only servers. Failure never blocks the wizard.
+  address="$(curl -fsS --connect-timeout 2 --max-time 4 --max-filesize 64 https://api64.ipify.org 2>/dev/null)" || address=''
+  if ! installer_public_ip "$address"; then
+    address=''
+    while IFS= read -r candidate; do
+      if installer_public_ip "$candidate"; then address="$candidate"; break; fi
+    done < <(ip -o address show scope global 2>/dev/null | awk '{split($4,a,"/"); print a[1]}' || true)
+  fi
+  [[ -n "$address" ]] || return 0
+  if [[ "$mode" == ip ]]; then printf '%s' "$address"; return 0; fi
+  candidate="$(timeout 3 hostname -f 2>/dev/null)" || candidate=''
+  [[ "$candidate" == *.* && "$candidate" != *[!a-zA-Z0-9.-]* && ! "$candidate" =~ ^[0-9.]+$ ]] || return 0
+  case "${candidate,,}" in *.local|*.localhost|*.internal|*.lan) return 0;; esac
+  addresses="$(timeout 3 getent ahosts "$candidate" 2>/dev/null | awk '{print $1}' | sort -u)" || addresses=''
+  while IFS= read -r candidate_address; do
+    if [[ "$candidate_address" == "$address" ]]; then printf '%s' "$candidate"; return 0; fi
+  done <<< "$addresses"
+}
+
 choose_access() {
   ACCESS_MODE=local
   if [[ -n "${SAVED_PUBLIC_HOST:-}" ]]; then
@@ -153,7 +191,15 @@ choose_access() {
       [[ -z "$TLS_MODE" || "$TLS_MODE" == existing ]] || { echo 'Для выпуска сертификата выберите режим домена или IP.' >&2; return 1; }
       ;;
     domain|ip)
-      ask PUBLIC_HOST 'Домен или IP (без https:// и порта)' "$PUBLIC_HOST"
+      # A saved host of another mode is not a usable default after switching modes.
+      if [[ -z "${FIREWALL_UI_PUBLIC_HOST:-}" ]]; then
+        if [[ "$ACCESS_MODE" == ip && "$PUBLIC_HOST" != *:* && ! "$PUBLIC_HOST" =~ ^[0-9.]+$ ]] ||
+           [[ "$ACCESS_MODE" == domain && ( "$PUBLIC_HOST" == *:* || "$PUBLIC_HOST" =~ ^[0-9.]+$ ) ]]; then PUBLIC_HOST=''; fi
+      fi
+      if [[ -z "$PUBLIC_HOST" ]]; then PUBLIC_HOST="$(installer_suggest_host "$ACCESS_MODE")"; fi
+      local host_prompt='Домен (без https:// и порта)'
+      [[ "$ACCESS_MODE" != ip ]] || host_prompt='IP-адрес сервера'
+      ask PUBLIC_HOST "$host_prompt" "$PUBLIC_HOST"
       [[ -n "$PUBLIC_HOST" && "$PUBLIC_HOST" != *[!a-zA-Z0-9.:-]* ]] || { echo 'Укажите домен или IP без схемы, пробелов и порта.' >&2; return 1; }
       [[ "$ACCESS_MODE" != ip || "$PUBLIC_HOST" == *:* || "$PUBLIC_HOST" =~ ^[0-9.]+$ ]] || { echo 'В режиме IP нужен IP-адрес.' >&2; return 1; }
       [[ "$ACCESS_MODE" != domain || ( "$PUBLIC_HOST" != *:* && ! "$PUBLIC_HOST" =~ ^[0-9.]+$ ) ]] || { echo 'В режиме домена нужно доменное имя.' >&2; return 1; }
@@ -507,11 +553,15 @@ installer_service_menu() {
     installer_item 1 'Запустить панель'
     installer_item 2 'Остановить панель' 'Правила файрволла сохраняются'
     installer_item 3 'Перезапустить панель'
+    installer_item 4 'Последние записи журнала' '100 строк'
+    installer_item 5 'Диагностика'
     installer_item 0 'Назад'
     ask choice 'Выберите действие' 0 || return 1
     case "$choice" in
       1) INSTALL_ACTION=start;; 2) INSTALL_ACTION=stop;;
       3) INSTALL_ACTION=restart;;
+      4) INSTALL_ACTION=logs;;
+      5) INSTALL_ACTION=diagnostics; return 0;;
       0) INSTALL_ACTION=back; return 0;;
       *) echo 'Введите номер пункта.' >&2; continue;;
     esac
@@ -666,9 +716,7 @@ select_installer_action() {
     printf '  %s[4]  Полностью удалить%s\n' "${UI_DANGER:-}" "${UI_RESET:-}"
     printf '       %sОба варианта, данные и собственные правила%s\n' "${UI_MUTED:-}" "${UI_RESET:-}"
     echo
-    installer_item 5 'Последние записи журнала' '100 строк; меню останется открытым'
-    installer_item 6 'Управление службой' 'Запуск, остановка и перезапуск'
-    installer_item 7 'Диагностика'
+    installer_item 5 'Управление службой' 'Запуск, остановка, журнал и диагностика'
     installer_item 0 'Выход'
     ask choice 'Выберите действие' 0 || return 1
     case "$choice" in
@@ -676,9 +724,7 @@ select_installer_action() {
       2) installer_settings_menu || return 1;;
       3) INSTALL_ACTION=reset-password; installer_select_target reset-password || { INSTALL_ACTION=back; };;
       4) INSTALL_ACTION=uninstall; return 0;;
-      5) INSTALL_ACTION=logs; installer_select_target logs || { INSTALL_ACTION=back; };;
-      6) installer_service_menu || return 1;;
-      7) INSTALL_ACTION=diagnostics; return 0;;
+      5) installer_service_menu || return 1;;
       0|q|Q) INSTALL_ACTION=exit; return 0;;
       *) echo 'Введите номер пункта.' >&2; continue;;
     esac

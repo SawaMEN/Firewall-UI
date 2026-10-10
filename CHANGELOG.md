@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.25
+
+- Suggest public IP or a matching server domain in the shared native/Compose HTTPS wizard; retain saved addresses.
+- Restore TCP + UDP port summaries and show matching TCP / UDP firewall rules in expandable rows with individual actions.
+- Move journal and diagnostics into service management and shorten Compose installation documentation.
+
 ## 1.2.24
 
 - Scope session cookies by panel port and transport; verify the browser returned the session before mounting protected pages and explain blocked cookies.
