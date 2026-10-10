@@ -8,7 +8,6 @@ import {
   Form,
   Input,
   message,
-  Spin,
 } from 'antd';
 import ruRU from 'antd/locale/ru_RU';
 import enUS from 'antd/locale/en_US';
@@ -17,6 +16,7 @@ import { initReactI18next, useTranslation } from 'react-i18next';
 
 import { ThemeProvider, useTheme } from '@/hooks/useTheme';
 import FirewallPage from '@/pages/firewall/FirewallPage';
+import FullScreenLoader from '@/components/FullScreenLoader';
 import { UpdateProvider } from '@/hooks/useUpdates';
 import { request, setCSRF } from '@/utils';
 import './styles/theme.css';
@@ -86,7 +86,7 @@ function Application() {
     <ConfigProvider theme={antdThemeConfig} locale={ru ? ruRU : enUS}>
       <AntApp>
         {loading ? (
-          <div className="login-shell"><Spin /></div>
+          <FullScreenLoader label={ru ? "Загрузка Firewall-UI…" : "Loading Firewall-UI…"} />
         ) : authenticated ? (
           <UpdateProvider><FirewallPage /></UpdateProvider>
         ) : (

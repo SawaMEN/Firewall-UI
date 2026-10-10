@@ -1,3 +1,4 @@
+import FullScreenLoader from '@/components/FullScreenLoader';
 import { useUpdates } from '@/hooks/useUpdates';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -11,7 +12,6 @@ import {
   Popconfirm,
   Select,
   Space,
-  Spin,
   Switch,
   Table,
   Tag,
@@ -333,7 +333,7 @@ export default function SettingsPage() {
     if (result.success) window.setTimeout(() => window.location.reload(), 2200);
   }
 
-  if (loading) return <div className="panel-card panel-loading"><Spin /></div>;
+  if (loading) return <FullScreenLoader label={ru ? "Загрузка настроек…" : "Loading settings…"} />;
   const channel = current?.updateChannel || 'stable';
 
   return (
