@@ -389,9 +389,6 @@ func loadManagedFirewallRules() ([]FirewallRule, error) {
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
 		return nil, err
 	}
-	if err := validateManualFirewallRules(out); err != nil {
-		return nil, err
-	}
 	return out, nil
 }
 
@@ -417,6 +414,9 @@ func loadManualFirewallRules() ([]FirewallManualRule, error) {
 		return nil, err
 	}
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil, err
+	}
+	if err := validateManualFirewallRules(out); err != nil {
 		return nil, err
 	}
 	return out, nil
