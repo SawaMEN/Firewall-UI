@@ -203,6 +203,12 @@ switch_docker_to_native() (
   set -Eeuo pipefail
   local docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui}" stage succeeded=0 committed=0 old_running=0 native_started=0 native_attempted=0 copied=0
   local docker_update_active=0 docker_renew_active=0
+  # Existing pre-migration installations still use /opt/firewall-ui-docker.
+  # Preserve their volume-based migration route when switching to native.
+  if [[ ! -f "$docker_dir/deployment" && -f "${FIREWALL_UI_LEGACY_DOCKER_DIR:-/opt/firewall-ui-docker}/deployment" ]]; then
+    docker_dir="${FIREWALL_UI_LEGACY_DOCKER_DIR:-/opt/firewall-ui-docker}"
+    export FIREWALL_UI_DOCKER_DIR="$docker_dir"
+  fi
   if [[ "$docker_dir" != /opt/firewall-ui-docker && -f "$docker_dir/.installer-managed" ]]; then
     switch_docker_to_native_bind
     return $?
