@@ -105,7 +105,7 @@ switch_docker_environment() {
 
 switch_native_to_docker() (
   set -Eeuo pipefail
-  local docker_dir="\${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui}" stage old_active=0 old_enabled=0 prepared=0 succeeded=0 mode cert
+  local docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui}" stage old_active=0 old_enabled=0 prepared=0 succeeded=0 mode cert key imported_tls=""
   [[ -f "$CONFIG_DIR/config.json" && -f "$CONFIG_DIR/environment" ]] || {
     echo 'Не найдены настройки или учётные данные обычной версии.' >&2; return 1;
   }
@@ -113,6 +113,7 @@ switch_native_to_docker() (
   stage="$(mktemp -d)"; chmod 0700 "$stage"
   [[ ! -f "$MANAGER" ]] || cp -p "$MANAGER" "$stage/manager"
   [[ ! -f "$SERVICE_FILE" ]] || cp -p "$SERVICE_FILE" "$stage/service"
+  cp -p "$CONFIG_DIR/config.json" "$stage/original-config"
   systemctl is-active --quiet firewall-ui.service && old_active=1 || true
   systemctl is-enabled --quiet firewall-ui.service && old_enabled=1 || true
   rollback() {
@@ -123,6 +124,8 @@ switch_native_to_docker() (
         switch_stop_docker || true
         switch_remove_docker || echo 'Новые Docker-файлы сохранены для проверки.' >&2
       fi
+      [[ ! -f "$stage/original-config" ]] || cp -p "$stage/original-config" "$CONFIG_DIR/config.json"
+      if [[ -n "$imported_tls" ]]; then rm -rf -- "$imported_tls"; fi
       [[ ! -f "$stage/manager" ]] || cp -p "$stage/manager" "$MANAGER"
       [[ ! -f "$stage/service" ]] || cp -p "$stage/service" "$SERVICE_FILE"
       systemctl daemon-reload || true
@@ -134,6 +137,19 @@ switch_native_to_docker() (
   }
   trap rollback EXIT
   systemctl stop firewall-ui.service || return 1
+  # Copy external PEM files into the shared config directory so Docker can
+  # read them through the canonical /etc/firewall-ui bind mount.
+  cert="$(switch_config_string "$CONFIG_DIR/config.json" tlsCert)"
+  key="$(switch_config_string "$CONFIG_DIR/config.json" tlsKey)"
+  if [[ -n "$cert" && -n "$key" && ( "$cert" != "$CONFIG_DIR/"* || "$key" != "$CONFIG_DIR/"* ) ]]; then
+    install -d -m 0700 "$CONFIG_DIR/tls" || return 1
+    imported_tls="$(mktemp -d "$CONFIG_DIR/tls/import-XXXXXX")" || return 1
+    cp -L -- "$cert" "$imported_tls/fullchain.pem" || return 1
+    cp -L -- "$key" "$imported_tls/privkey.pem" || return 1
+    chmod 0600 "$imported_tls/privkey.pem"
+    switch_rewrite_file "$CONFIG_DIR/config.json" "$cert" "$imported_tls/fullchain.pem"
+    switch_rewrite_file "$CONFIG_DIR/config.json" "$key" "$imported_tls/privkey.pem"
+  fi
   FIREWALL_UI_SWITCH_PREPARE=1 FIREWALL_UI_NONINTERACTIVE=1 FIREWALL_UI_ACCESS_MODE=local \
     FIREWALL_UI_USERNAME=admin FIREWALL_UI_PASSWORD="$(od -An -N20 -tx1 /dev/urandom | tr -d ' \n')" \
     run_installer_docker_action install || return 1
@@ -144,7 +160,7 @@ switch_native_to_docker() (
   [[ "$cert" != "$CONFIG_DIR/acme/"* ]] || mode=letsencrypt
   switch_docker_environment "$docker_dir/docker.env" "$CONFIG_DIR/config.json" "$mode" || return 1
   (
-    source "\${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}"
+    source "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}"
     docker_compose up -d --no-build
     docker_wait_for_service
     docker_setup_updates
@@ -159,14 +175,14 @@ switch_native_to_docker() (
 # Modern Docker uses the same host data as the native service.
 switch_docker_to_native_bind() (
   set -Eeuo pipefail
-  local docker_dir="\${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui}" stage started=0 succeeded=0 previously_running=0 timer_active=0 renew_active=0
+  local docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui}" stage started=0 succeeded=0 previously_running=0 timer_active=0 renew_active=0
   [[ -f "$docker_dir/.installer-managed" && -f "$CONFIG_DIR/config.json" && -f "$CONFIG_DIR/environment" ]] || return 1
   [[ ! -e "$SERVICE_FILE" && ! -e "$INSTALL_DIR/firewall-ui" ]] || {
     echo 'Файлы обычной службы уже существуют. Переключение остановлено.' >&2; return 1;
   }
   stage="$(mktemp -d)"; chmod 0700 "$stage"
   [[ ! -f "$MANAGER" ]] || cp -p "$MANAGER" "$stage/docker-manager"
-  [[ -z "$(docker ps -q --filter "label=com.docker.compose.project=\${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}" --filter label=com.docker.compose.service=firewall-ui)" ]] || previously_running=1
+  [[ -z "$(docker ps -q --filter "label=com.docker.compose.project=${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}" --filter label=com.docker.compose.service=firewall-ui)" ]] || previously_running=1
   systemctl is-active --quiet firewall-ui-docker-update.timer && timer_active=1 || true
   systemctl is-active --quiet firewall-ui-docker-cert-renew.timer && renew_active=1 || true
   rollback() {
@@ -180,7 +196,7 @@ switch_docker_to_native_bind() (
       fi
       [[ ! -f "$stage/docker-manager" ]] || cp -p "$stage/docker-manager" "$MANAGER"
       if ((previously_running)); then
-        "\${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}" start || true
+        "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}" start || true
       fi
       if ((timer_active)); then systemctl enable --now firewall-ui-docker-update.timer >/dev/null 2>&1 || true; fi
       if ((renew_active)); then systemctl enable --now firewall-ui-docker-cert-renew.timer >/dev/null 2>&1 || true; fi
