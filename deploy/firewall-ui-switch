@@ -1,0 +1,259 @@
+#!/usr/bin/env bash
+# Switch between native and Docker deployments without purging host firewall rules.
+# Sourced by install.sh. All functions run as root.
+switch_docker_volumes() {
+  SWITCH_CONFIG_VOLUME=''; SWITCH_DATA_VOLUME=''
+  local volume role project="${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}"
+  while IFS= read -r volume; do
+    [[ -n "$volume" ]] || continue
+    role="$(docker volume inspect --format '{{index .Labels "com.docker.compose.volume"}}' "$volume")" || return 1
+    case "$role" in
+      firewall-ui-config) [[ -z "$SWITCH_CONFIG_VOLUME" ]] || return 1; SWITCH_CONFIG_VOLUME="$volume";;
+      firewall-ui-data) [[ -z "$SWITCH_DATA_VOLUME" ]] || return 1; SWITCH_DATA_VOLUME="$volume";;
+    esac
+  done < <(docker volume ls -q --filter "label=com.docker.compose.project=$project")
+  [[ -n "$SWITCH_CONFIG_VOLUME" && -n "$SWITCH_DATA_VOLUME" ]] || {
+    echo 'Не найдены оба тома Firewall-UI Docker. Миграция отменена.' >&2; return 1;
+  }
+  SWITCH_CONFIG_MOUNT="$(docker volume inspect --format '{{.Mountpoint}}' "$SWITCH_CONFIG_VOLUME")" || return 1
+  SWITCH_DATA_MOUNT="$(docker volume inspect --format '{{.Mountpoint}}' "$SWITCH_DATA_VOLUME")" || return 1
+  for path in "$SWITCH_CONFIG_MOUNT" "$SWITCH_DATA_MOUNT"; do
+    [[ "$path" == /* && "$path" != / && -d "$path" && -r "$path" && -w "$path" ]] || {
+      echo "Том Docker недоступен на хосте: $path" >&2; return 1;
+    }
+  done
+}
+
+switch_config_string() {
+  installer_config_value "$1" "$2"
+}
+
+switch_config_port() {
+  sed -n 's/.*"listenPort":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$1" | head -n 1
+}
+
+switch_rewrite_file() {
+  local file="$1" old="$2" new="$3" contents
+  [[ -n "$old" ]] || return 0
+  contents="$(cat "$file")" || return 1
+  contents="${contents//"$old"/"$new"}"
+  printf '%s\n' "$contents" > "$file"
+  chmod 0600 "$file"
+}
+
+switch_stop_docker() {
+  local container project="${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}"
+  while IFS= read -r container; do
+    [[ -n "$container" ]] || continue
+    docker stop --time 15 "$container" >/dev/null || return 1
+  done < <(docker ps -q --filter "label=com.docker.compose.project=$project" --filter label=com.docker.compose.service=firewall-ui)
+}
+
+switch_remove_docker() {
+  local container volume project="${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}"
+  switch_stop_docker || return 1
+  for unit in firewall-ui-docker-update.timer firewall-ui-docker-cert-renew.timer; do
+    systemctl disable --now "$unit" >/dev/null 2>&1 || true
+  done
+  for unit in firewall-ui-docker-update.service firewall-ui-docker-cert-renew.service firewall-ui-docker-update.timer firewall-ui-docker-cert-renew.timer; do
+    rm -f "/etc/systemd/system/$unit" || return 1
+  done
+  systemctl daemon-reload || return 1
+  while IFS= read -r container; do
+    [[ -z "$container" ]] || docker rm -f "$container" >/dev/null || return 1
+  done < <(docker ps -aq --filter "label=com.docker.compose.project=$project" --filter label=com.docker.compose.service=firewall-ui)
+  switch_docker_volumes || return 1
+  for volume in "$SWITCH_CONFIG_VOLUME" "$SWITCH_DATA_VOLUME"; do
+    docker volume rm "$volume" >/dev/null || return 1
+  done
+  rm -rf -- "${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}" || return 1
+  rm -f -- "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}" "${FIREWALL_UI_LEGACY_DOCKER_MANAGER:-/usr/local/bin/firewall-ui-docker}" || return 1
+  # /usr/local/bin/fw-ui now belongs to the freshly installed native variant.
+}
+
+switch_remove_native() {
+  systemctl disable --now firewall-ui.service firewall-ui-cert-renew.timer >/dev/null 2>&1 || true
+  rm -f -- "$SERVICE_FILE" /etc/systemd/system/firewall-ui-cert-renew.service /etc/systemd/system/firewall-ui-cert-renew.timer || return 1
+  systemctl daemon-reload || return 1
+  rm -rf -- "$INSTALL_DIR" "$CONFIG_DIR" "$STATE_DIR" || return 1
+  # fw-ui is managed by the newly installed Docker variant.
+}
+
+switch_docker_environment() {
+  local env_file="$1" cfg="$2" host port public cert key mode="$3"
+  host="$(switch_config_string "$cfg" listenHost)"
+  public="$(switch_config_string "$cfg" publicHost)"
+  port="$(switch_config_port "$cfg")"
+  cert="$(switch_config_string "$cfg" tlsCert)"
+  key="$(switch_config_string "$cfg" tlsKey)"
+  [[ "$host" =~ ^[0-9a-fA-F:.]+$ && "$port" =~ ^[0-9]+$ ]] || return 1
+  sed -i \
+    -e "s|^FIREWALL_UI_DOCKER_HOST=.*|FIREWALL_UI_DOCKER_HOST=$host|" \
+    -e "s|^FIREWALL_UI_DOCKER_PORT=.*|FIREWALL_UI_DOCKER_PORT=$port|" \
+    -e "s|^FIREWALL_UI_PUBLIC_HOST=.*|FIREWALL_UI_PUBLIC_HOST=$public|" \
+    -e "s|^FIREWALL_UI_TLS_CERT=.*|FIREWALL_UI_TLS_CERT=$cert|" \
+    -e "s|^FIREWALL_UI_TLS_KEY=.*|FIREWALL_UI_TLS_KEY=$key|" \
+    -e "s|^FIREWALL_UI_TLS_MODE=.*|FIREWALL_UI_TLS_MODE=$mode|" "$env_file"
+}
+
+switch_native_to_docker() (
+  set -Eeuo pipefail
+  local docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}" old_active=0 stage succeeded=0 imported=0
+  [[ -f "$CONFIG_DIR/config.json" && -f "$CONFIG_DIR/environment" ]] || {
+    echo 'Не найдены конфигурация или учётные данные обычной версии.' >&2; return 1;
+  }
+  [[ ! -e "$docker_dir/deployment" ]] || { echo 'Docker-версия уже существует.' >&2; return 1; }
+  stage="$(mktemp -d)"; chmod 0700 "$stage"
+  [[ ! -f "$MANAGER" ]] || cp -p "$MANAGER" "$stage/native-manager"
+  systemctl is-active --quiet firewall-ui.service && old_active=1 || true
+  rollback() {
+    local result=$?
+    if ((!succeeded)); then
+      echo 'Переключение не завершено. Восстанавливаем обычную версию.' >&2
+      if ((imported)); then
+        switch_remove_docker || echo 'Не удалось очистить новую Docker-установку; исходные данные сохранены.' >&2
+      fi
+      if [[ -f "$stage/native-manager" ]]; then cp -p "$stage/native-manager" "$MANAGER"; fi
+      if ((old_active)); then systemctl restart firewall-ui.service || echo 'Не удалось перезапустить прежнюю службу.' >&2; fi
+    fi
+    rm -rf -- "$stage"
+    return "$result"
+  }
+  trap rollback EXIT
+  systemctl stop firewall-ui.service || return 1
+  mkdir "$stage/config" "$stage/data"
+  cp -a "$CONFIG_DIR/." "$stage/config/" || return 1
+  if [[ -d "$STATE_DIR" ]]; then cp -a "$STATE_DIR/." "$stage/data/" || return 1; fi
+  # Bootstrap the new image with disposable credentials. The saved credentials
+  # and full application state are imported before exposing the final panel.
+  FIREWALL_UI_NONINTERACTIVE=1 FIREWALL_UI_ACCESS_MODE=local \
+  FIREWALL_UI_USERNAME=admin FIREWALL_UI_PASSWORD="$(od -An -N20 -tx1 /dev/urandom | tr -d ' \n')" \
+    run_installer_docker_action install || return 1
+  imported=1
+  switch_stop_docker || return 1
+  switch_docker_volumes || return 1
+  find "$SWITCH_CONFIG_MOUNT" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + || return 1
+  find "$SWITCH_DATA_MOUNT" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + || return 1
+  cp -a "$stage/config/." "$SWITCH_CONFIG_MOUNT/" || return 1
+  cp -a "$stage/data/." "$SWITCH_DATA_MOUNT/" || return 1
+  local cfg="$SWITCH_CONFIG_MOUNT/config.json" cert key mode=existing
+  cert="$(switch_config_string "$cfg" tlsCert)"
+  key="$(switch_config_string "$cfg" tlsKey)"
+  if [[ -n "$cert" && -n "$key" ]]; then
+    mkdir -p "$docker_dir/access/tls/migrated"
+    if [[ "$cert" == "$CONFIG_DIR/acme/"* && "$key" == "$CONFIG_DIR/acme/"* ]]; then
+      mkdir -p "$docker_dir/access/acme"
+      cp -a "$stage/config/acme/." "$docker_dir/access/acme/" || return 1
+      switch_rewrite_file "$cfg" "$CONFIG_DIR/acme/" "$docker_dir/access/acme/"
+      mode=letsencrypt
+    else
+      cp -L -- "$cert" "$docker_dir/access/tls/migrated/fullchain.pem" || return 1
+      cp -L -- "$key" "$docker_dir/access/tls/migrated/privkey.pem" || return 1
+      chmod 0600 "$docker_dir/access/tls/migrated/privkey.pem"
+      switch_rewrite_file "$cfg" "$cert" "$docker_dir/access/tls/migrated/fullchain.pem"
+      switch_rewrite_file "$cfg" "$key" "$docker_dir/access/tls/migrated/privkey.pem"
+    fi
+  else mode=''; fi
+  # Keep installer metadata in sync with settings that may have been changed in the UI.
+  switch_docker_environment "$docker_dir/docker.env" "$cfg" "$mode" || return 1
+  # The temporary bootstrap may have created a local configuration. Its entire
+  # replacement is complete; verify startup before removing the old installation.
+  run_installer_docker_action restart || return 1
+  if [[ "$mode" == letsencrypt ]]; then
+    ( source "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}"; docker_setup_renewal ) || return 1
+  fi
+  switch_remove_native || return 1
+  succeeded=1
+  echo 'Обычная версия заменена на Docker. Настройки и данные перенесены.'
+)
+
+switch_docker_to_native() (
+  set -Eeuo pipefail
+  local docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}" stage succeeded=0 old_running=0 native_started=0
+  [[ -f "$docker_dir/deployment" && -f "$docker_dir/.installer-managed" ]] || {
+    echo 'Docker-версия не распознана. Данные не изменены.' >&2; return 1;
+  }
+  for path in "$CONFIG_DIR" "$STATE_DIR"; do
+    if installer_directory_has_data "$path"; then
+      echo "Каталог $path содержит данные другой установки. Автоматическая миграция отменена." >&2; return 1;
+    fi
+  done
+  switch_docker_volumes || return 1
+  stage="$(mktemp -d)"; chmod 0700 "$stage"
+  mkdir "$stage/config" "$stage/data"
+  [[ -n "$(docker ps -q --filter "label=com.docker.compose.project=${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}" --filter label=com.docker.compose.service=firewall-ui)" ]] && old_running=1 || true
+  rollback() {
+    local result=$?
+    if ((!succeeded)); then
+      echo 'Переключение не завершено. Восстанавливаем Docker-версию.' >&2
+      if ((native_started)); then systemctl disable --now firewall-ui.service >/dev/null 2>&1 || true; fi
+      if ((old_running)); then
+        "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}" start || echo 'Не удалось повторно запустить старый контейнер.' >&2
+      fi
+    fi
+    rm -rf -- "$stage"
+    return "$result"
+  }
+  trap rollback EXIT
+  switch_stop_docker || return 1
+  cp -a "$SWITCH_CONFIG_MOUNT/." "$stage/config/" || return 1
+  cp -a "$SWITCH_DATA_MOUNT/." "$stage/data/" || return 1
+  [[ -f "$stage/config/config.json" && -f "$stage/config/environment" ]] || {
+    echo 'В томе Docker отсутствуют конфигурация или учётные данные.' >&2; return 1;
+  }
+  # Certificates issued for Docker live in a host-bound directory outside the volumes.
+  # Copy them and rewrite paths before removing Docker installer files.
+  local cert key cfg="$stage/config/config.json"
+  cert="$(switch_config_string "$cfg" tlsCert)"
+  key="$(switch_config_string "$cfg" tlsKey)"
+  if [[ -n "$cert" && "$cert" == "$docker_dir/access/"* ]]; then
+    [[ -d "$docker_dir/access" ]] || return 1
+    mkdir -p "$stage/config/migrated-access"
+    cp -a "$docker_dir/access/." "$stage/config/migrated-access/" || return 1
+    switch_rewrite_file "$cfg" "$docker_dir/access/" "$CONFIG_DIR/migrated-access/"
+  elif [[ -n "$key" && "$key" == "$docker_dir/access/"* ]]; then
+    echo 'Нестандартные пути TLS. Перенос остановлен во избежание потери сертификатов.' >&2
+    return 1
+  fi
+  install -d -m 0700 "$CONFIG_DIR" "$STATE_DIR"
+  cp -a "$stage/config/." "$CONFIG_DIR/" || return 1
+  cp -a "$stage/data/." "$STATE_DIR/" || return 1
+  # Preserve installer-owned access rules, which are recorded outside Docker volumes.
+  for file in access-ufw access-rules; do
+    if [[ -f "$docker_dir/access/state/$file" && ! -f "$STATE_DIR/$file" ]]; then
+      cp -p "$docker_dir/access/state/$file" "$STATE_DIR/$file"
+    fi
+  done
+  INSTALL_INTERACTIVE=0 installer_native_install || return 1
+  native_started=1
+  systemctl is-active --quiet firewall-ui.service || return 1
+  # Do not call docker_uninstall: it would remove the firewall rules now used by native.
+  switch_remove_docker || return 1
+  succeeded=1
+  echo 'Docker-версия заменена обычной. Настройки и данные перенесены.'
+)
+
+installer_switch_variant() {
+  local target="$1" source_label target_label answer
+  if [[ "$target" == docker ]]; then
+    source_label='обычную'; target_label='Docker'; 
+  else
+    source_label='Docker'; target_label='обычную';
+  fi
+  echo "Обнаружена установленная $source_label версия Firewall-UI."
+  if [[ "${INSTALL_INTERACTIVE:-0}" == 1 ]]; then
+    ask answer "Удалить $source_label версию и установить $target_label с сохранением настроек? (y/n)" n || return 1
+    case "${answer,,}" in
+      y|yes) ;;
+      n|no) echo 'Переключение отменено.'; return 0;;
+      *) echo 'Введите y или n.' >&2; return 1;;
+    esac
+  elif [[ "${FIREWALL_UI_SWITCH_CONFIRM:-0}" != 1 ]]; then
+    echo 'Для смены варианта без терминала задайте FIREWALL_UI_SWITCH_CONFIRM=1. Изменений нет.' >&2
+    return 1
+  fi
+  case "$target" in
+    docker) switch_native_to_docker;;
+    native) switch_docker_to_native;;
+  esac
+}
