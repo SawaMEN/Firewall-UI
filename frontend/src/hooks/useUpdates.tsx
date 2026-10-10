@@ -16,6 +16,9 @@ export type UpdateStatus = {
   applying?: boolean;
   phase?: string;
   manualInstall?: boolean;
+  automatic?: boolean;
+  docker?: boolean;
+  updateError?: string;
 };
 
 type Updates = {
@@ -41,6 +44,8 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState('');
   const [failure, setFailure] = useState('');
   const running = useRef(false);
+  const activeTarget = useRef({ version: "", commit: "" });
+  const serverFailure = useRef('');
   const lifetime = useRef(new AbortController());
   const failed = ru ? 'Не удалось проверить обновление' : 'Update check failed';
 
@@ -59,7 +64,7 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
         silent: true, signal: AbortSignal.any([signal, AbortSignal.timeout(22000)]),
       });
       if (signal.aborted) return;
-      if (result.success && result.obj) { setStatus(result.obj); setError(''); }
+      if (result.success && result.obj) { setStatus(result.obj); setError(result.obj.updateError || ''); }
       else setError(result.msg || failed);
     } catch {
       if (!signal.aborted) setError(failed);
@@ -71,7 +76,7 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!visible) return;
     void check();
-    const timer = window.setInterval(() => void check(), 5 * 60 * 1000);
+    const timer = window.setInterval(() => void check(), 60 * 1000);
     return () => window.clearInterval(timer);
   }, [visible, check]);
 
@@ -88,12 +93,54 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
           silent: true, ignoreUnauthorized: true,
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2500)]),
         });
-        if (!controller.signal.aborted && result.obj?.phase) setPhase(result.obj.phase);
+        if (!controller.signal.aborted && result.obj) {
+          if (result.obj.phase) setPhase(result.obj.phase);
+          if (result.obj.updateError) serverFailure.current = result.obj.updateError;
+          if ((result.obj.applying || result.obj.restarting) && result.obj.latestVersion && result.obj.latestCommit) {
+            activeTarget.current = { version: result.obj.latestVersion, commit: result.obj.latestCommit };
+          }
+        }
       } catch { /* The service can be unreachable during restart. */ }
       finally { pending = false; }
     }, 2000);
     return () => { controller.abort(); window.clearInterval(timer); };
   }, [busy]);
+
+  async function waitForRestart(signal: AbortSignal) {
+    const deadline = Date.now() + (status?.docker ? 600000 : 90000);
+    while (!signal.aborted && Date.now() < deadline) {
+      if (serverFailure.current) throw new Error(serverFailure.current);
+      try {
+        const result = await request<{ version: string; commit: string }>('/api/health', undefined, {
+          silent: true, signal: AbortSignal.any([signal, AbortSignal.timeout(2000)]),
+        });
+        if (!signal.aborted && result.success && result.obj?.version === activeTarget.current.version && result.obj.commit === activeTarget.current.commit) {
+          window.location.reload();
+          return;
+        }
+      } catch { /* Wait until the new process answers. */ }
+      await new Promise(resolve => window.setTimeout(resolve, 1200));
+    }
+    if (!signal.aborted) throw new Error(ru
+      ? 'Не удалось подтвердить запуск новой версии. Проверьте журнал службы и обновите страницу.'
+      : 'Could not confirm the new version has started. Check the service log and refresh the page.');
+  }
+
+  useEffect(() => {
+    if (!status?.applying || !status.available || running.current) return;
+    running.current = true;
+    setSessionRestarting(true);
+    serverFailure.current = '';
+    activeTarget.current = { version: status.latestVersion, commit: status.latestCommit };
+    setPhase(status.phase || 'checking');
+    setBusy(true);
+    const signal = lifetime.current.signal;
+    void waitForRestart(signal).catch(err => {
+      if (!signal.aborted) setFailure(err instanceof Error ? err.message : String(err));
+    }).finally(() => {
+      if (!signal.aborted) { running.current = false; setBusy(false); }
+    });
+  }, [status]);
 
   async function apply() {
     if (running.current || !status || status.manualInstall) return;
@@ -101,6 +148,8 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
     setSessionRestarting(true);
     const signal = lifetime.current.signal;
     const target = { version: status.latestVersion, commit: status.latestCommit };
+    activeTarget.current = target;
+    serverFailure.current = '';
     setBusy(true);
     setFailure('');
     setPhase('checking');
@@ -116,28 +165,14 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
         if (!result.obj.restarting) { setBusy(false); setSessionRestarting(false); return; }
         target.version = result.obj.latestVersion;
         target.commit = result.obj.latestCommit;
+        activeTarget.current = target;
       } catch (err) {
         if (signal.aborted) return;
         // A lost HTTP response does not prove that installation failed.
         if (err instanceof Error && err.name !== 'TypeError' && err.name !== 'TimeoutError' && err.name !== 'AbortError') throw err;
       }
       setPhase('restarting');
-      const deadline = Date.now() + 90000;
-      while (!signal.aborted && Date.now() < deadline) {
-        try {
-          const result = await request<{ version: string; commit: string }>('/api/health', undefined, {
-            silent: true, signal: AbortSignal.any([signal, AbortSignal.timeout(2000)]),
-          });
-          if (!signal.aborted && result.success && result.obj?.version === target.version && result.obj.commit === target.commit) {
-            window.location.reload();
-            return;
-          }
-        } catch { /* Wait until the new process answers. */ }
-        await new Promise(resolve => window.setTimeout(resolve, 1200));
-      }
-      if (!signal.aborted) throw new Error(ru
-        ? 'Не удалось подтвердить запуск новой версии. Проверьте журнал службы и обновите страницу.'
-        : 'Could not confirm the new version has started. Check the service log and refresh the page.');
+      await waitForRestart(signal);
     } catch (err) {
       if (!signal.aborted) {
         const detail = err instanceof Error ? err.message : String(err);

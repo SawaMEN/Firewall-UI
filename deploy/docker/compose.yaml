@@ -8,6 +8,8 @@ services:
     # Host firewall and ICMP sysctls require access to the host kernel.
     privileged: true
     environment:
+      FIREWALL_UI_HOST_FIREWALL: "1"
+      FIREWALL_UI_HOST_UPDATE_DIR: ${FIREWALL_UI_DOCKER_INSTALL_DIR:-/opt/firewall-ui-docker}
       FIREWALL_UI_USERNAME: ${FIREWALL_UI_USERNAME:-admin}
       FIREWALL_UI_PASSWORD: ${FIREWALL_UI_PASSWORD:?Set FIREWALL_UI_PASSWORD in .env}
     volumes:

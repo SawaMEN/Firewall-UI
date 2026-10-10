@@ -429,7 +429,7 @@ export default function SettingsPage() {
               { value: 'dev', label: text.dev },
             ]} />
           </Form.Item>
-          <Alert type={channel === 'dev' ? 'warning' : 'info'} showIcon title={channel === 'dev' ? text.dev : text.stable} description={updateStatus?.manualInstall ? (ru ? 'Docker обновляется через установщик на сервере: пункт 1, затем 2.' : 'Update Docker using the server installer: select 1, then 2.') : channel === 'dev' ? text.devHint : text.stableHint} style={{ marginBottom: 16 }} />
+          <Alert type={channel === 'dev' ? 'warning' : 'info'} showIcon title={channel === 'dev' ? text.dev : text.stable} description={updateStatus?.docker ? (ru ? (updateStatus.automatic ? 'Docker: автоматическая проверка stable-релизов каждый час. Обновить вручную можно здесь.' : 'Docker: автообновление отключено. Обновить вручную можно здесь; включить расписание — в установщике.') : (updateStatus.automatic ? 'Docker: stable releases are checked automatically every hour.' : 'Docker: automatic updates are disabled. Enable the schedule in the installer.')) : updateStatus?.manualInstall ? (ru ? 'Docker обновляется через установщик на сервере: пункт 1, затем 2.' : 'Update Docker using the server installer: select 1, then 2.') : channel === 'dev' ? text.devHint : text.stableHint} style={{ marginBottom: 16 }} />
           {updateError ? <Alert type="error" showIcon title={updateError} style={{ marginBottom: 16 }} /> : null}
           <Space wrap>
             <Typography.Text>{text.current}: <Tag>{updateStatus?.currentVersion || '—'}</Tag></Typography.Text>

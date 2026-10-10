@@ -3,9 +3,10 @@ package firewall
 import (
 	"context"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
+
+	"github.com/SawaMEN/Firewall-UI/internal/hostexec"
 )
 
 type Backend string
@@ -33,11 +34,11 @@ type commandRunner interface {
 type osCommandRunner struct{}
 
 func (osCommandRunner) LookPath(file string) (string, error) {
-	return exec.LookPath(file)
+	return hostexec.LookPath(file)
 }
 
 func (osCommandRunner) CombinedOutput(ctx context.Context, path string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, path, args...)
+	cmd := hostexec.CommandContext(ctx, path, args...)
 	// Firewall CLIs such as UFW expose human-readable status text. Force a
 	// stable locale so backend detection does not break on localized servers.
 	cmd.Env = append(os.Environ(), "LC_ALL=C", "LANG=C")
@@ -45,7 +46,7 @@ func (osCommandRunner) CombinedOutput(ctx context.Context, path string, args ...
 }
 
 func (osCommandRunner) Run(ctx context.Context, path string, args ...string) error {
-	return exec.CommandContext(ctx, path, args...).Run()
+	return hostexec.CommandContext(ctx, path, args...).Run()
 }
 
 type candidate struct {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.4
+
+- Run Docker firewall commands against the actual host UFW/firewalld and their configuration through the host mount namespace.
+- Update Compose through a host service from the web panel or an optional hourly stable-release timer; pin scripts and Compose files to the image release commit.
+- Preserve settings, verify image SHA-256, serialize operations, retain failed-update diagnostics and remove update units during uninstall.
+
 ## 1.3.3
 
 - Show an update banner on every page, including Docker installations.

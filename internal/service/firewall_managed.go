@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/SawaMEN/Firewall-UI/internal/hostexec"
 )
 
 const (
@@ -109,7 +111,7 @@ func nativeFirewallBackend(name, binary string, enabled func(context.Context) (b
 }
 
 func detectOwnedNativeFirewallBackend(ctx context.Context) (firewallBackend, bool) {
-	if path, err := exec.LookPath("nft"); err == nil {
+	if path, err := hostexec.LookPath("nft"); err == nil {
 		b := nativeFirewallBackend("nftables", path, func(ctx context.Context) (bool, error) {
 			_, err := runFirewallCommand(ctx, path, "list", "table", "inet", managedNftTable)
 			if err != nil {
@@ -121,7 +123,7 @@ func detectOwnedNativeFirewallBackend(ctx context.Context) (firewallBackend, boo
 			return b, true
 		}
 	}
-	if path, err := exec.LookPath("iptables"); err == nil {
+	if path, err := hostexec.LookPath("iptables"); err == nil {
 		b := nativeFirewallBackend("iptables", path, func(ctx context.Context) (bool, error) {
 			cmd := firewallCommand(ctx, path, "-C", "INPUT", "-j", managedIPTablesChain)
 			if err := cmd.Run(); err != nil {
@@ -154,7 +156,7 @@ func detectManagedFirewallBackend(ctx context.Context) (firewallBackend, error) 
 		return system, nil
 	}
 
-	if path, err := exec.LookPath("nft"); err == nil {
+	if path, err := hostexec.LookPath("nft"); err == nil {
 		safe, err := nftablesSafeForManagedFirewall(ctx, path)
 		if err != nil {
 			return firewallBackend{}, err
@@ -167,7 +169,7 @@ func detectManagedFirewallBackend(ctx context.Context) (firewallBackend, error) 
 		}
 		return firewallBackend{}, errors.New("existing nftables input hooks detected; install/use UFW or firewalld, or remove the conflicting native input hook before enabling Firewall-UI firewall")
 	}
-	if path, err := exec.LookPath("iptables"); err == nil {
+	if path, err := hostexec.LookPath("iptables"); err == nil {
 		return nativeFirewallBackend("iptables", path, func(ctx context.Context) (bool, error) {
 			cmd := firewallCommand(ctx, path, "-C", "INPUT", "-j", managedIPTablesChain)
 			err := cmd.Run()
@@ -471,7 +473,7 @@ func applyManagedIPTables(ctx context.Context, binary string, rules []FirewallRu
 	if err := applyManagedIPTablesBinary(ctx, binary, "icmp", rules); err != nil {
 		return err
 	}
-	if ip6, err := exec.LookPath("ip6tables"); err == nil {
+	if ip6, err := hostexec.LookPath("ip6tables"); err == nil {
 		if err := applyManagedIPTablesBinary(ctx, ip6, "ipv6-icmp", rules); err != nil {
 			return err
 		}
@@ -521,7 +523,7 @@ func applyManagedIPTablesBinary(ctx context.Context, binary, icmpProto string, r
 
 func removeManagedIPTables(ctx context.Context, binary string) error {
 	for _, candidate := range []string{binary, "ip6tables"} {
-		path, err := exec.LookPath(candidate)
+		path, err := hostexec.LookPath(candidate)
 		if err != nil {
 			continue
 		}

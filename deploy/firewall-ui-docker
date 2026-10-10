@@ -7,6 +7,7 @@ DOCKER_PROJECT="${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}"
 PUBLIC_MANAGER="${FIREWALL_UI_MANAGER:-/usr/local/bin/fw-ui}"
 LEGACY_DOCKER_MANAGER="${FIREWALL_UI_LEGACY_DOCKER_MANAGER:-/usr/local/bin/firewall-ui-docker}"
 DOCKER_INTERACTIVE=0
+SYSTEMD_DIR="${FIREWALL_UI_SYSTEMD_DIR:-/etc/systemd/system}"
 
 # Credentials are plain private files, never sourced as shell code or expanded
 # through Compose dotenv interpolation. This also accepts passwords with $/'/\.
@@ -55,6 +56,7 @@ docker_compose_mode() {
   if [[ "$(docker_read_setting FIREWALL_UI_DOCKER_PORTS 0)" == 1 ]]; then
     files+=(-f "$source/compose.docker-ports.yaml")
   fi
+  FIREWALL_UI_DOCKER_INSTALL_DIR="$DOCKER_DIR" \
   FIREWALL_UI_DOCKER_ACCESS_DIR="$DOCKER_DIR/access" \
   FIREWALL_UI_USERNAME="$(cat "$DOCKER_DIR/username")" \
   FIREWALL_UI_PASSWORD="$(cat "$DOCKER_DIR/password")" \
@@ -197,7 +199,7 @@ docker_download_source() (
   for file in deploy/docker/compose.yaml deploy/docker/compose.docker-ports.yaml deploy/docker/compose.tls.yaml install.sh deploy/firewall-ui; do
     local target="${file##*/}"; [[ "$file" != deploy/firewall-ui ]] || target=firewall-manager
     if [[ -n "${FIREWALL_UI_DOCKER_SOURCE:-}" ]]; then cp "$FIREWALL_UI_DOCKER_SOURCE/$file" "$stage/source/$target" || return 1
-    else curl -fLsS --retry 3 "https://raw.githubusercontent.com/SawaMEN/Firewall-UI/main/$file" -o "$stage/source/$target" || return 1; fi
+    else curl -fLsS --retry 3 --connect-timeout 15 --max-time 60 "https://raw.githubusercontent.com/SawaMEN/Firewall-UI/${FIREWALL_UI_DOCKER_SOURCE_REF:-main}/$file" -o "$stage/source/$target" || return 1; fi
   done
   rm -rf -- "$DOCKER_DIR/source.previous"
   if [[ -d "$DOCKER_DIR/source" ]]; then mv "$DOCKER_DIR/source" "$DOCKER_DIR/source.previous"; fi
@@ -212,7 +214,11 @@ docker_download_image() (
     archive="$FIREWALL_UI_DOCKER_IMAGE_ARCHIVE"; expected="${FIREWALL_UI_DOCKER_IMAGE_SHA256:-}"
   else
     case "$(uname -m)" in x86_64|amd64) arch=amd64;; aarch64|arm64) arch=arm64;; *) return 1;; esac
-    curl -fLsS --retry 3 --connect-timeout 15 https://github.com/SawaMEN/Firewall-UI/releases/latest/download/update.json -o "$stage/update.json" || return 1
+    if [[ -n "${FIREWALL_UI_DOCKER_MANIFEST_FILE:-}" ]]; then
+      cp "$FIREWALL_UI_DOCKER_MANIFEST_FILE" "$stage/update.json" || return 1
+    else
+      curl -fLsS --retry 3 --connect-timeout 15 --max-time 60 https://github.com/SawaMEN/Firewall-UI/releases/latest/download/update.json -o "$stage/update.json" || return 1
+    fi
     block="$(sed -n "/\"docker-$arch\"[[:space:]]*:/,/^[[:space:]]*}/p" "$stage/update.json")"
     # Releases through 1.3.1 used a separate image manifest.
     if [[ -z "$block" ]]; then
@@ -224,13 +230,14 @@ docker_download_image() (
     [[ "$url" =~ ^https://github.com/SawaMEN/Firewall-UI/releases/download/v[0-9.]+/firewall-ui-docker-linux-${arch}\.tar\.gz$ ]] || { echo 'Неверный адрес готового образа.' >&2; return 1; }
     archive="$stage/image.tar.gz"
     echo "Скачиваем готовый образ Linux/$arch из релиза GitHub..."
-    curl -fLsS --retry 3 --connect-timeout 15 "$url" -o "$archive" || return 1
+    curl -fLsS --retry 3 --connect-timeout 15 --max-time 180 "$url" -o "$archive" || return 1
   fi
   [[ "$expected" =~ ^[0-9A-Fa-f]{64}$ ]] || { echo 'Нет контрольной суммы образа.' >&2; return 1; }
   actual="$(sha256sum "$archive" | awk '{print $1}')" || return 1
   [[ "${actual,,}" == "${expected,,}" ]] || { echo 'SHA-256 образа не совпадает.' >&2; return 1; }
   docker load -i "$archive" || return 1
   docker image inspect firewall-ui:stable >/dev/null || return 1
+  if [[ -f "$DOCKER_DIR/.installer-managed" ]]; then printf '%s\n' "${expected,,}" > "$DOCKER_DIR/.image-sha256.pending"; fi
 )
 
 docker_write_volume_credentials() {
@@ -303,6 +310,7 @@ docker_show_access() {
   [[ -z "$(docker_read_setting FIREWALL_UI_TLS_CERT '')" ]] || scheme=https
   echo "Панель: $scheme://$host:$port/"
   echo "Управление: fw-ui; настройки сохранены в $DOCKER_DIR."
+  if [[ "$(docker_read_auto_update)" == 1 ]]; then echo 'Автообновление Docker: включено, проверка stable-релизов каждый час.'; else echo 'Автообновление Docker: отключено.'; fi
 }
 
 docker_require_exclusive() {
@@ -322,7 +330,7 @@ docker_install() (
   [[ -f "$DOCKER_DIR/deployment" ]] || first=1
   stage="$(mktemp -d "$DOCKER_DIR/.settings-XXXXXX")"
   local file
-  for file in deployment docker.env username password install.sh; do
+  for file in deployment docker.env username password install.sh auto-update image.sha256; do
     [[ ! -f "$DOCKER_DIR/$file" ]] || cp -p "$DOCKER_DIR/$file" "$stage/$file"
   done
   [[ ! -f "$DOCKER_MANAGER" ]] || cp -p "$DOCKER_MANAGER" "$stage/docker-manager"
@@ -335,7 +343,7 @@ docker_install() (
       # restoring the volume and restarting the previous deployment.
       if ((up_attempted)); then docker_compose stop || echo 'Не удалось остановить новую Docker-панель.' >&2; fi
       if ((runtime_saved)); then docker_runtime_backup restore || echo 'Не удалось восстановить конфигурацию в Docker-томе.' >&2; fi
-      for file in deployment docker.env username password install.sh; do
+      for file in deployment docker.env username password install.sh auto-update image.sha256; do
         if [[ -f "$stage/$file" ]]; then cp -p "$stage/$file" "$DOCKER_DIR/$file"
         else rm -f -- "$DOCKER_DIR/$file"; fi
       done
@@ -350,9 +358,10 @@ docker_install() (
           docker_wait_for_service || echo 'Предыдущая Docker-панель не прошла проверку запуска.' >&2
         else echo 'Не удалось запустить предыдущую панель Docker Compose.' >&2; fi
       fi
+      docker_update_status failed 'Обновление Docker не завершено. Предыдущая версия и настройки сохранены.' || true
       echo 'Установка Docker Compose не завершена. Настройки сохранены для повторной попытки.' >&2
     fi
-    rm -f -- "$DOCKER_DIR/docker.env.previous"
+    rm -f -- "$DOCKER_DIR/docker.env.previous" "$DOCKER_DIR/.image-sha256.pending"
     rm -rf -- "$stage"
     if ((first && !succeeded && !runtime_saved)); then
       if docker_cleanup_access; then rm -rf -- "$DOCKER_DIR"
@@ -366,9 +375,13 @@ docker_install() (
   # Refresh shared configuration code before presenting the wizard.
   docker_download_source || return 1
   if ((first)) || [[ "$action" == configure || "$old_mode" != host ]]; then docker_select_settings || return 1; fi
+  if ((first)) || [[ "$action" == configure ]]; then docker_choose_auto_update || return 1; fi
+  docker_prepare_host_firewall || return 1
   docker_compose config --quiet || return 1
   old_image="$(docker image inspect firewall-ui:stable --format '{{.Id}}' 2>/dev/null || true)"
+  docker_update_status downloading
   docker_download_image || return 1
+  docker_update_status installing
   if [[ -n "$old_mode" ]]; then
     stopped=1
     docker_compose_mode "$old_mode" stop || return 1
@@ -379,6 +392,7 @@ docker_install() (
     docker_apply_runtime_settings || return 1
   fi
   if ((first)); then docker_write_volume_credentials || return 1; fi
+  docker_update_status restarting
   up_attempted=1
   docker_compose up -d --no-build || return 1
   docker_wait_for_service || return 1
@@ -397,7 +411,10 @@ docker_install() (
   install -m 0755 "$DOCKER_DIR/source/firewall-manager" "$PUBLIC_MANAGER" || return 1
   if ((runtime_saved)); then docker_runtime_backup clear || return 1; fi
   rm -rf -- "$DOCKER_DIR/source.previous"
+  [[ ! -f "$DOCKER_DIR/.image-sha256.pending" ]] || mv "$DOCKER_DIR/.image-sha256.pending" "$DOCKER_DIR/image.sha256"
   succeeded=1
+  docker_setup_updates || return 1
+  docker_update_status success
   docker_remove_legacy_manager || return 1
   echo 'Версия Docker Compose Firewall-UI готова.'
   docker_show_access
@@ -485,6 +502,7 @@ docker_remove_legacy_manager() {
 }
 
 docker_uninstall() (
+  docker_remove_updates || return 1
   local renew=firewall-ui-docker-cert-renew
   if [[ -f /etc/systemd/system/$renew.timer || -f /etc/systemd/system/$renew.service ]]; then
     systemctl disable --now "$renew.timer" "$renew.service" >/dev/null 2>&1 || {
@@ -515,7 +533,7 @@ docker_uninstall() (
       esac
     done
     if ! docker run --rm --pull never --network host --pid host --privileged "${mounts[@]}" \
-      --entrypoint /usr/local/bin/firewall-ui firewall-ui:stable -cleanup-firewall; then
+      -e FIREWALL_UI_HOST_FIREWALL=1 --entrypoint /usr/local/bin/firewall-ui firewall-ui:stable -cleanup-firewall; then
       echo 'Не удалось очистить правила и запрет пинга. Данные сохранены.' >&2; return 1
     fi
     docker_cleanup_access || return 1
@@ -544,6 +562,100 @@ docker_uninstall() (
   echo 'Версия Docker Compose полностью удалена: контейнеры, тома, настройки, данные, собственные правила и запрет пинга. Docker сохранён.'
 )
 
+# The host service owns image replacement and is accessible to the panel through
+# nsenter. The container never needs the Docker socket to update itself.
+docker_update_status() {
+  [[ -f "$DOCKER_DIR/.installer-managed" ]] || return 0
+  local phase="$1" error="${2:-}" stage
+  stage="$(mktemp "$DOCKER_DIR/.update-status-XXXXXX")" || return 1
+  printf '{"phase":"%s","updatedAt":%s,"error":"%s","version":"%s","commit":"%s"}\n' \
+    "$phase" "$(date +%s)" "$error" "${DOCKER_RELEASE_VERSION:-}" "${DOCKER_RELEASE_COMMIT:-}" > "$stage"
+  chmod 600 "$stage" && mv "$stage" "$DOCKER_DIR/update-status.json"
+}
+
+docker_prepare_host_firewall() (
+  source "$DOCKER_DIR/source/install.sh"
+  if [[ "$(detect_firewall)" == none ]]; then
+    echo 'На сервере не найден файрволл. Устанавливаем UFW...'
+    pkg_install ufw || return 1
+    command -v ufw >/dev/null || return 1
+  fi
+)
+
+docker_choose_auto_update() {
+  local choice=y current="$(docker_read_auto_update)"
+  [[ "$current" != 0 ]] || choice=n
+  docker_ask choice 'Автоматически обновлять Docker-панель из stable-релизов каждый час? (y/n)' "$choice" || return 1
+  case "$choice" in y|Y) printf '1\n' > "$DOCKER_DIR/auto-update";; n|N) printf '0\n' > "$DOCKER_DIR/auto-update";; *) echo 'Введите y или n.' >&2; return 1;; esac
+}
+
+docker_read_auto_update() {
+  if [[ -n "${FIREWALL_UI_DOCKER_AUTO_UPDATE:-}" ]]; then printf '%s' "$FIREWALL_UI_DOCKER_AUTO_UPDATE"
+  elif [[ -f "$DOCKER_DIR/auto-update" ]]; then cat "$DOCKER_DIR/auto-update"
+  else printf '1'; fi
+}
+
+docker_setup_updates() {
+  local unit=firewall-ui-docker-update
+  [[ -d "$SYSTEMD_DIR" ]] || { echo 'Для обновлений Docker нужен systemd.' >&2; return 1; }
+  printf '[Unit]\nDescription=Update Firewall-UI Docker image\nWants=network-online.target\nAfter=network-online.target docker.service\n\n[Service]\nType=oneshot\nEnvironment="FIREWALL_UI_DOCKER_DIR=%s"\nEnvironment="FIREWALL_UI_DOCKER_MANAGER=%s"\nEnvironment="FIREWALL_UI_MANAGER=%s"\nEnvironment="FIREWALL_UI_DOCKER_PROJECT=%s"\nEnvironment=FIREWALL_UI_NONINTERACTIVE=1\nExecStart=/usr/bin/env bash "%s" auto-update\nTimeoutStartSec=10min\nUMask=0077\n' \
+    "$DOCKER_DIR" "$DOCKER_MANAGER" "$PUBLIC_MANAGER" "$DOCKER_PROJECT" "$DOCKER_MANAGER" > "$SYSTEMD_DIR/$unit.service" || return 1
+  printf '[Unit]\nDescription=Check Firewall-UI Docker stable releases\n\n[Timer]\nOnCalendar=hourly\nRandomizedDelaySec=300\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n' > "$SYSTEMD_DIR/$unit.timer" || return 1
+  chmod 644 "$SYSTEMD_DIR/$unit.service" "$SYSTEMD_DIR/$unit.timer" || return 1
+  systemctl daemon-reload || return 1
+  if [[ "$(docker_read_auto_update)" == 1 ]]; then systemctl enable --now "$unit.timer"
+  else systemctl disable --now "$unit.timer"; fi
+}
+
+docker_auto_settings() {
+  docker_existing_installation || return 1
+  docker_choose_auto_update && docker_setup_updates
+}
+
+docker_remove_updates() {
+  local unit=firewall-ui-docker-update
+  if [[ -f "$SYSTEMD_DIR/$unit.timer" || -f "$SYSTEMD_DIR/$unit.service" ]]; then
+    systemctl disable --now "$unit.timer" "$unit.service" >/dev/null 2>&1 || {
+      systemctl is-active --quiet "$unit.timer" "$unit.service" && return 1
+    }
+    rm -f -- "$SYSTEMD_DIR/$unit.timer" "$SYSTEMD_DIR/$unit.service" || return 1
+    systemctl daemon-reload || return 1
+  fi
+}
+
+docker_auto_update() (
+  set -Eeuo pipefail
+  docker_existing_installation || return 1
+  # Do not restart a panel that the administrator deliberately stopped.
+  [[ -n "$(docker_compose ps -q firewall-ui)" ]] || return 0
+  local stage arch block expected current commit version
+  stage="$(mktemp -d)" || return 1
+  finish_auto_update() {
+    local result=$?
+    if ((result)); then docker_update_status failed 'Ошибка обновления Docker. Проверьте журнал службы firewall-ui-docker-update.' || true; fi
+    rm -rf -- "$stage"
+    return "$result"
+  }
+  trap finish_auto_update EXIT
+  docker_update_status checking
+  curl -fLsS --retry 3 --connect-timeout 15 --max-time 60 https://github.com/SawaMEN/Firewall-UI/releases/latest/download/update.json -o "$stage/update.json" || return 1
+  case "$(uname -m)" in x86_64|amd64) arch=amd64;; aarch64|arm64) arch=arm64;; *) return 1;; esac
+  block="$(sed -n "/\"docker-$arch\"[[:space:]]*:/,/^[[:space:]]*}/p" "$stage/update.json")"
+  expected="$(printf '%s\n' "$block" | sed -n 's/.*"sha256":[[:space:]]*"\([0-9A-Fa-f]*\)".*/\1/p' | head -n 1)"
+  commit="$(sed -n 's/^[[:space:]]*"commit":[[:space:]]*"\([0-9a-f]*\)".*/\1/p' "$stage/update.json" | head -n 1)"
+  version="$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([0-9.]*\)".*/\1/p' "$stage/update.json" | head -n 1)"
+  [[ "$expected" =~ ^[0-9A-Fa-f]{64}$ && "$commit" =~ ^[0-9a-f]{40}$ && "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Неверный манифест Docker-обновления.' >&2; return 1; }
+  DOCKER_RELEASE_VERSION="$version"; DOCKER_RELEASE_COMMIT="$commit"
+  current="$(cat "$DOCKER_DIR/image.sha256" 2>/dev/null || true)"
+  if [[ "${expected,,}" == "$current" ]]; then docker_update_status success; echo 'Docker-панель уже актуальна.'; return 0; fi
+  export FIREWALL_UI_DOCKER_SOURCE_REF="$commit" FIREWALL_UI_DOCKER_MANIFEST_FILE="$stage/update.json"
+  unset FIREWALL_UI_DOCKER_SOURCE FIREWALL_UI_DOCKER_IMAGE_ARCHIVE FIREWALL_UI_DOCKER_IMAGE_SHA256
+  curl -fLsS --retry 3 --connect-timeout 15 --max-time 60 "https://raw.githubusercontent.com/SawaMEN/Firewall-UI/$commit/deploy/firewall-ui-docker" -o "$stage/manager" || return 1
+  # Source the release's manager so script, Compose files and image agree.
+  source "$stage/manager"
+  docker_install install
+)
+
 docker_menu() (
   local installer="$DOCKER_DIR/install.sh" stage
   if [[ -f "$installer" ]]; then bash "$installer" --menu; return; fi
@@ -557,6 +669,14 @@ docker_main() {
   [[ "$DOCKER_DIR" == /* && "$DOCKER_DIR" != / && "$DOCKER_DIR" != /opt && "$DOCKER_DIR" != /etc ]] || return 1
   if [[ "${FIREWALL_UI_NONINTERACTIVE:-0}" != 1 ]] && { exec 3<>/dev/tty; } 2>/dev/null; then DOCKER_INTERACTIVE=1; fi
   case "${1:-}" in
+    install|update|configure|auto-update|auto-settings|uninstall|start|stop|restart|credentials|reset-password)
+      if [[ -f "$DOCKER_DIR/.installer-managed" ]]; then
+        exec 9>"$DOCKER_DIR/.manager.lock"
+        flock -n 9 || { echo 'Другая операция Docker уже выполняется. Дождитесь её завершения.' >&2; return 1; }
+      fi;;
+  esac
+  case "${1:-}" in
+    auto-update) docker_auto_update;; auto-settings) docker_auto_settings;;
     install|update) docker_install install;; configure) docker_install configure;;
     credentials) docker_change_credentials;;
     renew-certificates) docker_renew_certificates;;

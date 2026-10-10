@@ -168,6 +168,9 @@ func main() {
 	updateManager := updater.New(app.Restart)
 	app.Updater = updateManager
 	app.ContainerMode = containerMode
+	if containerMode {
+		app.DockerUpdater = updater.NewDockerManager(os.Getenv("FIREWALL_UI_HOST_UPDATE_DIR"))
+	}
 	dataDir := filepath.Dir(cfg.StatePath)
 	app.Audit = audit.New(filepath.Join(dataDir, "audit.jsonl"))
 	app.History = history.New(filepath.Join(dataDir, "history.jsonl"))

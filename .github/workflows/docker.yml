@@ -76,12 +76,15 @@ jobs:
       - name: Verify installer Docker install, update, reset and full removal
         env:
           FIREWALL_UI_NONINTERACTIVE: '1'
+          FIREWALL_UI_DOCKER_AUTO_UPDATE: '0'
           FIREWALL_UI_PORT: '18089'
           FIREWALL_UI_DOCKER_DIR: /tmp/firewall-ui-installer-ci
           FIREWALL_UI_DOCKER_MANAGER: /tmp/firewall-ui-installer-ci-manager
           FIREWALL_UI_DOCKER_PROJECT: firewall-ui-installer-ci
           FIREWALL_UI_PASSWORD: ci-compose-smoke
         run: |
+          sudo apt-get update
+          sudo apt-get install -y ufw
           python3 -m http.server 18889 --bind 127.0.0.1 >/tmp/firewall-ui-host-probe.log 2>&1 &
           PROBE_PID=$!
           export FIREWALL_UI_DOCKER_IMAGE_ARCHIVE="$PWD/release-images/firewall-ui-docker-linux-${{ matrix.arch }}.tar.gz"
@@ -90,7 +93,9 @@ jobs:
           sudo -E bash install.sh --compose
           sudo test -x /usr/local/bin/fw-ui
           sudo -E /usr/local/bin/fw-ui status
-          python3 tests/docker_host.py
+          FIREWALL_UI_TEST_UPDATES=1 python3 tests/docker_host.py
+          sudo test -f /etc/systemd/system/firewall-ui-docker-update.service
+          sudo test -f /etc/systemd/system/firewall-ui-docker-update.timer
           sudo -E bash install.sh --compose
           sudo -E bash install.sh --compose-configure
           # An occupied port must fail and restore the previous running panel.
@@ -126,6 +131,8 @@ jobs:
           docker volume rm ci-unrelated-volume
           test "$(sysctl -n net.ipv4.icmp_echo_ignore_all)" = 0
           if [ -f /proc/sys/net/ipv6/icmp/echo_ignore_all ]; then test "$(sysctl -n net.ipv6.icmp.echo_ignore_all)" = 0; fi
+          test ! -e /etc/systemd/system/firewall-ui-docker-update.service
+          test ! -e /etc/systemd/system/firewall-ui-docker-update.timer
           test ! -e "$FIREWALL_UI_DOCKER_DIR"
           test ! -e "$FIREWALL_UI_DOCKER_MANAGER"
           test ! -e /usr/local/bin/fw-ui

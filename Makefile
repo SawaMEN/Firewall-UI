@@ -30,4 +30,5 @@ test-shell:
 	bash tests/uninstall.sh
 	bash tests/install-menu.sh
 	bash tests/docker-installer.sh
+	bash tests/docker-updates.sh
 	python3 tests/release-manifest.py

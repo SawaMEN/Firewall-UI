@@ -14,6 +14,8 @@ export FIREWALL_UI_DOCKER_PORTS=1 FIREWALL_UI_PORT=8088
 mkdir -p "$FIXTURE/volume"
 # No real Docker, firewall, package or service operations are permitted here.
 docker_require_engine() { :; }
+docker_prepare_host_firewall() { :; }
+docker_setup_updates() { :; }
 docker_download_image() { printf 'download image\n' >> "$FIXTURE/commands"; return "${MOCK_IMAGE_RESULT:-0}"; }
 systemctl() { return 1; }
 sleep() { :; }

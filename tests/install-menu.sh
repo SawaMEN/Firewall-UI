@@ -74,6 +74,11 @@ run_installer_docker_action() { printf 'docker %s\n' "$1" >> "$TASK_MENU_LOG"; }
 main --reset-password
 main --configure
 [[ "$(cat "$FIXTURE/actions")" == $'docker reset-password\ndocker configure' ]]
+# Compose auto-update has one dedicated setting; no native variant prompt.
+printf '2\n3\n' > "$FIXTURE/answer"; exec 3<>"$FIXTURE/answer"
+select_installer_action
+[[ "$INSTALL_ACTION" == docker-auto-settings ]]
+exec 3>&-
 # Empty folders are neither installed panels nor recreated by deletion.
 rm -rf "$INSTALL_DIR" "$FIREWALL_UI_DOCKER_DIR"
 mkdir -p "$INSTALL_DIR" "$CONFIG_DIR" "$STATE_DIR" "$FIREWALL_UI_DOCKER_DIR"

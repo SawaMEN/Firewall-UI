@@ -21,7 +21,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     -o /out/firewall-ui ./cmd/firewall-ui
 
 FROM alpine:3.22
-RUN apk add --no-cache ca-certificates nftables iptables docker-cli \
+RUN apk add --no-cache ca-certificates nftables iptables docker-cli util-linux \
     && mkdir -p /etc/firewall-ui \
     && chmod 700 /etc/firewall-ui
 COPY --from=backend /out/firewall-ui /usr/local/bin/firewall-ui

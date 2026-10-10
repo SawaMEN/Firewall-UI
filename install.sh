@@ -537,10 +537,13 @@ installer_settings_menu() {
     installer_heading 'Настройки'
     installer_item 1 'Адрес, порт и сертификат' 'Локальный доступ, домен или IP; выбор сертификата HTTPS'
     installer_item 2 'Изменить логин и пароль'
+    installer_detect_installations
+    if ((COMPOSE_INSTALLED)); then installer_item 3 'Автообновление Docker' 'Включить или отключить проверку stable-релизов'; fi
     installer_item 0 'Назад'
     ask choice 'Выберите настройку' 0 || return 1
     case "$choice" in
       1) INSTALL_ACTION=configure;; 2) INSTALL_ACTION=credentials;;
+      3) if ((COMPOSE_INSTALLED)); then INSTALL_ACTION=docker-auto-settings; return 0; else continue; fi;;
       0) INSTALL_ACTION=back; return 0;;
       *) echo 'Введите номер пункта.' >&2; continue;;
     esac

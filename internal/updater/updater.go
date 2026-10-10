@@ -57,6 +57,9 @@ type Status struct {
 	Applying        bool   `json:"applying,omitempty"`
 	Phase           string `json:"phase,omitempty"`
 	ManualInstall   bool   `json:"manualInstall,omitempty"`
+	Docker          bool   `json:"docker,omitempty"`
+	Automatic       bool   `json:"automatic,omitempty"`
+	UpdateError     string `json:"updateError,omitempty"`
 }
 
 type Manager struct {

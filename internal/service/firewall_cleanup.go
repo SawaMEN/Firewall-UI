@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/SawaMEN/Firewall-UI/internal/hostexec"
 )
 
 // CleanupOwnedRules removes panel policy without disabling the system firewall.
@@ -17,7 +19,7 @@ func (s *FirewallService) CleanupOwnedRules(ctx context.Context) error {
 	if err := cleanupManagedPing(); err != nil {
 		return err
 	}
-	if binary, err := exec.LookPath("ufw"); err == nil {
+	if binary, err := hostexec.LookPath("ufw"); err == nil {
 		text, err := runFirewallCommand(ctx, binary, "show", "added")
 		if err != nil {
 			return err
@@ -46,7 +48,7 @@ func (s *FirewallService) CleanupOwnedRules(ctx context.Context) error {
 			}
 		}
 	}
-	if binary, err := exec.LookPath("nft"); err == nil {
+	if binary, err := hostexec.LookPath("nft"); err == nil {
 		tables, err := runFirewallCommand(ctx, binary, "list", "tables")
 		if err != nil && !unsupportedFirewallKernel(err) {
 			return err
@@ -58,7 +60,7 @@ func (s *FirewallService) CleanupOwnedRules(ctx context.Context) error {
 		}
 	}
 	for _, name := range []string{"iptables", "ip6tables"} {
-		binary, err := exec.LookPath(name)
+		binary, err := hostexec.LookPath(name)
 		if err != nil {
 			continue
 		}

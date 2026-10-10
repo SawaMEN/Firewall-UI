@@ -53,6 +53,7 @@ type Server struct {
 	Restart       func()
 	Updater       *updater.Manager
 	ContainerMode bool
+	DockerUpdater *updater.DockerManager
 	PortMonitor   *service.PortMonitor
 	Audit         *audit.Logger
 	History       *history.Store
@@ -491,7 +492,11 @@ func (s *Server) updateStatus(w http.ResponseWriter, r *http.Request) {
 		channel = "stable"
 	}
 	status, err := s.Updater.Check(ctx, channel)
-	status.ManualInstall = s.ContainerMode
+	status.Docker = s.ContainerMode
+	status.ManualInstall = s.ContainerMode && s.DockerUpdater == nil
+	if s.DockerUpdater != nil {
+		s.DockerUpdater.ReadStatus(&status)
+	}
 	reply(w, http.StatusOK, status, err)
 }
 
@@ -505,7 +510,20 @@ func (s *Server) applyUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.ContainerMode {
-		reply(w, http.StatusConflict, nil, fmt.Errorf("Docker updates must be installed using the installer"))
+		if s.DockerUpdater == nil {
+			reply(w, http.StatusConflict, nil, fmt.Errorf("Docker updates must be installed using the installer"))
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		status, err := s.Updater.Check(ctx, "stable")
+		if err == nil && status.Available {
+			err = s.DockerUpdater.Start(ctx)
+			status.Docker = true
+			status.Restarting = err == nil
+			status.Phase = "checking"
+		}
+		reply(w, http.StatusOK, status, err)
 		return
 	}
 	s.mu.Lock()

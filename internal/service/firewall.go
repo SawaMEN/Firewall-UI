@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/SawaMEN/Firewall-UI/internal/hostexec"
 )
 
 const (
@@ -432,7 +434,7 @@ func saveFirewallJSON(key string, value any) error {
 
 func detectFirewallBackend(ctx context.Context) (firewallBackend, error) {
 	var candidates []firewallBackend
-	if path, err := exec.LookPath("ufw"); err == nil {
+	if path, err := hostexec.LookPath("ufw"); err == nil {
 		b := firewallBackend{name: "ufw", binary: path}
 		b.enabled = func(ctx context.Context) (bool, error) {
 			out, err := runFirewallCommand(ctx, path, "status")
@@ -440,13 +442,13 @@ func detectFirewallBackend(ctx context.Context) (firewallBackend, error) {
 		}
 		candidates = append(candidates, b)
 	}
-	if path, err := exec.LookPath("firewall-cmd"); err == nil {
+	if path, err := hostexec.LookPath("firewall-cmd"); err == nil {
 		b := firewallBackend{name: "firewalld", binary: path, zone: "public"}
-		if p, err := exec.LookPath("firewall-offline-cmd"); err == nil {
+		if p, err := hostexec.LookPath("firewall-offline-cmd"); err == nil {
 			b.offline = p
 		}
 		b.enabled = func(ctx context.Context) (bool, error) {
-			if systemctl, err := exec.LookPath("systemctl"); err == nil {
+			if systemctl, err := hostexec.LookPath("systemctl"); err == nil {
 				cmd := firewallCommand(ctx, systemctl, "is-active", "--quiet", "firewalld")
 				err := cmd.Run()
 				if err == nil {
@@ -574,7 +576,7 @@ func setFirewallBackendEnabled(ctx context.Context, b firewallBackend, enabled b
 		_, err := runFirewallCommand(ctx, b.binary, args...)
 		return err
 	}
-	systemctl, err := exec.LookPath("systemctl")
+	systemctl, err := hostexec.LookPath("systemctl")
 	if err != nil {
 		return errors.New("systemctl is required to control firewalld")
 	}
@@ -606,7 +608,7 @@ func runFirewallCommand(parent context.Context, binary string, args ...string) (
 
 func detectSSHPorts() []int {
 	ports := map[int]bool{}
-	if sshd, err := exec.LookPath("sshd"); err == nil {
+	if sshd, err := hostexec.LookPath("sshd"); err == nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		out, e := runFirewallCommand(ctx, sshd, "-T")
 		cancel()
