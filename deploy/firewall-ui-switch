@@ -136,6 +136,13 @@ switch_native_to_docker() (
   find "$SWITCH_DATA_MOUNT" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + || return 1
   cp -a "$stage/config/." "$SWITCH_CONFIG_MOUNT/" || return 1
   cp -a "$stage/data/." "$SWITCH_DATA_MOUNT/" || return 1
+  # Access-rule ownership is tracked outside the Docker data volume.
+  mkdir -p "$docker_dir/access/state"
+  for file in access-ufw access-rules; do
+    if [[ -f "$stage/data/$file" ]]; then
+      cp -p "$stage/data/$file" "$docker_dir/access/state/$file" || return 1
+    fi
+  done
   local cfg="$SWITCH_CONFIG_MOUNT/config.json" cert key mode=existing
   cert="$(switch_config_string "$cfg" tlsCert)"
   key="$(switch_config_string "$cfg" tlsKey)"
@@ -169,7 +176,8 @@ switch_native_to_docker() (
 
 switch_docker_to_native() (
   set -Eeuo pipefail
-  local docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}" stage succeeded=0 old_running=0 native_started=0
+  local docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui-docker}" stage succeeded=0 old_running=0 native_started=0 native_attempted=0
+  local docker_update_active=0 docker_renew_active=0
   [[ -f "$docker_dir/deployment" && -f "$docker_dir/.installer-managed" ]] || {
     echo 'Docker-версия не распознана. Данные не изменены.' >&2; return 1;
   }
@@ -182,19 +190,28 @@ switch_docker_to_native() (
   stage="$(mktemp -d)"; chmod 0700 "$stage"
   mkdir "$stage/config" "$stage/data"
   [[ -n "$(docker ps -q --filter "label=com.docker.compose.project=${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}" --filter label=com.docker.compose.service=firewall-ui)" ]] && old_running=1 || true
+  systemctl is-active --quiet firewall-ui-docker-update.timer && docker_update_active=1 || true
+  systemctl is-active --quiet firewall-ui-docker-cert-renew.timer && docker_renew_active=1 || true
+  [[ ! -f "$MANAGER" ]] || cp -p "$MANAGER" "$stage/docker-public-manager"
   rollback() {
     local result=$?
     if ((!succeeded)); then
       echo 'Переключение не завершено. Восстанавливаем Docker-версию.' >&2
-      if ((native_started)); then systemctl disable --now firewall-ui.service >/dev/null 2>&1 || true; fi
+      if ((native_attempted)); then
+        systemctl disable --now firewall-ui.service >/dev/null 2>&1 || true
+        if [[ -f "$stage/docker-public-manager" ]]; then cp -p "$stage/docker-public-manager" "$MANAGER"; fi
+      fi
       if ((old_running)); then
         "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}" start || echo 'Не удалось повторно запустить старый контейнер.' >&2
       fi
+      if ((docker_update_active)); then systemctl enable --now firewall-ui-docker-update.timer >/dev/null 2>&1 || true; fi
+      if ((docker_renew_active)); then systemctl enable --now firewall-ui-docker-cert-renew.timer >/dev/null 2>&1 || true; fi
     fi
     rm -rf -- "$stage"
     return "$result"
   }
   trap rollback EXIT
+  systemctl stop firewall-ui-docker-update.timer firewall-ui-docker-cert-renew.timer >/dev/null 2>&1 || true
   switch_stop_docker || return 1
   cp -a "$SWITCH_CONFIG_MOUNT/." "$stage/config/" || return 1
   cp -a "$SWITCH_DATA_MOUNT/." "$stage/data/" || return 1
@@ -203,7 +220,7 @@ switch_docker_to_native() (
   }
   # Certificates issued for Docker live in a host-bound directory outside the volumes.
   # Copy them and rewrite paths before removing Docker installer files.
-  local cert key cfg="$stage/config/config.json"
+  local cert key cfg="$stage/config/config.json" tls_mode=''
   cert="$(switch_config_string "$cfg" tlsCert)"
   key="$(switch_config_string "$cfg" tlsKey)"
   if [[ -n "$cert" && "$cert" == "$docker_dir/access/"* ]]; then
@@ -211,6 +228,7 @@ switch_docker_to_native() (
     mkdir -p "$stage/config/migrated-access"
     cp -a "$docker_dir/access/." "$stage/config/migrated-access/" || return 1
     switch_rewrite_file "$cfg" "$docker_dir/access/" "$CONFIG_DIR/migrated-access/"
+    if [[ "$cert" == "$docker_dir/access/acme/"* ]]; then tls_mode=letsencrypt; fi
   elif [[ -n "$key" && "$key" == "$docker_dir/access/"* ]]; then
     echo 'Нестандартные пути TLS. Перенос остановлен во избежание потери сертификатов.' >&2
     return 1
@@ -224,9 +242,25 @@ switch_docker_to_native() (
       cp -p "$docker_dir/access/state/$file" "$STATE_DIR/$file"
     fi
   done
+  native_attempted=1
   INSTALL_INTERACTIVE=0 installer_native_install || return 1
   native_started=1
   systemctl is-active --quiet firewall-ui.service || return 1
+  if [[ "$tls_mode" == letsencrypt ]]; then
+    # Native renewal uses /etc/firewall-ui/acme; copy the original ACME tree there.
+    if [[ -d "$CONFIG_DIR/migrated-access/acme" ]]; then
+      mkdir -p "$CONFIG_DIR/acme"
+      cp -a "$CONFIG_DIR/migrated-access/acme/." "$CONFIG_DIR/acme/" || return 1
+      switch_rewrite_file "$CONFIG_DIR/config.json" "$CONFIG_DIR/migrated-access/acme/" "$CONFIG_DIR/acme/"
+      systemctl restart firewall-ui.service || return 1
+    fi
+    fetch_repo_file deploy/firewall-ui-cert-renew.service "$stage/native-renew.service" || return 1
+    fetch_repo_file deploy/firewall-ui-cert-renew.timer "$stage/native-renew.timer" || return 1
+    install -m 0644 "$stage/native-renew.service" /etc/systemd/system/firewall-ui-cert-renew.service
+    install -m 0644 "$stage/native-renew.timer" /etc/systemd/system/firewall-ui-cert-renew.timer
+    systemctl daemon-reload
+    systemctl enable --now firewall-ui-cert-renew.timer || return 1
+  fi
   # Do not call docker_uninstall: it would remove the firewall rules now used by native.
   switch_remove_docker || return 1
   succeeded=1
