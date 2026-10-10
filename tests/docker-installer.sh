@@ -216,7 +216,7 @@ echo 'Failed Docker startup and runtime rollback/retry passed'
  printf '2\npanel.example.com\n3\n9443\nn\nn\n' > "$FIXTURE/tls-answers"; exec 3<>"$FIXTURE/tls-answers"
  docker_select_settings
  cert="$(docker_read_setting FIREWALL_UI_TLS_CERT '')"
- openssl x509 -in "$cert" -noout -checkhost panel.example.com
+ openssl x509 -in "${cert/#\/etc\/firewall-ui/$DOCKER_CONFIG_DIR}" -noout -checkhost panel.example.com
  [[ "$(docker_read_setting FIREWALL_UI_PUBLIC_HOST '')" == panel.example.com ]]
  [[ "$(docker_show_access)" == *https://panel.example.com:9443/* ]]
  : > "$FIXTURE/commands"

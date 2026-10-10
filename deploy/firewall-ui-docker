@@ -151,6 +151,10 @@ docker_select_settings() (
     TLS_CERT="$imported/fullchain.pem"; TLS_KEY="$imported/privkey.pem"
     echo 'PEM-файлы скопированы в общий каталог сертификатов Firewall-UI.'
   fi
+  # Compose binds the host config directory to /etc/firewall-ui inside the
+  # container. Persist container-visible paths, not host-only override paths.
+  if [[ "$TLS_CERT" == "$CONFIG_DIR/"* ]]; then TLS_CERT="/etc/firewall-ui/${TLS_CERT#"$CONFIG_DIR/"}"; fi
+  if [[ "$TLS_KEY" == "$CONFIG_DIR/"* ]]; then TLS_KEY="/etc/firewall-ui/${TLS_KEY#"$CONFIG_DIR/"}"; fi
   ports="${FIREWALL_UI_DOCKER_PORTS:-$(docker_read_setting FIREWALL_UI_DOCKER_PORTS 0)}"
   choice=n; [[ "$ports" != 1 ]] || choice=y
   docker_ask choice 'Показывать опубликованные Docker-порты? Это подключит Docker socket (y/n)' "$choice"
