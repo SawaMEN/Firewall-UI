@@ -1,7 +1,7 @@
 body {
   margin: 0;
   min-width: 320px;
-  background: var(--xui-surface, #f5f6f8);
+  background: var(--fui-surface, #f5f6f8);
 }
 
 /* The drawer stays mounted when closed; blur only its visible mask. */
@@ -11,7 +11,7 @@ body {
 
 .page-layout {
   min-height: 100vh;
-  background: var(--xui-surface, transparent);
+  background: var(--fui-surface, transparent);
 }
 
 .content-shell {
@@ -24,7 +24,7 @@ body {
   max-width: none;
   padding: 28px;
   box-sizing: border-box;
-  background: var(--xui-surface);
+  background: var(--fui-surface);
 }
 
 .page-content {
@@ -51,7 +51,7 @@ body {
   background: color-mix(
     in srgb,
     var(--ant-color-primary) 13%,
-    var(--xui-surface-container, transparent)
+    var(--fui-surface-container, transparent)
   );
   font-size: 22px;
 }
@@ -90,7 +90,7 @@ body {
   justify-content: center;
   padding: 16px;
   box-sizing: border-box;
-  background: var(--xui-surface);
+  background: var(--fui-surface);
 }
 
 .login-shell .ant-card {
@@ -325,7 +325,7 @@ body {
 }
 .ports-panel .ant-table-expanded-row > .ant-table-cell {
   padding: 16px !important;
-  background: var(--xui-surface-container-low) !important;
+  background: var(--fui-surface-container-low) !important;
 }
 .ports-footnote {
   padding-top: 16px;
@@ -409,7 +409,7 @@ body {
   padding: 12px;
   border: 1px solid var(--ant-color-border-secondary);
   border-radius: 10px;
-  background: var(--xui-surface);
+  background: var(--fui-surface);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -444,37 +444,10 @@ body {
 .bind-address > .ant-typography {
   font-size: 12px;
 }
-.port-purpose {
-  margin-top: 8px;
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-.port-purpose > div {
-  margin-top: 4px;
-}
-.port-purpose strong,
-.port-purpose .ant-typography {
-  display: block;
-}
-.port-purpose .ant-tag {
-  margin-bottom: 2px;
-}
 
 .overview-range-label {
   display: flex;
   flex-direction: column;
   gap: 8px;
   overflow-wrap: anywhere;
-}
-
-.inbound-protocol-tags {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 2px;
-  margin: 4px 0 2px 6px;
-  vertical-align: middle;
-}
-.inbound-protocol-tags .ant-tag {
-  margin: 0;
-  font-size: 11px;
 }

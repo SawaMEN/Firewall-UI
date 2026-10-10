@@ -417,7 +417,7 @@ select_installer_action() {
   echo '3) Сбросить пароль (сохранить логин)'
   echo '4) Полностью удалить Firewall-UI'
   echo '5) Установить / обновить версию через Docker Compose'
-  echo '6) Настройки Docker Compose: доступ, домен и сеть'
+  echo '6) Настройки Docker Compose: адрес и порт'
   echo '7) Сбросить пароль версии Docker Compose'
   echo '8) Полностью удалить версию через Docker Compose'
   echo '0) Выход'

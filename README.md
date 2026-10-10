@@ -50,11 +50,11 @@ ssh -L 8088:127.0.0.1:8088 user@server
 
 ## Docker Compose
 
-Версию через Docker Compose можно установить той же командой установщика: выберите **5) Установить / обновить версию через Docker Compose**. Мастер проверит Docker Engine, Docker Compose и Buildx, предложит логин, пароль, порт и локальный доступ либо домен через Docker-прокси. В режиме прокси можно выбрать общую сеть и подключить к ней контейнер прокси.
+Версию через Docker Compose можно установить той же командой установщика: выберите **5) Установить / обновить версию через Docker Compose**. Мастер проверит Docker Engine, Docker Compose и Buildx, предложит логин, пароль, порт и прямой доступ по IP либо локальный доступ через SSH-туннель.
 
-Контейнер запускается и обслуживается командами `docker compose`; файлы `compose.yaml` и `compose.proxy.yaml` выбираются по способу доступа. Для установки без меню используйте параметр `--compose`.
+Контейнер запускается и обслуживается командами `docker compose`; используется файл `compose.yaml` с сетью хоста. Для установки без меню используйте параметр `--compose`.
 
-Пункты **6–8** меняют настройки Docker Compose, сбрасывают пароль и полностью удаляют версию через Docker Compose. После установки доступно отдельное меню `sudo firewall-ui-docker`. Учётные данные и параметры установщика хранятся в `/opt/firewall-ui-docker` с доступом только для root. HTTPS-сертификат для домена настраивается на прокси.
+Пункты **6–8** меняют настройки Docker Compose, сбрасывают пароль и полностью удаляют версию через Docker Compose. После установки доступно отдельное меню `sudo firewall-ui-docker`. Учётные данные и параметры установщика хранятся в `/opt/firewall-ui-docker` с доступом только для root. HTTPS настраивается в самой панели.
 
 Нужен Docker Engine с Compose на Linux. Контейнер использует сеть и процессы хоста и запускается с расширенными правами для управления файрволлом.
 
@@ -92,47 +92,6 @@ docker compose -f compose.yaml -f compose.docker-ports.yaml up -d --build
 docker compose exec firewall-ui firewall-ui -cleanup-firewall
 docker compose down -v
 ```
-
-### Домен через reverse proxy в Docker
-
-Для Nginx Proxy Manager, Nginx или другого прокси используйте `compose.proxy.yaml`.
-
-**1. Укажите сеть и домен в `.env`:**
-
-```dotenv
-FIREWALL_UI_PROXY_NETWORK=proxy
-FIREWALL_UI_PUBLIC_HOST=firewall.example.com
-```
-
-Замените `proxy` на имя Docker-сети своего прокси, а `firewall.example.com` — на свой домен. Пароль `FIREWALL_UI_PASSWORD` также должен быть заполнен.
-
-**2. Подключите прокси к той же Docker-сети.** Если сеть ещё не существует, создайте её командой `docker network create proxy`. DNS-запись домена должна указывать на сервер прокси.
-
-**3. Обновите проект и запустите режим проксирования:**
-
-```bash
-git pull
-docker compose down
-docker compose -f compose.proxy.yaml up -d --build
-```
-
-Настройки и данные в томах сохраняются. При первой установке команда `docker compose down` не требуется.
-
-**4. Настройте прокси:**
-
-| Параметр | Значение |
-| --- | --- |
-| Домен | Ваш домен, например `firewall.example.com` |
-| Схема до панели | HTTP |
-| Имя назначения | `firewall-ui.internal` или `firewall-ui` |
-| Порт назначения | `8088` |
-| HTTPS и сертификат | Включить на прокси |
-
-Полный внутренний адрес: **`http://firewall-ui.internal:8088`**. После настройки открывайте панель по `https://firewall.example.com`.
-
-Для Nginx готовый блок — [nginx-location.conf](deploy/docker/nginx-location.conf). Панель не публикует порт на хост, продолжает видеть процессы и порты сервера и управлять его файрволлом. Secure Cookie включается автоматически; внешний порт 443 защищается правилами панели. Для другого HTTPS-порта измените внешний порт в настройках. Ограничения по IP клиентов задавайте на прокси.
-
-Команды обновления и удаления выполняйте с `-f compose.proxy.yaml`. Для обнаружения опубликованных Docker-портов дополнительно подключите `-f compose.docker-ports.yaml`.
 
 ## Управление на сервере
 

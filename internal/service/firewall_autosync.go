@@ -26,9 +26,6 @@ func (s *FirewallService) MarkControlInitialized() error {
 // learned external reverse-proxy port with the panel's internal listen port:
 // doing so would let the next background reconcile close the public entrypoint.
 func (s *FirewallService) RememberSafetyPort(port int) error {
-	if hostNetworkNamespace() && port == listenPort {
-		port = externalPort
-	}
 	if port < 1 || port > 65535 {
 		return nil
 	}
@@ -66,7 +63,7 @@ func firewallControlInitialized() bool {
 	return err == nil && enabled
 }
 
-// StartAutoSync keeps firewall rules aligned with enabled local inbounds even
+// StartAutoSync keeps firewall rules aligned with local listening ports even
 // when sockets or rules change outside the panel. API changes reconcile immediately;
 // this periodic pass repairs drift and preserves administrator rule priority.
 func (s *FirewallService) StartAutoSync() {

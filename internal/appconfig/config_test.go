@@ -1,7 +1,9 @@
 package appconfig
 
 import (
+	"bytes"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
@@ -127,5 +129,42 @@ func TestPublicConnectionHosts(t *testing.T) {
 		if err := Validate(cfg); err == nil {
 			t.Fatalf("invalid public host accepted: %s", host)
 		}
+	}
+}
+
+func TestLoadRemovesRetiredCredentials(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg := Default()
+	cfg.ListenPort = 9443
+	cfg.PublicHost = "firewall.example.com"
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	fields["xui"] = json.RawMessage(`{"enabled":true,"url":"invalid-old-url","token":"retired-private-token"}`)
+	raw, err = json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, cfg) {
+		t.Fatalf("panel configuration changed: %+v", got)
+	}
+	saved, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(saved, []byte(`"xui"`)) || bytes.Contains(saved, []byte("retired-private-token")) {
+		t.Fatal("retired credentials persisted on disk")
 	}
 }

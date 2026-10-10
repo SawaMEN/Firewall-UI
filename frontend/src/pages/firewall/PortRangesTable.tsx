@@ -6,7 +6,7 @@ import {
   type Port,
   type ProcessGroup,
 } from './portGroups';
-import { AddressLabel, PurposeLabels, InboundProtocolTags } from './PortLabels';
+import { AddressLabel } from './PortLabels';
 
 export default function PortRangesTable({
   ports,
@@ -27,9 +27,6 @@ export default function PortRangesTable({
     return (
       <div>
         <strong className="port-range">{extent.range}</strong>
-        <InboundProtocolTags
-          services={group.ports.flatMap((port) => port.services || [])}
-        />
         <div>
           <Typography.Text type="secondary">
             {ru ? 'Портов' : 'Ports'}: {extent.count} ·{' '}
@@ -54,7 +51,6 @@ export default function PortRangesTable({
           ? ` · PID ${group.processes.map((owner) => owner.pid).join(', ')}`
           : ` · ${ru ? 'Процессов' : 'Processes'}: ${group.processes.length}`}
       </Typography.Text>
-      <PurposeLabels ports={group.ports} ru={ru} />
     </div>
   );
   const details = (group: ProcessGroup) => (
@@ -70,7 +66,6 @@ export default function PortRangesTable({
           render: (_, port) => (
             <div>
               {port.port}/{port.protocol.toUpperCase()}
-              <InboundProtocolTags services={port.services} />
             </div>
           ),
           width: 110,
@@ -93,10 +88,6 @@ export default function PortRangesTable({
             port.processes
               .map((owner) => `${owner.name} · ${owner.pid}`)
               .join(', '),
-        },
-        {
-          title: ru ? 'Назначение' : 'Purpose',
-          render: (_, port) => <PurposeLabels ports={[port]} ru={ru} />,
         },
       ]}
     />
@@ -145,7 +136,7 @@ export default function PortRangesTable({
           width: 220,
         },
         {
-          title: ru ? 'Процесс и назначение' : 'Process and purpose',
+          title: ru ? 'Процесс' : 'Process',
           render: (_, group) => process(group),
         },
         {

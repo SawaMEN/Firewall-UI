@@ -1,13 +1,5 @@
 export type Process = { pid: number; name: string; executable?: string };
-export type PortService = {
-  id: number;
-  name: string;
-  protocol: string;
-  transport?: string;
-  security?: string;
-};
 export type Port = {
-  services?: PortService[];
   socketId: string;
   port: number;
   protocol: string;

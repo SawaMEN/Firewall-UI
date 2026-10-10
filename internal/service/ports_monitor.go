@@ -9,16 +9,14 @@ import (
 )
 
 type PortSnapshot struct {
-	Integration XUIStatus       `json:"integration"`
-	Ports       []Port          `json:"ports"`
-	Containers  []ContainerPort `json:"containers"`
-	UpdatedAt   time.Time       `json:"updatedAt"`
+	Ports      []Port          `json:"ports"`
+	Containers []ContainerPort `json:"containers"`
+	UpdatedAt  time.Time       `json:"updatedAt"`
 }
 
 type PortMonitor struct {
-	Integration *XUIIntegration
-	root        string
-	interval    time.Duration
+	root     string
+	interval time.Duration
 
 	mu                 sync.RWMutex
 	snapshot           PortSnapshot
@@ -97,16 +95,11 @@ func (m *PortMonitor) refresh(ctx context.Context) {
 		m.containerScanAfter = now.Add(max(30*time.Second, m.interval))
 	}
 	containers := m.cachedContainers
-	var integration XUIStatus
-	if m.Integration != nil {
-		integration = m.Integration.Annotate(ports)
-	}
-	next := PortSnapshot{Integration: integration, Ports: ports, Containers: containers, UpdatedAt: time.Now().UTC()}
+	next := PortSnapshot{Ports: ports, Containers: containers, UpdatedAt: time.Now().UTC()}
 	hashPayload, _ := json.Marshal(struct {
-		Ports       []Port
-		Containers  []ContainerPort
-		Integration XUIStatus
-	}{ports, containers, integrationFingerprint(integration)})
+		Ports      []Port
+		Containers []ContainerPort
+	}{ports, containers})
 	fingerprint := sha256.Sum256(hashPayload)
 
 	m.publish(next, fingerprint)
@@ -148,11 +141,7 @@ func clonePortSnapshot(in PortSnapshot) PortSnapshot {
 	out.Ports = append([]Port{}, in.Ports...)
 	for i := range out.Ports {
 		out.Ports[i].Processes = append([]Process{}, in.Ports[i].Processes...)
-		out.Ports[i].Services = append([]PortService{}, in.Ports[i].Services...)
 	}
 	out.Containers = append([]ContainerPort{}, in.Containers...)
 	return out
 }
-
-// Sync timestamps alone do not need a new browser render.
-func integrationFingerprint(status XUIStatus) XUIStatus { status.LastSync = time.Time{}; return status }

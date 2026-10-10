@@ -34,12 +34,6 @@ type ContainerPort = {
 };
 type Dashboard = {
   activePorts?: Port[];
-  integration?: {
-    enabled: boolean;
-    connected: boolean;
-    message?: string;
-    inbounds: number;
-  };
   backend: string;
   firewallEnabled: boolean;
   autoSync: boolean;
@@ -160,18 +154,6 @@ export default function DashboardPage() {
           ru ? 'Активные порты по приложениям' : 'Active ports by application'
         }
       >
-        {data.integration?.enabled ? (
-          <Alert
-            style={{ marginBottom: 12 }}
-            type={data.integration.connected ? 'info' : 'warning'}
-            title={
-              data.integration.connected
-                ? `3X-UI · ${ru ? 'Инбаундов' : 'Inbounds'}: ${data.integration.inbounds}`
-                : data.integration.message ||
-                  (ru ? 'Подключение к 3X-UI…' : 'Connecting to 3X-UI…')
-            }
-          />
-        ) : null}
         <PortRangesTable ports={data.activePorts || data.riskyPorts} ru={ru} />
         <Typography.Paragraph
           type="secondary"

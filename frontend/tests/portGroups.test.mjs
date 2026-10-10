@@ -9,7 +9,7 @@ test('ranges use hyphens and never fill gaps or duplicate ports', () => {
   assert.equal(formatPortRanges([]), '');
 });
 test('one process group contains TCP, UDP and multiple addresses', () => {
-  const owner = { pid: 100, name: 'xray' };
+  const owner = { pid: 100, name: 'worker' };
   const groups = groupPortsByProcess([socket(9000, [owner]), socket(9001, [owner], { protocol: 'udp' }), socket(9000, [owner], { family: 'IPv6', address: '::' })]);
   assert.equal(groups.length, 1);
   assert.equal(groups[0].ports.length, 3);
@@ -40,7 +40,7 @@ test('workers of the same executable show one range and retain every PID', () =>
   assert.deepEqual(groups[0].processes.map(p => p.pid), [100, 101]);
 });
 test('firewall ranges preserve protection, gaps, protocol and denied state', () => {
-  const rule = (port, extra = {}) => ({ port, source: 'service', label: 'xray', protocol: 'tcp', exists: true, owned: true, ...extra });
+  const rule = (port, extra = {}) => ({ port, source: 'service', label: 'worker', protocol: 'tcp', exists: true, owned: true, ...extra });
   const groups = groupFirewallRules([rule(9000), rule(9002), rule(9003), rule(9001), rule(22, { source: 'ssh' }), rule(9000, { protocol: 'udp' }), rule(9100, { source: 'manual' })], new Set(['close-port-9001-tcp']));
   assert.equal(groups.length, 6);
   assert.equal(groups[0].range, '9000');
@@ -51,7 +51,7 @@ test('firewall ranges preserve protection, gaps, protocol and denied state', () 
 });
 
 test('large process gaps create separate rows while mixed sockets share a contiguous range', () => {
-  const owner = { pid: 100, name: 'xray', executable: '/usr/bin/xray' };
+  const owner = { pid: 100, name: 'worker', executable: '/usr/bin/worker' };
   const groups = groupPortsByProcess([socket(443, [owner]), socket(8443, [owner]), socket(9000, [owner]), socket(9001, [{ ...owner, pid: 101 }]), socket(9002, [owner]), socket(9000, [owner], { protocol: 'udp' })]);
   assert.deepEqual(groups.map(group => summarizePorts(group.ports.map(port => port.port)).range), ['443', '8443', '9000-9002']);
   assert.deepEqual(groups[2].processes.map(owner => owner.pid), [100, 101]);

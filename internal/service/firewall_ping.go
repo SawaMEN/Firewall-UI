@@ -54,23 +54,10 @@ func readFirewallPingEnabled() (bool, error) {
 }
 
 func readFirewallPingSysctl(path string) ([]byte, error) {
-	if !hostNetworkNamespace() {
-		return os.ReadFile(path)
-	}
-	// Check availability in the host filesystem, including disabled IPv6.
-	if _, err := os.Stat("/proc/1/root" + path); err != nil {
-		return nil, err
-	}
-	out, err := runFirewallCommand(context.Background(), "cat", path)
-	return []byte(out), err
+	return os.ReadFile(path)
 }
 
 func writeFirewallPingSysctl(path, value string) error {
-	if hostNetworkNamespace() {
-		key := strings.ReplaceAll(strings.TrimPrefix(path, "/proc/sys/"), "/", ".")
-		_, err := runFirewallCommand(context.Background(), "sysctl", "-w", key+"="+value)
-		return err
-	}
 	file, err := os.OpenFile(path, os.O_WRONLY, 0)
 	if err != nil {
 		return err

@@ -19,30 +19,25 @@ type Process struct {
 	Executable string `json:"executable,omitempty"`
 }
 type Port struct {
-	Services  []PortService `json:"services,omitempty"`
-	SocketID  string        `json:"socketId"`
-	Port      int           `json:"port"`
-	Protocol  string        `json:"protocol"`
-	Address   string        `json:"address"`
-	Family    string        `json:"family"`
-	State     string        `json:"state"`
-	Listening bool          `json:"listening"`
-	Loopback  bool          `json:"loopback"`
-	Processes []Process     `json:"processes"`
-	Inode     string        `json:"-"`
+	SocketID  string    `json:"socketId"`
+	Port      int       `json:"port"`
+	Protocol  string    `json:"protocol"`
+	Address   string    `json:"address"`
+	Family    string    `json:"family"`
+	State     string    `json:"state"`
+	Listening bool      `json:"listening"`
+	Loopback  bool      `json:"loopback"`
+	Processes []Process `json:"processes"`
+	Inode     string    `json:"-"`
 }
 
 var socketStates = map[string]string{"01": "ESTABLISHED", "02": "SYN_SENT", "03": "SYN_RECV", "04": "FIN_WAIT1", "05": "FIN_WAIT2", "06": "TIME_WAIT", "07": "UNCONNECTED", "08": "CLOSE_WAIT", "09": "LAST_ACK", "0A": "LISTEN", "0B": "CLOSING", "0C": "NEW_SYN_RECV"}
 
 // ReadPorts reads every local TCP/UDP socket in the service's network namespace,
 // and maps socket inodes to every owning process, including shared descriptors.
-// Proxy-mode containers read the host init process network tables instead.
 func ReadPorts(root string) ([]Port, error) {
 	ports := []Port{}
 	networkDir := filepath.Join(root, "net")
-	if hostNetworkNamespace() {
-		networkDir = filepath.Join(root, "1", "net")
-	}
 	for _, table := range []string{"tcp", "tcp6", "udp", "udp6"} {
 		file, err := os.Open(filepath.Join(networkDir, table))
 		if os.IsNotExist(err) && strings.HasSuffix(table, "6") {

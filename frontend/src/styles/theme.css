@@ -1,21 +1,21 @@
 /* Light and dark stay minimal. Decorative effects are scoped to cyberpunk. */
 :root {
-  --xui-surface: #10141c;
-  --xui-surface-container: #181e29;
-  --xui-surface-container-low: #151b25;
-  --xui-outline-variant: #303c4e;
+  --fui-surface: #10141c;
+  --fui-surface-container: #181e29;
+  --fui-surface-container-low: #151b25;
+  --fui-outline-variant: #303c4e;
 }
 :root[data-theme='light'] {
-  --xui-surface: #f5f6fa;
-  --xui-surface-container: #ffffff;
-  --xui-surface-container-low: #f8faff;
-  --xui-outline-variant: #dce2ec;
+  --fui-surface: #f5f6fa;
+  --fui-surface-container: #ffffff;
+  --fui-surface-container-low: #f8faff;
+  --fui-outline-variant: #dce2ec;
 }
 :root[data-theme='cyberpunk'] {
-  --xui-surface: #090b12;
-  --xui-surface-container: #101522;
-  --xui-surface-container-low: #0c111d;
-  --xui-outline-variant: #284358;
+  --fui-surface: #090b12;
+  --fui-surface-container: #101522;
+  --fui-surface-container-low: #0c111d;
+  --fui-outline-variant: #284358;
 }
 html,
 body,
@@ -33,17 +33,17 @@ html {
   box-sizing: border-box;
 }
 .ant-card {
-  background: var(--xui-surface-container);
+  background: var(--fui-surface-container);
 }
 .ant-card-head {
-  border-bottom-color: var(--xui-outline-variant);
+  border-bottom-color: var(--fui-outline-variant);
 }
 .ant-btn {
   font-weight: 500;
   box-shadow: none;
 }
 .ant-table-wrapper {
-  border: 1px solid var(--xui-outline-variant);
+  border: 1px solid var(--fui-outline-variant);
   border-radius: 12px;
   overflow: hidden;
 }
@@ -58,12 +58,12 @@ html {
 }
 .ant-modal .ant-modal-content,
 .ant-drawer .ant-drawer-content {
-  background: var(--xui-surface-container);
+  background: var(--fui-surface-container);
 }
 .ant-dropdown-menu,
 .ant-select-dropdown,
 .ant-popover-inner {
-  border: 1px solid var(--xui-outline-variant);
+  border: 1px solid var(--fui-outline-variant);
 }
 .ant-dropdown .ant-dropdown-menu {
   max-height: calc(100vh - 32px);

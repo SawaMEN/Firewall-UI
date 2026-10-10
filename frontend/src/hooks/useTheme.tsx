@@ -16,7 +16,7 @@ const STORAGE_THEME = 'firewall-theme';
 function readTheme(): ThemeMode {
   try {
     const saved =
-      localStorage.getItem(STORAGE_THEME) || localStorage.getItem('xui-theme');
+      localStorage.getItem(STORAGE_THEME);
     if (saved === 'light' || saved === 'colorful') return 'light';
     if (saved === 'cyberpunk') return 'cyberpunk';
     if (saved === 'dark') return 'dark';
@@ -123,8 +123,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     try {
       localStorage.setItem(STORAGE_THEME, mode);
       for (const key of [
-        'xui-theme',
-        'xui-low-power',
         'dark-mode',
         'isUltraDarkThemeEnabled',
       ])

@@ -15,7 +15,7 @@ on:
       - frontend/**
       - go.mod
       - VERSION
-      - tests/docker_proxy.py
+      - tests/docker_host.py
       - .github/workflows/docker.yml
   pull_request:
     paths:
@@ -31,7 +31,7 @@ on:
       - frontend/**
       - go.mod
       - VERSION
-      - tests/docker_proxy.py
+      - tests/docker_host.py
       - .github/workflows/docker.yml
   workflow_dispatch:
 permissions:
@@ -49,7 +49,6 @@ jobs:
           FIREWALL_UI_PASSWORD: ci-compose-validation
         run: |
           docker compose config --quiet
-          docker compose -f compose.proxy.yaml config --quiet
           docker compose -f compose.yaml -f compose.docker-ports.yaml config --quiet
           docker build --build-arg VCS_REF="$GITHUB_SHA" -t firewall-ui:test .
       - name: Verify startup and shutdown
@@ -65,46 +64,25 @@ jobs:
           curl -fsS http://127.0.0.1:18088/ >/dev/null
           docker stop --timeout 15 firewall-ui-smoke
           test "$(docker inspect -f '{{.State.ExitCode}}' firewall-ui-smoke)" = 0
-      - name: Verify proxy networking and host namespace access
-        env:
-          FIREWALL_UI_PASSWORD: ci-proxy-smoke
-          FIREWALL_UI_PROXY_NETWORK: firewall-ui-ci-proxy
-        run: |
-          docker tag firewall-ui:test firewall-ui:local
-          docker network create "$FIREWALL_UI_PROXY_NETWORK"
-          python3 -m http.server 18889 --bind 127.0.0.1 >/tmp/firewall-ui-host-probe.log 2>&1 &
-          PROBE_PID=$!
-          trap 'kill "$PROBE_PID" || true; docker compose -f compose.proxy.yaml logs; docker compose -f compose.proxy.yaml down -v; docker network rm "$FIREWALL_UI_PROXY_NETWORK"' EXIT
-          docker compose -f compose.proxy.yaml up -d --no-build
-          for attempt in $(seq 1 30); do
-            if docker run --rm --network "$FIREWALL_UI_PROXY_NETWORK" alpine:3.22 wget -qO- http://firewall-ui.internal:8088/ >/dev/null; then break; fi
-            sleep 1
-          done
-          docker run --rm --network "$FIREWALL_UI_PROXY_NETWORK" alpine:3.22 wget -qO- http://firewall-ui.internal:8088/ >/dev/null
-          docker compose -f compose.proxy.yaml exec -T firewall-ui nsenter --net=/proc/1/ns/net -- true
-          docker compose -f compose.proxy.yaml exec -T firewall-ui nsenter --net=/proc/1/ns/net -- sysctl -n net.ipv4.icmp_echo_ignore_all
-          docker run --rm --network "$FIREWALL_UI_PROXY_NETWORK" -v "$PWD/tests/docker_proxy.py:/check.py:ro" python:3.13-alpine python /check.py
       - name: Verify installer Docker install, update, reset and full removal
         env:
           FIREWALL_UI_NONINTERACTIVE: '1'
-          FIREWALL_UI_DOCKER_MODE: proxy
-          FIREWALL_UI_PUBLIC_HOST: firewall.example.com
-          FIREWALL_UI_PROXY_NETWORK: firewall-ui-installer-ci-proxy
+          FIREWALL_UI_PORT: '18089'
           FIREWALL_UI_DOCKER_DIR: /tmp/firewall-ui-installer-ci
           FIREWALL_UI_DOCKER_MANAGER: /tmp/firewall-ui-installer-ci-manager
           FIREWALL_UI_DOCKER_PROJECT: firewall-ui-installer-ci
-          FIREWALL_UI_PASSWORD: ci-proxy-smoke
+          FIREWALL_UI_PASSWORD: ci-compose-smoke
         run: |
           python3 -m http.server 18889 --bind 127.0.0.1 >/tmp/firewall-ui-host-probe.log 2>&1 &
           PROBE_PID=$!
-          trap 'kill "$PROBE_PID" || true; sudo -E bash deploy/firewall-ui-docker uninstall || true; docker network rm "$FIREWALL_UI_PROXY_NETWORK" || true' EXIT
-          sudo -E bash install.sh --docker
-          docker run --rm --network "$FIREWALL_UI_PROXY_NETWORK" -v "$PWD/tests/docker_proxy.py:/check.py:ro" python:3.13-alpine python /check.py
-          sudo -E bash install.sh --docker
-          sudo -E bash install.sh --docker-configure
-          sudo -E bash install.sh --docker-reset-password
-          docker run --rm --network "$FIREWALL_UI_PROXY_NETWORK" -v "$PWD/tests/docker_proxy.py:/check.py:ro" python:3.13-alpine python /check.py
-          sudo -E bash install.sh --docker-uninstall
+          trap 'kill "$PROBE_PID" || true; sudo -E bash deploy/firewall-ui-docker uninstall || true' EXIT
+          sudo -E bash install.sh --compose
+          python3 tests/docker_host.py
+          sudo -E bash install.sh --compose
+          sudo -E bash install.sh --compose-configure
+          sudo -E bash install.sh --compose-reset-password
+          python3 tests/docker_host.py
+          sudo -E bash install.sh --compose-uninstall
           test ! -e "$FIREWALL_UI_DOCKER_DIR"
           test ! -e "$FIREWALL_UI_DOCKER_MANAGER"
           test -z "$(docker ps -aq --filter label=com.docker.compose.project=firewall-ui-installer-ci)"

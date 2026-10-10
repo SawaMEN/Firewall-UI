@@ -7,8 +7,8 @@
   position: sticky;
   top: 0;
   height: 100dvh;
-  background: var(--xui-surface-container);
-  border-right: 1px solid var(--xui-outline-variant);
+  background: var(--fui-surface-container);
+  border-right: 1px solid var(--fui-outline-variant);
 }
 .ant-sidebar .ant-layout-sider-children {
   display: flex;
@@ -60,14 +60,14 @@
 }
 .sider-utility {
   padding: 12px;
-  border-top: 1px solid var(--xui-outline-variant);
+  border-top: 1px solid var(--fui-outline-variant);
 }
 .drawer-menu {
   flex: 1;
 }
 .drawer-utility {
   margin-top: auto;
-  border-top: 1px solid var(--xui-outline-variant);
+  border-top: 1px solid var(--fui-outline-variant);
 }
 .ant-btn.drawer-handle {
   display: none;
@@ -79,7 +79,7 @@
   height: 42px;
   padding: 0;
   border-radius: 12px;
-  background: var(--xui-surface-container);
+  background: var(--fui-surface-container);
 }
 @media (max-width: 768px) {
   .ant-sidebar {

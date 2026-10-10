@@ -198,14 +198,11 @@ func (s *FirewallService) desiredRules(auto bool, safetyPort int) ([]FirewallRul
 		addRule(FirewallRule{Port: port, Protocol: proto, Source: source, Label: label})
 	}
 	settings := SettingService{}
-	if p, err := settings.GetPort(); err == nil && !hostNetworkNamespace() {
+	if p, err := settings.GetPort(); err == nil {
 		add(p, "tcp", "panel", "Web panel")
 	}
 	if externalPort > 0 {
 		add(externalPort, "tcp", "session", "Configured reverse proxy port")
-	}
-	if hostNetworkNamespace() && safetyPort == listenPort {
-		safetyPort = externalPort
 	}
 	if safetyPort > 0 {
 		add(safetyPort, "tcp", "session", "Current panel connection")

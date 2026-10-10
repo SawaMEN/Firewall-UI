@@ -1,19 +1,16 @@
 # Changelog
 
+## 1.2.15
+
+- Remove Docker network proxy deployment, its installer options and namespace switching; use direct host networking with local or IP access.
+- Remove panel integration, metadata polling, API routes, settings and inbound labels. Clear retired credentials from existing configuration files during upgrade.
+
 ## 1.2.9
 
 - Make cyberpunk the default theme and the first option in the theme selector; preserve saved light/dark/cyberpunk preferences.
 
-## 1.2.8
-
-- Match 3X-UI localhost inbounds only to loopback sockets and wildcard inbounds only to wildcard sockets, preserving IPv4/IPv6 dual-stack listeners and preventing attribution to another bind address on the same port.
-- Avoid guessing inbound identity for unresolved listen hostnames; retain exact and IPv4-mapped address matching.
-- Cache the inbound lookup index between metadata refreshes instead of rebuilding it on every socket scan.
-
 ## 1.2.7
 
-- Integrate with 3X-UI through authenticated read-only metadata requests; expose local inbound names, application protocols, transport and security beside socket ports. Cache metadata in the background without delaying socket scans; support panel base paths and older list APIs.
-- Add integration configuration, connection testing and token deletion; keep stored tokens out of API responses.
 - Split nonconsecutive ports into separate rows and ranges in active ports, firewall rules, overview and container publications. Never include missing ports in a range.
 - Label wildcard and loopback bind addresses clearly; retain copyable exact IPv4/IPv6 endpoints.
 - Add expandable application ranges to overview and exposed-port lists.
@@ -137,7 +134,7 @@ Security, policy and operations release.
 
 First stable standalone Firewall-UI release.
 
-- Standalone Linux firewall web panel extracted from 3x-ui.
+- Standalone Linux firewall web panel.
 - UFW, firewalld, nftables and iptables support with safe managed rules.
 - Automatic host TCP/UDP port and owning-process discovery.
 - Manual rules, ping control, SSH/panel lockout protection and auto-sync.

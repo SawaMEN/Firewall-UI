@@ -34,16 +34,24 @@ docker_password() {
 
 docker_compose_mode() {
   local mode="$1"; shift
-  local file=compose.yaml
-  [[ "$mode" != proxy ]] || file=compose.proxy.yaml
-  local -a files=(-f "$DOCKER_DIR/source/$file")
+  local source="$DOCKER_DIR/source" file=compose.yaml env_file="$DOCKER_DIR/docker.env"
+  # Retain only stop/removal/rollback support for an already installed old layout.
+  if [[ "$mode" != host && -f "$source/compose.$mode.yaml" ]]; then
+    file="compose.$mode.yaml"
+  elif [[ "$mode" != host && -f "$DOCKER_DIR/source.previous/compose.$mode.yaml" ]]; then
+    source="$DOCKER_DIR/source.previous"; file="compose.$mode.yaml"
+  fi
+  if [[ "$mode" != host && -f "$DOCKER_DIR/docker.env.previous" ]]; then
+    env_file="$DOCKER_DIR/docker.env.previous"
+  fi
+  local -a files=(-f "$source/$file")
   if [[ "$(docker_read_setting FIREWALL_UI_DOCKER_PORTS 0)" == 1 ]]; then
-    files+=(-f "$DOCKER_DIR/source/compose.docker-ports.yaml")
+    files+=(-f "$source/compose.docker-ports.yaml")
   fi
   FIREWALL_UI_USERNAME="$(cat "$DOCKER_DIR/username")" \
   FIREWALL_UI_PASSWORD="$(cat "$DOCKER_DIR/password")" \
-    docker compose --project-name "$DOCKER_PROJECT" --project-directory "$DOCKER_DIR/source" \
-    --env-file "$DOCKER_DIR/docker.env" "${files[@]}" "$@"
+    docker compose --project-name "$DOCKER_PROJECT" --project-directory "$source" \
+    --env-file "$env_file" "${files[@]}" "$@"
 }
 
 docker_compose() { docker_compose_mode "$(cat "$DOCKER_DIR/deployment")" "$@"; }
@@ -91,49 +99,23 @@ docker_require_engine() {
 }
 
 docker_select_settings() {
-  local mode="${FIREWALL_UI_DOCKER_MODE:-}" choice domain network proxy_container ports port external
-  if [[ -z "$mode" ]]; then
-    [[ ! -f "$DOCKER_DIR/deployment" ]] || mode="$(cat "$DOCKER_DIR/deployment")"
-    mode="${mode:-host}"
-    echo '1) Локальный доступ / SSH-туннель'
-    echo '2) Домен и HTTPS через прокси в Docker-сети'
-    choice=1; [[ "$mode" != proxy ]] || choice=2
-    docker_ask choice 'Способ доступа' "$choice"
-    case "$choice" in 1) mode=host;; 2) mode=proxy;; *) echo 'Неизвестный способ доступа.' >&2; return 1;; esac
-  fi
-  [[ "$mode" == host || "$mode" == proxy ]] || return 1
+  local choice ports port host
+  host="${FIREWALL_UI_DOCKER_HOST:-$(docker_read_setting FIREWALL_UI_DOCKER_HOST 127.0.0.1)}"
+  echo '1) Локальный доступ / SSH-туннель'
+  echo '2) Прямой доступ по IP сервера'
+  choice=1; [[ "$host" != 0.0.0.0 ]] || choice=2
+  docker_ask choice 'Способ доступа' "$choice"
+  case "$choice" in 1) host=127.0.0.1;; 2) host=0.0.0.0;; *) echo 'Неизвестный способ доступа.' >&2; return 1;; esac
   port="${FIREWALL_UI_PORT:-$(docker_read_setting FIREWALL_UI_DOCKER_PORT 8088)}"
   docker_ask port 'Порт панели' "$port"
   [[ "$port" =~ ^[0-9]+$ && ${#port} -le 5 && "$port" != 0* ]] && ((port >= 1 && port <= 65535)) || { echo 'Порт должен быть от 1 до 65535.' >&2; return 1; }
-  domain=''; network=proxy; external=0
-  if [[ "$mode" == proxy ]]; then
-    domain="${FIREWALL_UI_PUBLIC_HOST:-$(docker_read_setting FIREWALL_UI_PUBLIC_HOST '')}"
-    docker_ask domain 'Домен панели без https:// и порта' "$domain"
-    [[ "$domain" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$ && "$domain" == *.* ]] || { echo 'Укажите доменное имя.' >&2; return 1; }
-    echo 'Docker-сети:'; docker network ls --format '{{.Name}}'
-    network="${FIREWALL_UI_PROXY_NETWORK:-$(docker_read_setting FIREWALL_UI_PROXY_NETWORK proxy)}"
-    docker_ask network 'Общая Docker-сеть с прокси' "$network"
-    [[ "$network" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || { echo 'Некорректное имя Docker-сети.' >&2; return 1; }
-    docker network inspect "$network" >/dev/null 2>&1 || docker network create "$network" >/dev/null
-    proxy_container="${FIREWALL_UI_PROXY_CONTAINER:--}"
-    docker_ask proxy_container 'Контейнер прокси для подключения к сети (Enter — пропустить)' "$proxy_container"
-    if [[ "$proxy_container" != - ]]; then
-      if ! docker inspect --format '{{range $name, $value := .NetworkSettings.Networks}}{{println $name}}{{end}}' "$proxy_container" | grep -Fxq "$network"; then
-        docker network connect "$network" "$proxy_container" || return 1
-      fi
-    fi
-    external="${FIREWALL_UI_EXTERNAL_PORT:-$(docker_read_setting FIREWALL_UI_EXTERNAL_PORT 443)}"
-    [[ "$external" != 0 ]] || external=443
-    docker_ask external 'Внешний HTTPS-порт прокси' "$external"
-    [[ "$external" =~ ^[0-9]+$ && ${#external} -le 5 && "$external" != 0* ]] && ((external >= 1 && external <= 65535)) || return 1
-  fi
   ports="${FIREWALL_UI_DOCKER_PORTS:-$(docker_read_setting FIREWALL_UI_DOCKER_PORTS 0)}"
   choice=n; [[ "$ports" != 1 ]] || choice=y
   docker_ask choice 'Показывать опубликованные Docker-порты? Это подключит Docker socket (y/n)' "$choice"
   case "$choice" in y|Y) ports=1;; n|N) ports=0;; *) echo 'Введите y или n.' >&2; return 1;; esac
-  printf '%s\n' "$mode" > "$DOCKER_DIR/deployment"
-  printf 'FIREWALL_UI_PROXY_NETWORK=%s\nFIREWALL_UI_PUBLIC_HOST=%s\nFIREWALL_UI_DOCKER_PORT=%s\nFIREWALL_UI_EXTERNAL_PORT=%s\nFIREWALL_UI_DOCKER_PORTS=%s\n' \
-    "$network" "$domain" "$port" "$external" "$ports" > "$DOCKER_DIR/docker.env"
+  printf 'host\n' > "$DOCKER_DIR/deployment"
+  printf 'FIREWALL_UI_DOCKER_HOST=%s\nFIREWALL_UI_DOCKER_PORT=%s\nFIREWALL_UI_DOCKER_PORTS=%s\n' \
+    "$host" "$port" "$ports" > "$DOCKER_DIR/docker.env"
 }
 
 docker_initial_credentials() {
@@ -159,7 +141,7 @@ docker_download_source() (
     curl -fLsS --retry 3 https://github.com/SawaMEN/Firewall-UI/archive/refs/heads/main.tar.gz -o "$stage/source.tar.gz" || return 1
     tar -xzf "$stage/source.tar.gz" --strip-components=1 -C "$stage/source" || return 1
   fi
-  [[ -f "$stage/source/Dockerfile" && -f "$stage/source/compose.proxy.yaml" ]] || return 1
+  [[ -f "$stage/source/Dockerfile" && -f "$stage/source/compose.yaml" ]] || return 1
   rm -rf -- "$DOCKER_DIR/source.previous"
   if [[ -d "$DOCKER_DIR/source" ]]; then mv "$DOCKER_DIR/source" "$DOCKER_DIR/source.previous"; fi
   mv "$stage/source" "$DOCKER_DIR/source"
@@ -181,13 +163,9 @@ docker_write_volume_credentials() {
 }
 
 docker_apply_runtime_settings() {
-  local host=127.0.0.1 secure=false mode
-  mode="$(cat "$DOCKER_DIR/deployment")"
-  if [[ "$mode" == proxy ]]; then host=0.0.0.0; secure=true; fi
   docker_compose run --rm --no-deps -T firewall-ui -save-config \
-    -listen "$host:$(docker_read_setting FIREWALL_UI_DOCKER_PORT 8088)" \
-    -public-host "$(docker_read_setting FIREWALL_UI_PUBLIC_HOST '')" \
-    -external-port "$(docker_read_setting FIREWALL_UI_EXTERNAL_PORT 0)" -secure-cookies="$secure"
+    -listen "$(docker_read_setting FIREWALL_UI_DOCKER_HOST 127.0.0.1):$(docker_read_setting FIREWALL_UI_DOCKER_PORT 8088)" \
+    -public-host '' -external-port 0 -secure-cookies=false
 }
 
 docker_runtime_backup() {
@@ -226,14 +204,8 @@ docker_wait_for_service() {
 
 docker_show_access() {
   local port; port="$(docker_read_setting FIREWALL_UI_DOCKER_PORT 8088)"
-  if [[ "$(cat "$DOCKER_DIR/deployment")" == proxy ]]; then
-    local domain external
-    domain="$(docker_read_setting FIREWALL_UI_PUBLIC_HOST '')"
-    external="$(docker_read_setting FIREWALL_UI_EXTERNAL_PORT 443)"
-    [[ "$external" == 443 ]] || domain+=":$external"
-    echo "Домен: https://$domain"
-    echo "Назначение прокси: http://firewall-ui.internal:$port"
-    echo 'Сертификат и HTTPS настраиваются на прокси.'
+  if [[ "$(docker_read_setting FIREWALL_UI_DOCKER_HOST 127.0.0.1)" == 0.0.0.0 ]]; then
+    echo "Панель: http://<IP-сервера>:$port"
   else echo "Панель: http://127.0.0.1:$port (локальный доступ / SSH-туннель)"; fi
   echo "Управление: firewall-ui-docker; настройки сохранены в $DOCKER_DIR."
 }
@@ -254,6 +226,7 @@ docker_install() (
   for file in deployment docker.env username password; do
     [[ ! -f "$DOCKER_DIR/$file" ]] || cp -p "$DOCKER_DIR/$file" "$stage/$file"
   done
+  [[ ! -f "$DOCKER_DIR/docker.env" ]] || cp -p "$DOCKER_DIR/docker.env" "$DOCKER_DIR/docker.env.previous"
   rollback() {
     local result=$?
     if (( !succeeded )); then
@@ -268,13 +241,14 @@ docker_install() (
       fi
       echo 'Установка Docker Compose не завершена. Настройки сохранены для повторной попытки.' >&2
     fi
+    rm -f -- "$DOCKER_DIR/docker.env.previous"
     rm -rf -- "$stage"
     return "$result"
   }
   trap rollback EXIT
   [[ ! -f "$DOCKER_DIR/deployment" ]] || old_mode="$(cat "$DOCKER_DIR/deployment")"
   if ((first)); then docker_initial_credentials || return 1; fi
-  if ((first)) || [[ "$action" == configure ]]; then docker_select_settings || return 1; fi
+  if ((first)) || [[ "$action" == configure || "$old_mode" != host ]]; then docker_select_settings || return 1; fi
   if [[ "$action" != configure || ! -d "$DOCKER_DIR/source" ]]; then docker_download_source || return 1; fi
   docker_compose config --quiet || return 1
   old_image="$(docker image inspect firewall-ui:local --format '{{.Id}}' 2>/dev/null || true)"
@@ -283,7 +257,7 @@ docker_install() (
     docker_compose_mode "$old_mode" stop || return 1
     stopped=1
   fi
-  if ((first)) || [[ "$action" == configure ]]; then
+  if ((first)) || [[ "$action" == configure || "$old_mode" != host ]]; then
     docker_runtime_backup save || return 1
     runtime_saved=1
     docker_apply_runtime_settings || return 1
@@ -329,7 +303,7 @@ docker_existing_installation() {
     [[ -s "$DOCKER_DIR/$file" ]] || { echo "Не найден файл Docker-настроек: $file" >&2; return 1; }
   done
   [[ -d "$DOCKER_DIR/source" ]] || return 1
-  [[ "$(cat "$DOCKER_DIR/deployment")" == host || "$(cat "$DOCKER_DIR/deployment")" == proxy ]]
+  [[ "$(cat "$DOCKER_DIR/deployment")" =~ ^[a-z]+$ ]]
 }
 
 docker_uninstall() {
@@ -345,7 +319,7 @@ docker_uninstall() {
   fi
   rm -rf -- "$DOCKER_DIR" || return 1
   rm -f -- "$DOCKER_MANAGER" || return 1
-  echo 'Версия Docker Compose полностью удалена: контейнер, настройки, данные и собственные правила. Docker и общая сеть прокси сохранены.'
+  echo 'Версия Docker Compose полностью удалена: контейнер, настройки, данные и собственные правила. Docker сохранён.'
 }
 
 docker_menu() {
@@ -353,7 +327,7 @@ docker_menu() {
   while true; do
     echo 'Firewall-UI — Docker Compose'
     echo '1) Установить / обновить'
-    echo '2) Настроить доступ и Docker-сеть'
+    echo '2) Настроить адрес и порт'
     echo '3) Состояние'
     echo '4) Журнал'
     echo '5) Сбросить пароль'

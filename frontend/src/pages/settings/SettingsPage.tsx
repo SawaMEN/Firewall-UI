@@ -27,7 +27,6 @@ import {
 import { useTranslation } from 'react-i18next';
 
 import { HttpUtil } from '@/utils';
-import XUISettings from './XUISettings';
 
 type RuntimeSettings = {
   publicHost: string;
@@ -404,7 +403,6 @@ export default function SettingsPage() {
           </Button>
         </Card>
 
-        <XUISettings ru={ru} />
         <Card className="panel-card" title={text.webTitle}>
           <Alert type="info" showIcon title={text.hint} style={{ marginBottom: 20 }} />
           <div className="settings-grid">

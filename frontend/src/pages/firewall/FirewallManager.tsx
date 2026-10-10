@@ -17,8 +17,7 @@ import {
 import { PlusOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { HttpUtil } from '@/utils';
-import { groupFirewallRules, type Port, type PortService } from './portGroups';
-import { InboundProtocolTags } from './PortLabels';
+import { groupFirewallRules } from './portGroups';
 import type { ColumnsType } from 'antd/es/table';
 
 type FirewallRule = {
@@ -32,7 +31,6 @@ type FirewallRule = {
   members?: FirewallRule[];
   sparse?: boolean;
   groupId?: string;
-  services?: PortService[];
 };
 type FirewallManualRule = { port: number; protocol: string; label?: string };
 type FirewallStatus = {
@@ -68,7 +66,6 @@ export function FirewallManager() {
   const { i18n } = useTranslation();
   const ru = i18n.language.startsWith('ru');
   const [status, setStatus] = useState<FirewallStatus | null>(null);
-  const [socketPorts, setSocketPorts] = useState<Port[]>([]);
   const [advanced, setAdvanced] = useState<AdvancedRule[]>([]);
   const [loading, setLoading] = useState(true);
   const [action, setAction] = useState('');
@@ -86,24 +83,10 @@ export function FirewallManager() {
     () => new Set(advanced.map((item) => item.id)),
     [advanced],
   );
-  const socketServices = useMemo(() => {
-    const services = new Map<string, PortService[]>();
-    for (const port of socketPorts) {
-      const key = `${port.port}-${port.protocol}`;
-      services.set(key, [
-        ...(services.get(key) || []),
-        ...(port.services || []),
-      ]);
-    }
-    return services;
-  }, [socketPorts]);
   const ruleGroups = useMemo(
     () =>
       groupFirewallRules(
-        (status?.rules || []).map((rule) => ({
-          ...rule,
-          services: socketServices.get(`${rule.port}-${rule.protocol}`) || [],
-        })),
+        status?.rules || [],
         closedIds,
       ).map((group) => ({
         ...group.rules[0],
@@ -111,9 +94,8 @@ export function FirewallManager() {
         portRange: group.range,
         members: group.rules,
         sparse: group.sparse,
-        services: group.rules.flatMap((rule) => rule.services),
       })),
-    [status, closedIds, socketServices],
+    [status, closedIds],
   );
 
   const text = useMemo(
@@ -191,13 +173,10 @@ export function FirewallManager() {
   async function load() {
     setLoading(true);
     try {
-      const [statusResult, advancedResult, portsResult] = await Promise.all([
+      const [statusResult, advancedResult] = await Promise.all([
         HttpUtil.get<FirewallStatus>('/panel/api/server/firewall/status'),
         HttpUtil.get<AdvancedRule[]>('/api/firewall/advanced'),
-        HttpUtil.get<{ ports: Port[] }>('/api/ports?active=1'),
       ]);
-      if (portsResult.success && portsResult.obj)
-        setSocketPorts(portsResult.obj.ports);
       if (statusResult.success && statusResult.obj) setStatus(statusResult.obj);
       if (advancedResult.success && advancedResult.obj)
         setAdvanced(advancedResult.obj);
@@ -330,7 +309,6 @@ export function FirewallManager() {
       render: (_, rule) => (
         <div>
           <strong className="port-range">{portLabel(rule)}</strong>
-          <InboundProtocolTags services={rule.services} />
           {rule.members && rule.members.length > 1 ? (
             <div>
               <Typography.Text type="secondary">
