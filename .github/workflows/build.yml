@@ -25,7 +25,7 @@ jobs:
           scope=true
           if [[ "$GITHUB_EVENT_NAME" == push ]] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
             changed="$(git diff --name-only "$BEFORE" HEAD)"
-            if [[ -n "$changed" ]] && ! rg -q -v '^(README\.md|docs/.*)$' <<< "$changed"; then scope=false; fi
+            if [[ -n "$changed" ]] && ! grep -Eqv '^(README\.md|docs/.*)$' <<< "$changed"; then scope=false; fi
           fi
           echo "distributions=$scope" >> "$GITHUB_OUTPUT"
       - id: metadata
