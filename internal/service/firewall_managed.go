@@ -34,14 +34,6 @@ type FirewallManagedStatus struct {
 	Message     string                   `json:"message,omitempty"`
 }
 
-func normalizeFirewallLabel(label string) string {
-	label = strings.TrimSpace(label)
-	if len(label) > 120 {
-		label = label[:120]
-	}
-	return label
-}
-
 func loadFirewallManualLabels() (map[string]string, error) {
 	labels := map[string]string{}
 	raw, err := firewallSetting(firewallManualLabelsKey, "{}")
@@ -53,6 +45,9 @@ func loadFirewallManualLabels() (map[string]string, error) {
 	}
 	if err := json.Unmarshal([]byte(raw), &labels); err != nil {
 		return nil, err
+	}
+	if labels == nil {
+		labels = map[string]string{}
 	}
 	return labels, nil
 }
@@ -94,7 +89,7 @@ func (s *FirewallService) managedDesiredRules(auto bool, safetyPort int) ([]Fire
 	}
 	for key, rule := range byKey {
 		if rule.Source == "manual" {
-			if label := normalizeFirewallLabel(labels[key]); label != "" {
+			if label := normalizeFirewallLabelUnicode(labels[key]); label != "" {
 				rule.Label = label
 				byKey[key] = rule
 			}

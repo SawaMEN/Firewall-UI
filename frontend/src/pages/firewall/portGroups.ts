@@ -179,6 +179,10 @@ export function groupFirewallRules<T extends RulePort>(
             rule.source,
             rule.portRange || rule.port,
             rule.protocol,
+            rule.label,
+            rule.owned,
+            rule.exists,
+            closedIds.has(`close-port-${rule.port}-${rule.protocol}`),
           ]);
     const group = groups.get(id);
     if (group) group.rules.push(rule);

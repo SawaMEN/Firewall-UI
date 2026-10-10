@@ -34,6 +34,9 @@ func readSettings() (map[string]string, error) {
 	if err = json.Unmarshal(raw, &values); err != nil {
 		return nil, fmt.Errorf("read settings: %w", err)
 	}
+	if values == nil {
+		return nil, fmt.Errorf("settings must be a JSON object, not null")
+	}
 	return values, nil
 }
 func (*SettingService) getSetting(key string) (setting, error) {

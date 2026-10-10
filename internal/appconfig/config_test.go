@@ -168,3 +168,21 @@ func TestLoadRemovesRetiredCredentials(t *testing.T) {
 		t.Fatal("retired credentials persisted on disk")
 	}
 }
+
+func TestBlankCIDRsCannotDisableAccessRestrictions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	for _, allowed := range [][]string{{""}, {"127.0.0.1", " "}} {
+		cfg := Default()
+		cfg.AllowedCIDRs = allowed
+		if err := Save(path, cfg); err == nil {
+			t.Fatal("Save silently removed an invalid access restriction")
+		}
+		raw, _ := json.Marshal(cfg)
+		if err := os.WriteFile(path, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil {
+			t.Fatal("Load silently removed an invalid access restriction")
+		}
+	}
+}

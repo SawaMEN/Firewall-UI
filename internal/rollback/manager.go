@@ -24,6 +24,7 @@ type entry struct {
 type Manager struct {
 	mu      sync.Mutex
 	entries map[string]*entry
+	running bool
 }
 
 func NewManager() *Manager {
@@ -43,13 +44,25 @@ func (m *Manager) Begin(backup service.FirewallBackup, ttl time.Duration, rollba
 	item := &entry{backup: backup, rollback: rollback}
 
 	m.mu.Lock()
+	if len(m.entries) != 0 || m.running {
+		m.mu.Unlock()
+		return Pending{}, errors.New("a rollback transaction is already pending")
+	}
 	item.timer = time.AfterFunc(ttl, func() {
 		m.mu.Lock()
 		current, ok := m.entries[token]
 		if ok {
 			delete(m.entries, token)
+			m.running = true
 		}
 		m.mu.Unlock()
+		if ok {
+			defer func() {
+				m.mu.Lock()
+				m.running = false
+				m.mu.Unlock()
+			}()
+		}
 		if ok && current.rollback != nil {
 			current.rollback(current.backup)
 		}
@@ -57,6 +70,12 @@ func (m *Manager) Begin(backup service.FirewallBackup, ttl time.Duration, rollba
 	m.entries[token] = item
 	m.mu.Unlock()
 	return Pending{Token: token, Deadline: deadline.UTC()}, nil
+}
+
+func (m *Manager) HasPending() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.entries) != 0 || m.running
 }
 
 func (m *Manager) Confirm(token string) bool {

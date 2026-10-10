@@ -23,6 +23,7 @@ type PortMonitor struct {
 	fingerprint        [32]byte
 	subscribers        map[chan PortSnapshot]struct{}
 	startOnce          sync.Once
+	stopped            bool
 	containerScanAfter time.Time
 	cachedContainers   []ContainerPort
 }
@@ -66,6 +67,11 @@ func (m *PortMonitor) Snapshot() PortSnapshot {
 func (m *PortMonitor) Subscribe() (<-chan PortSnapshot, func()) {
 	ch := make(chan PortSnapshot, 1)
 	m.mu.Lock()
+	if m.stopped {
+		close(ch)
+		m.mu.Unlock()
+		return ch, func() {}
+	}
 	m.subscribers[ch] = struct{}{}
 	current := clonePortSnapshot(m.snapshot)
 	if !current.UpdatedAt.IsZero() {
@@ -130,6 +136,7 @@ func (m *PortMonitor) publish(next PortSnapshot, fingerprint [32]byte) {
 func (m *PortMonitor) closeSubscribers() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.stopped = true
 	for ch := range m.subscribers {
 		close(ch)
 		delete(m.subscribers, ch)

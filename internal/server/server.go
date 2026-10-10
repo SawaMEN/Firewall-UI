@@ -131,7 +131,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == http.MethodPost && r.Header.Get("Origin") != "" {
 		origin, err := url.Parse(r.Header.Get("Origin"))
-		if err != nil || !strings.EqualFold(origin.Host, r.Host) {
+		scheme := "http"
+		if r.TLS != nil || s.SecureCookies {
+			scheme = "https"
+		}
+		if err != nil || origin.Scheme != scheme || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" || !strings.EqualFold(origin.Host, r.Host) {
 			reply(w, http.StatusForbidden, nil, fmt.Errorf("invalid request origin"))
 			return
 		}
@@ -229,9 +233,10 @@ func (s *Server) sessionCookieName(r *http.Request) string {
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	s.configMu.Lock()
-	defer s.configMu.Unlock()
-	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		ip = r.RemoteAddr
+	}
 	now := time.Now()
 
 	s.mu.Lock()
@@ -246,7 +251,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	a := s.attempts[ip]
-	if a.count >= 5 || len(s.attempts) > 4096 {
+	if a.count >= 5 || (a.count == 0 && len(s.attempts) >= 4096) {
 		retryAfter := int(time.Until(a.until).Seconds())
 		if retryAfter < 1 {
 			retryAfter = 1
@@ -272,6 +277,9 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Never hold the configuration lock while reading an untrusted request body.
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
 	got, want := sha256.Sum256([]byte(req.Password)), sha256.Sum256([]byte(s.Password))
 	if subtle.ConstantTimeCompare(got[:], want[:]) != 1 || req.Username != s.Username {
 		reply(w, http.StatusUnauthorized, nil, fmt.Errorf("invalid credentials"))
@@ -375,6 +383,9 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	cfg := s.RuntimeConfig
 	s.mu.Unlock()
+	if !s.requireNoPendingRollback(w) {
+		return
+	}
 	oldCfg := cfg
 	if req.PublicHost != nil {
 		cfg.PublicHost = strings.TrimSpace(*req.PublicHost)
@@ -392,7 +403,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(req.UpdateChannel) != "" {
 		cfg.UpdateChannel = strings.ToLower(strings.TrimSpace(req.UpdateChannel))
 	}
-	cfg.AllowedCIDRs = security.NormalizeCIDRs(req.AllowedCIDRs)
+	cfg.AllowedCIDRs = req.AllowedCIDRs
 	if req.RollbackSeconds != 0 {
 		cfg.RollbackSeconds = req.RollbackSeconds
 	}
@@ -403,6 +414,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusBadRequest, nil, err)
 		return
 	}
+	cfg.AllowedCIDRs = security.NormalizeCIDRs(cfg.AllowedCIDRs)
 
 	if len(cfg.AllowedCIDRs) > 0 && !security.IPAllowed(r.RemoteAddr, cfg.AllowedCIDRs) {
 		reply(w, http.StatusBadRequest, nil, fmt.Errorf("allowed CIDRs would lock out the current client"))
@@ -536,6 +548,13 @@ func (s *Server) manage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var before *service.FirewallBackup
+	if operation != "status" {
+		s.configMu.Lock()
+		defer s.configMu.Unlock()
+		if !s.requireNoPendingRollback(w) {
+			return
+		}
+	}
 	if operation != "status" && operation != "install-ufw" {
 		snapshot, snapshotErr := s.Firewall.ExportBackup()
 		if snapshotErr != nil {

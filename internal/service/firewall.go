@@ -389,7 +389,25 @@ func loadManagedFirewallRules() ([]FirewallRule, error) {
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
 		return nil, err
 	}
+	if err := validateManualFirewallRules(out); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+func validateManualFirewallRules(rules []FirewallManualRule) error {
+	seen := make(map[string]bool, len(rules))
+	for _, rule := range rules {
+		if rule.Port < 1 || rule.Port > 65535 || (rule.Protocol != "tcp" && rule.Protocol != "udp") {
+			return fmt.Errorf("invalid manual firewall rule: %d/%s", rule.Port, rule.Protocol)
+		}
+		key := firewallRuleKey(rule.Port, rule.Protocol)
+		if seen[key] {
+			return fmt.Errorf("duplicate manual firewall rule: %s", key)
+		}
+		seen[key] = true
+	}
+	return nil
 }
 
 func loadManualFirewallRules() ([]FirewallManualRule, error) {

@@ -300,6 +300,11 @@ func (s *Server) historyRestore(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusServiceUnavailable, nil, fmt.Errorf("history is not configured"))
 		return
 	}
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	if !s.requireNoPendingRollback(w) {
+		return
+	}
 	item, ok, err := s.History.Get(req.ID)
 	if err != nil || !ok {
 		if err == nil {
@@ -333,6 +338,8 @@ func (s *Server) backup(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusMethodNotAllowed, nil, fmt.Errorf("method not allowed"))
 		return
 	}
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
 	fw, err := s.Firewall.ExportBackup()
 	if err != nil {
 		reply(w, http.StatusOK, nil, err)
@@ -374,7 +381,7 @@ func applyRuntimeBackup(cfg appconfig.Config, b runtimeBackup) appconfig.Config 
 	cfg.TLSCert = b.TLSCert
 	cfg.TLSKey = b.TLSKey
 	cfg.UpdateChannel = b.UpdateChannel
-	cfg.AllowedCIDRs = security.NormalizeCIDRs(b.AllowedCIDRs)
+	cfg.AllowedCIDRs = append([]string(nil), b.AllowedCIDRs...)
 	cfg.RollbackSeconds = b.RollbackSeconds
 	cfg.PortScanInterval = b.PortScanInterval
 	return cfg
@@ -397,6 +404,9 @@ func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
 
+	if !s.requireNoPendingRollback(w) {
+		return
+	}
 	before, err := s.Firewall.ExportBackup()
 	if err != nil {
 		reply(w, http.StatusOK, nil, err)
@@ -410,6 +420,7 @@ func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusBadRequest, nil, err)
 		return
 	}
+	nextCfg.AllowedCIDRs = security.NormalizeCIDRs(nextCfg.AllowedCIDRs)
 	if len(nextCfg.AllowedCIDRs) > 0 && !security.IPAllowed(r.RemoteAddr, nextCfg.AllowedCIDRs) {
 		reply(w, http.StatusBadRequest, nil, fmt.Errorf("backup would lock out the current client"))
 		return
@@ -453,6 +464,11 @@ func (s *Server) advancedRules(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusBadRequest, nil, err)
 		return
 	}
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	if !s.requireNoPendingRollback(w) {
+		return
+	}
 	before, err := s.Firewall.ExportBackup()
 	if err != nil {
 		reply(w, http.StatusOK, nil, err)
@@ -484,6 +500,11 @@ func (s *Server) deleteAdvancedRule(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decode(w, r, &req); err != nil {
 		reply(w, http.StatusBadRequest, nil, err)
+		return
+	}
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	if !s.requireNoPendingRollback(w) {
 		return
 	}
 	before, err := s.Firewall.ExportBackup()
@@ -548,6 +569,14 @@ func (s *Server) beginRollback(before service.FirewallBackup, reason string, r *
 	return s.beginRollbackWithConfig(before, appconfig.Config{}, reason, r)
 }
 
+func (s *Server) requireNoPendingRollback(w http.ResponseWriter) bool {
+	if s.Rollbacks != nil && s.Rollbacks.HasPending() {
+		reply(w, http.StatusConflict, nil, fmt.Errorf("Дождитесь подтверждения предыдущего изменения файрволла"))
+		return false
+	}
+	return true
+}
+
 func (s *Server) beginRollbackWithConfig(before service.FirewallBackup, oldCfg appconfig.Config, reason string, r *http.Request) (rollback.Pending, error) {
 	if s.Rollbacks == nil {
 		s.Rollbacks = rollback.NewManager()
@@ -563,11 +592,13 @@ func (s *Server) beginRollbackWithConfig(before service.FirewallBackup, oldCfg a
 		_ = s.History.Add(history.Snapshot{ID: token()[:16], Reason: reason, Backup: before})
 	}
 	pending, err := s.Rollbacks.Begin(before, time.Duration(seconds)*time.Second, func(snapshot service.FirewallBackup) {
+		s.configMu.Lock()
+		defer s.configMu.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
 		restoreErr := s.Firewall.RestoreBackup(ctx, snapshot, s.Port)
 		if oldCfg.ListenPort != 0 {
-			restoreErr = errors.Join(restoreErr, s.restoreRuntimeAfterRollback(oldCfg, expectedRuntime))
+			restoreErr = errors.Join(restoreErr, s.restoreRuntimeAfterRollbackLocked(oldCfg, expectedRuntime))
 		}
 		message := ""
 		if restoreErr != nil {
@@ -591,6 +622,10 @@ func (s *Server) beginRollbackWithConfig(before service.FirewallBackup, oldCfg a
 func (s *Server) restoreRuntimeAfterRollback(old appconfig.Config, expected runtimeBackup) error {
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
+	return s.restoreRuntimeAfterRollbackLocked(old, expected)
+}
+
+func (s *Server) restoreRuntimeAfterRollbackLocked(old appconfig.Config, expected runtimeBackup) error {
 	s.mu.Lock()
 	current := s.RuntimeConfig
 	s.mu.Unlock()

@@ -10,9 +10,11 @@ import (
 func findUFWManagedRuleNumber(status, comment, spec string) int {
 	for _, raw := range strings.Split(status, "\n") {
 		line := strings.TrimSpace(raw)
-		if !strings.HasPrefix(line, "[") || !strings.Contains(line, "# "+comment) {
+		before, foundComment, hasComment := strings.Cut(line, "#")
+		if !strings.HasPrefix(line, "[") || !hasComment || strings.TrimSpace(foundComment) != comment {
 			continue
 		}
+		line = strings.TrimSpace(before)
 		closeBracket := strings.Index(line, "]")
 		if closeBracket < 0 {
 			continue

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.1
+
+- Stop attaching the duplicate installer to releases; retain checksum manifests used by native and Compose updates.
+- Fix login locking, attempt-map limits, origin validation and validation of access restrictions.
+- Serialize firewall mutations and permit one pending/running rollback transaction at a time.
+- Validate firewall backups before changing state, reject unsafe/duplicate rule IDs and keep caller snapshots immutable.
+- Fix protocol-only nftables rules, firewalld priorities and exact UFW ownership matching, including cleanup compatibility.
+- Read Docker port ranges, validate mapping endpoints and recognize bindings to specific external IPs.
+- Handle null state/label maps, preserve UTF-8 labels and close port subscriptions after monitor shutdown.
+- Reject oversized or trailing update metadata and preserve separate rule labels/states in the interface.
+
 ## 1.3.0
 
 - Enlarge the shield favicon, fill it with visible masonry and keep the outside transparent.

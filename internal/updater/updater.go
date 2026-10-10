@@ -126,9 +126,19 @@ func (m *Manager) fetchManifest(ctx context.Context, channel string) (Manifest, 
 		return Manifest{}, fmt.Errorf("fetch update manifest: HTTP %s", resp.Status)
 	}
 	var manifest Manifest
-	decoder := json.NewDecoder(io.LimitReader(resp.Body, maxManifestSize))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxManifestSize+1))
+	if err != nil {
+		return Manifest{}, fmt.Errorf("read update manifest: %w", err)
+	}
+	if len(raw) > maxManifestSize {
+		return Manifest{}, errors.New("update manifest is too large")
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
 	if err := decoder.Decode(&manifest); err != nil {
 		return Manifest{}, fmt.Errorf("decode update manifest: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return Manifest{}, errors.New("update manifest must contain one JSON object")
 	}
 	if strings.TrimSpace(manifest.Version) == "" || strings.TrimSpace(manifest.Commit) == "" {
 		return Manifest{}, errors.New("update manifest is incomplete")

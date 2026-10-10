@@ -27,6 +27,9 @@ func (s *Server) setPortAccess(w http.ResponseWriter, r *http.Request) {
 	}
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
+	if !s.requireNoPendingRollback(w) {
+		return
+	}
 	before, err := s.Firewall.ExportBackup()
 	if err != nil {
 		reply(w, 200, nil, err)

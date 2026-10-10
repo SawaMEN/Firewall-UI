@@ -59,10 +59,10 @@ func Load(path string) (Config, error) {
 	if cfg.PortScanInterval == 0 {
 		cfg.PortScanInterval = 2
 	}
-	cfg.AllowedCIDRs = security.NormalizeCIDRs(cfg.AllowedCIDRs)
 	if err := Validate(cfg); err != nil {
 		return Config{}, err
 	}
+	cfg.AllowedCIDRs = security.NormalizeCIDRs(cfg.AllowedCIDRs)
 	// Remove retired integration credentials from existing installations.
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
@@ -77,10 +77,10 @@ func Load(path string) (Config, error) {
 }
 
 func Save(path string, cfg Config) error {
-	cfg.AllowedCIDRs = security.NormalizeCIDRs(cfg.AllowedCIDRs)
 	if err := Validate(cfg); err != nil {
 		return err
 	}
+	cfg.AllowedCIDRs = security.NormalizeCIDRs(cfg.AllowedCIDRs)
 	raw, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode config: %w", err)

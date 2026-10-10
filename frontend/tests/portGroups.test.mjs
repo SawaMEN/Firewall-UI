@@ -86,3 +86,11 @@ test('manual and advanced pairing preserves semantics and individual deletion id
   assert.equal(groups[0].rules[0], a);
   assert.equal(groups[0].rules[1], b);
 });
+
+test('non-service rules retain different labels and ownership states', () => {
+  const base = { port: 443, source: 'manual', label: 'one', protocol: 'tcp', exists: true, owned: true };
+  const rules = [base, { ...base, label: 'two' }, { ...base, owned: false }, { ...base, exists: false }];
+  const groups = groupFirewallRules(rules, new Set());
+  assert.equal(groups.length, 4);
+  assert.ok(groups.every(group => group.rules.length === 1));
+});

@@ -41,7 +41,7 @@ func (s *FirewallService) CleanupOwnedRules(ctx context.Context) error {
 			return err
 		}
 		for _, rule := range advanced {
-			if err := removeFirewalldRichRule(ctx, backend, firewalldRichRule(rule)); err != nil {
+			if err := removeFirewalldAdvancedRule(ctx, backend, rule); err != nil {
 				return err
 			}
 		}
@@ -159,9 +159,7 @@ func ownedUFWDeleteArgs(line string) []string {
 	owned := comment == "Firewall-UI managed" || comment == "Firewall-UI access"
 	if strings.HasPrefix(comment, "Firewall-UI advanced ") {
 		id := strings.TrimPrefix(comment, "Firewall-UI advanced ")
-		owned = id != "" && strings.IndexFunc(id, func(r rune) bool {
-			return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-')
-		}) == -1
+		owned = ruleIDPattern.MatchString(id)
 	}
 	fields := strings.Fields(before)
 	if !owned || len(fields) < 3 || fields[0] != "ufw" || (fields[1] != "allow" && fields[1] != "deny" && fields[1] != "reject" && fields[1] != "limit") {

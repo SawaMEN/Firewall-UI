@@ -17,6 +17,7 @@ import (
 const firewallAdvancedRulesKey = "firewallAdvancedRules"
 
 var interfacePattern = regexp.MustCompile(`^[A-Za-z0-9_.:@-]{1,32}$`)
+var ruleIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 type FirewallAdvancedRule struct {
 	ID         string `json:"id"`
@@ -52,6 +53,11 @@ func (s *FirewallService) AddAdvancedRuleSafe(ctx context.Context, rule Firewall
 	rules, err := loadAdvancedFirewallRules()
 	if err != nil {
 		return nil, err
+	}
+	for _, existing := range rules {
+		if existing.ID == rule.ID {
+			return nil, errors.New("advanced rule ID already exists")
+		}
 	}
 	rules = append(rules, rule)
 	sortAdvancedRules(rules)
@@ -114,6 +120,9 @@ func loadAdvancedFirewallRules() ([]FirewallAdvancedRule, error) {
 }
 
 func validateAdvancedRule(rule *FirewallAdvancedRule) error {
+	if rule.ID != "" && !ruleIDPattern.MatchString(rule.ID) {
+		return errors.New("invalid advanced rule ID")
+	}
 	rule.Action = strings.ToLower(strings.TrimSpace(rule.Action))
 	rule.Protocol = strings.ToLower(strings.TrimSpace(rule.Protocol))
 	rule.SourceCIDR = strings.TrimSpace(rule.SourceCIDR)
@@ -264,8 +273,8 @@ func advancedNFTExpression(rule FirewallAdvancedRule) string {
 		parts = append(parts, family+" saddr "+rule.SourceCIDR)
 	}
 	if rule.Protocol == "tcp" || rule.Protocol == "udp" {
-		parts = append(parts, rule.Protocol)
 		if rule.PortStart > 0 {
+			parts = append(parts, rule.Protocol)
 			ports := advancedPortExpression(rule, "-")
 			if rule.PortEnd > rule.PortStart {
 				ports = rule.Protocol + " dport " + strconv.Itoa(rule.PortStart) + "-" + strconv.Itoa(rule.PortEnd)
@@ -273,6 +282,8 @@ func advancedNFTExpression(rule FirewallAdvancedRule) string {
 			} else {
 				parts = append(parts, "dport "+ports)
 			}
+		} else {
+			parts = append(parts, "meta l4proto "+rule.Protocol)
 		}
 	}
 	verdict := "accept"
@@ -358,12 +369,16 @@ func applySystemAdvancedRule(ctx context.Context, backend firewallBackend, rule 
 	}
 	rich := firewalldRichRule(rule)
 	if !add {
-		return removeFirewalldRichRule(ctx, backend, rich)
+		return removeFirewalldAdvancedRule(ctx, backend, rule)
+	}
+	if rule.Priority != 0 && !isClosePortRule(rule) {
+		old := rule
+		old.Priority = 0
+		if err := removeFirewalldRichRule(ctx, backend, firewalldRichRule(old)); err != nil {
+			return err
+		}
 	}
 	flag := "--add-rich-rule=" + rich
-	if !add {
-		flag = "--remove-rich-rule=" + rich
-	}
 	on, _ := backend.enabled(ctx)
 	if on {
 		if _, err := runFirewallCommand(ctx, backend.binary, "--permanent", "--zone="+backend.zone, flag); err != nil {
@@ -379,10 +394,24 @@ func applySystemAdvancedRule(ctx context.Context, backend firewallBackend, rule 
 	return err
 }
 
+func removeFirewalldAdvancedRule(ctx context.Context, backend firewallBackend, rule FirewallAdvancedRule) error {
+	if err := removeFirewalldRichRule(ctx, backend, firewalldRichRule(rule)); err != nil {
+		return err
+	}
+	// Versions through 1.3.0 saved Priority but omitted it from firewalld rules.
+	if rule.Priority != 0 && !isClosePortRule(rule) {
+		rule.Priority = 0
+		return removeFirewalldRichRule(ctx, backend, firewalldRichRule(rule))
+	}
+	return nil
+}
+
 func firewalldRichRule(rule FirewallAdvancedRule) string {
 	parts := []string{"rule"}
 	if isClosePortRule(rule) {
 		parts = append(parts, `priority="-1000"`)
+	} else if rule.Priority != 0 {
+		parts = append(parts, fmt.Sprintf(`priority="%d"`, rule.Priority))
 	}
 	if rule.IPVersion == "ipv4" {
 		parts = append(parts, `family="ipv4"`)

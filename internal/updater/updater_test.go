@@ -1,6 +1,11 @@
 package updater
 
 import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
 	"runtime"
 	"testing"
 
@@ -82,6 +87,26 @@ func TestValidateAsset(t *testing.T) {
 		invalid.URL = url
 		if err := validateAsset(invalid); err == nil {
 			t.Fatalf("accepted unexpected asset: %s", url)
+		}
+	}
+}
+
+type manifestTransport func(*http.Request) (*http.Response, error)
+
+func (f manifestTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestManifestRejectsTrailingAndOversizedData(t *testing.T) {
+	manifest := Manifest{Version: "1.3.1", Commit: "abc", Channel: "stable", Assets: map[string]Asset{
+		runtime.GOARCH: {URL: "https://github.com/SawaMEN/Firewall-UI/releases/download/v1.3.1/firewall-ui-linux-" + runtime.GOARCH, SHA256: strings.Repeat("a", 64)},
+	}}
+	raw, _ := json.Marshal(manifest)
+	for _, suffix := range []string{" {}", " garbage", strings.Repeat(" ", maxManifestSize)} {
+		m := New(nil)
+		m.client.Transport = manifestTransport(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(raw) + suffix))}, nil
+		})
+		if _, err := m.fetchManifest(context.Background(), "stable"); err == nil {
+			t.Fatal("accepted trailing or oversized manifest data")
 		}
 	}
 }

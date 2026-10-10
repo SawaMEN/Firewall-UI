@@ -46,6 +46,7 @@ func ReadContainerPorts(ctx context.Context) []ContainerPort {
 			continue
 		}
 		scanner := bufio.NewScanner(strings.NewReader(string(raw)))
+		scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 		for scanner.Scan() {
 			var row containerPSRow
 			if json.Unmarshal(scanner.Bytes(), &row) != nil {
@@ -81,8 +82,8 @@ func parseContainerPorts(runtime string, row containerPSRow) []ContainerPort {
 			proto = strings.ToLower(strings.TrimSpace(right[slash+1:]))
 			right = right[:slash]
 		}
-		containerPort, err := strconv.Atoi(strings.TrimSpace(right))
-		if err != nil {
+		containerStart, containerEnd, ok := containerPortRange(right)
+		if !ok || (proto != "tcp" && proto != "udp" && proto != "sctp") {
 			continue
 		}
 
@@ -95,22 +96,47 @@ func parseContainerPorts(runtime string, row containerPSRow) []ContainerPort {
 			}
 		}
 		host = strings.Trim(strings.TrimSpace(host), "[]")
-		hostPort, err := strconv.Atoi(strings.TrimSpace(portText))
-		if err != nil || hostPort < 1 || hostPort > 65535 {
+		hostStart, hostEnd, ok := containerPortRange(portText)
+		if !ok || hostEnd-hostStart != containerEnd-containerStart {
 			continue
 		}
-		public := host == "" || host == "0.0.0.0" || host == "::"
-		out = append(out, ContainerPort{
-			Runtime:       runtime,
-			ContainerID:   row.ID,
-			ContainerName: row.Names,
-			Image:         row.Image,
-			HostIP:        host,
-			HostPort:      hostPort,
-			ContainerPort: containerPort,
-			Protocol:      proto,
-			Public:        public,
-		})
+		ip := net.ParseIP(host)
+		if host != "" && ip == nil {
+			continue
+		}
+		public := host == "" || !ip.IsLoopback()
+		for port := hostStart; port <= hostEnd; port++ {
+			out = append(out, ContainerPort{
+				Runtime:       runtime,
+				ContainerID:   row.ID,
+				ContainerName: row.Names,
+				Image:         row.Image,
+				HostIP:        host,
+				HostPort:      port,
+				ContainerPort: containerStart + port - hostStart,
+				Protocol:      proto,
+				Public:        public,
+			})
+		}
 	}
 	return out
+}
+
+func containerPortRange(value string) (int, int, bool) {
+	parts := strings.Split(strings.TrimSpace(value), "-")
+	if len(parts) < 1 || len(parts) > 2 {
+		return 0, 0, false
+	}
+	start, err := strconv.Atoi(parts[0])
+	if err != nil || start < 1 || start > 65535 {
+		return 0, 0, false
+	}
+	end := start
+	if len(parts) == 2 {
+		end, err = strconv.Atoi(parts[1])
+		if err != nil || end < start || end > 65535 {
+			return 0, 0, false
+		}
+	}
+	return start, end, true
 }

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -69,10 +70,25 @@ func (s *FirewallService) RestoreBackup(ctx context.Context, backup FirewallBack
 	if backup.Version != 1 {
 		return fmt.Errorf("unsupported firewall backup version %d", backup.Version)
 	}
+	// Validate a private copy before touching either saved state or live rules.
+	backup.ManualRules = append([]FirewallManualRule(nil), backup.ManualRules...)
+	backup.AdvancedRules = append([]FirewallAdvancedRule(nil), backup.AdvancedRules...)
+	if err := validateManualFirewallRules(backup.ManualRules); err != nil {
+		return err
+	}
+	ids := make(map[string]bool, len(backup.AdvancedRules))
 	for i := range backup.AdvancedRules {
 		if err := validateAdvancedRule(&backup.AdvancedRules[i]); err != nil {
 			return fmt.Errorf("advanced rule %d: %w", i+1, err)
 		}
+		rule := &backup.AdvancedRules[i]
+		if rule.ID == "" || ids[rule.ID] {
+			return fmt.Errorf("advanced rule %d: missing or duplicate ID", i+1)
+		}
+		if strings.HasPrefix(rule.ID, "close-port-") && !isClosePortRule(*rule) {
+			return fmt.Errorf("advanced rule %d: invalid reserved port rule", i+1)
+		}
+		ids[rule.ID] = true
 	}
 	currentAdvanced, err := loadAdvancedFirewallRules()
 	if err != nil {
