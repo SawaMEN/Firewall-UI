@@ -13,7 +13,7 @@ prepare() {
       pkg_install curl ca-certificates openssl python systemd ufw
       ;;
     debian|ubuntu) pkg_install curl ca-certificates openssl python3 systemd systemd-sysv ufw;;
-    fedora) pkg_install curl-minimal ca-certificates openssl python3 systemd ufw;;
+    fedora) pkg_install curl-minimal ca-certificates openssl python3 systemd firewalld;;
     opensuse-leap|opensuse-tumbleweed) pkg_install curl ca-certificates openssl python3 systemd firewalld;;
     *) echo "Unknown CI distribution: $ID" >&2; return 1;;
   esac
@@ -24,7 +24,7 @@ prepare() {
 verify() {
   local expected=ufw
   source /etc/os-release
-  if [[ "$ID" == opensuse-* ]]; then
+  if [[ "$ID" == fedora || "$ID" == opensuse-* ]]; then
     expected=firewalld
     systemctl start firewalld
   fi
