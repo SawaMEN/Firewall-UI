@@ -3,6 +3,8 @@ set -Eeuo pipefail
 TASK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FIXTURE="$(mktemp -d)"; trap 'rm -rf -- "$FIXTURE"' EXIT
 source "$TASK_ROOT/deploy/firewall-ui-docker"
+# systemd's stable/dev argument must reach the guarded handler.
+grep -Fq 'auto-update) docker_auto_update "${2:-}"' "$TASK_ROOT/deploy/firewall-ui-docker"
 DOCKER_DIR="$FIXTURE/panel"; DOCKER_MANAGER="$FIXTURE/manager"
 SYSTEMD_DIR="$FIXTURE/systemd"
 mkdir -p "$DOCKER_DIR/source" "$SYSTEMD_DIR"
