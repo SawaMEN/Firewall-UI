@@ -126,6 +126,9 @@ func (s *FirewallService) StartAutoSync() {
 				if err := s.reconcileManagedPingStateLocked(on); err != nil {
 					log.Print("firewall ping reconcile failed:", err)
 				}
+				if err := s.syncContainerProtectionLocked(ctx); err != nil {
+					log.Print("container forward reconcile failed: ", err)
+				}
 				if !on {
 					return
 				}

@@ -449,7 +449,7 @@ func applyManagedNftables(ctx context.Context, binary string, rules []FirewallRu
 			return
 		}
 		parts := strings.SplitN(spec, "/", 2)
-		script.WriteString("  " + parts[1] + " dport " + nftPortExpression(rule) + " accept\n")
+		script.WriteString("  " + parts[1] + " dport " + nftPortExpression(rule) + " counter accept comment \"fwui-managed:" + spec + "\"\n")
 	}
 	for _, rule := range rules {
 		if isFirewallSafetyRule(rule) {
@@ -463,6 +463,11 @@ func applyManagedNftables(ctx context.Context, binary string, rules []FirewallRu
 	for _, rule := range advanced {
 		expression := strings.TrimSpace(advancedNFTExpression(rule))
 		if expression != "" {
+			verdict := "accept"
+			if rule.Action == "deny" { verdict = "drop" }
+			if strings.HasSuffix(expression, " " + verdict) {
+				expression = strings.TrimSuffix(expression, " " + verdict) + " counter " + verdict + " comment \"fwui-advanced:" + rule.ID + "\""
+			}
 			script.WriteString("  " + expression + "\n")
 		}
 	}

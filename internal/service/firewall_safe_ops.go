@@ -48,7 +48,11 @@ func appendFrozenInboundRules(desired, managed []FirewallRule) []FirewallRule {
 	return out
 }
 
-func (s *FirewallService) syncManagedSafeLocked(ctx context.Context, backend firewallBackend, safetyPort int) error {
+func (s *FirewallService) syncManagedSafeLocked(ctx context.Context, backend firewallBackend, safetyPort int) (err error) {
+	// Keep the DNAT/FORWARD container policy synchronized with managed ports.
+	defer func() {
+		if err == nil { err = s.syncContainerProtectionLocked(ctx) }
+	}()
 	if backend.name != "nftables" && backend.name != "iptables" {
 		return s.syncManagedLocked(ctx, backend, safetyPort)
 	}

@@ -358,6 +358,11 @@ func detectFirewallBackend(ctx context.Context) (firewallBackend, error) {
 				b.zone = strings.TrimSpace(out)
 			}
 		}
+		if preferred, zoneErr := configuredFirewalldZone(); zoneErr != nil {
+			return firewallBackend{}, zoneErr
+		} else if preferred != "" {
+			b.zone = preferred
+		}
 		candidates = append(candidates, b)
 	}
 	for _, b := range candidates {
