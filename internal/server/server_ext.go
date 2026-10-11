@@ -81,6 +81,16 @@ func (s *Server) handleExtendedAPI(w http.ResponseWriter, r *http.Request) bool 
 		s.restoreBackup(w, r)
 	case "/api/firewall/advanced":
 		s.advancedRules(w, r)
+	case "/api/firewall/zones":
+		s.firewallZones(w, r)
+	case "/api/firewall/containers":
+		s.firewallContainers(w, r)
+	case "/api/firewall/analyze":
+		s.firewallAnalysis(w, r)
+	case "/api/firewall/inspect":
+		s.firewallInspect(w, r)
+	case "/api/firewall/traffic":
+		s.firewallTraffic(w, r)
 	case "/api/firewall/advanced/delete":
 		s.deleteAdvancedRule(w, r)
 	case "/api/firewall/rollback/confirm":

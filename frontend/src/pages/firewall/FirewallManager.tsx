@@ -19,6 +19,7 @@ import { useTranslation } from 'react-i18next';
 import { HttpUtil } from '@/utils';
 import { formatProtocols, groupFirewallRules } from './portGroups';
 import { ProtocolRulesTable } from './ProtocolRulesTable';
+import FirewallDiagnostics from './FirewallDiagnostics';
 import type { ColumnsType } from 'antd/es/table';
 
 type FirewallRule = {
@@ -774,6 +775,7 @@ export function FirewallManager() {
           ]}
         />
       </Card>
+      <FirewallDiagnostics backend={status.backend} enabled={status.enabled} ru={ru} onReload={() => { void load(); }} />
     </Space>
   );
 }

@@ -53,9 +53,11 @@ func (s *FirewallService) CleanupOwnedRules(ctx context.Context) error {
 		if err != nil && !unsupportedFirewallKernel(err) {
 			return err
 		}
-		if err == nil && firewallOutputHasFields(tables, "table", "inet", managedNftTable) {
-			if _, err := runFirewallCommand(ctx, binary, "delete", "table", "inet", managedNftTable); err != nil {
-				return err
+		for _, table := range []string{containerNFTTable, managedNftTable} {
+			if err == nil && firewallOutputHasFields(tables, "table", "inet", table) {
+				if _, err := runFirewallCommand(ctx, binary, "delete", "table", "inet", table); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -96,6 +98,9 @@ func (s *FirewallService) CleanupOwnedRules(ctx context.Context) error {
 	if _, err := os.Stat(statePath); errors.Is(err, os.ErrNotExist) {
 		return nil
 	} else if err != nil {
+		return err
+	}
+	if err := (&SettingService{}).setBool(containerProtectionKey, false); err != nil {
 		return err
 	}
 	if err := (&SettingService{}).setBool(firewallPingEnabledKey, true); err != nil {

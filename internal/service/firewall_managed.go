@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -449,7 +450,7 @@ func applyManagedNftables(ctx context.Context, binary string, rules []FirewallRu
 			return
 		}
 		parts := strings.SplitN(spec, "/", 2)
-		script.WriteString("  " + parts[1] + " dport " + nftPortExpression(rule) + " accept\n")
+		script.WriteString("  " + parts[1] + " dport " + nftPortExpression(rule) + " counter accept comment \"fwui-managed:" + spec + "\"\n")
 	}
 	for _, rule := range rules {
 		if isFirewallSafetyRule(rule) {
@@ -463,6 +464,13 @@ func applyManagedNftables(ctx context.Context, binary string, rules []FirewallRu
 	for _, rule := range advanced {
 		expression := strings.TrimSpace(advancedNFTExpression(rule))
 		if expression != "" {
+			verdict := "accept"
+			if rule.Action == "deny" {
+				verdict = "drop"
+			}
+			if strings.HasSuffix(expression, " "+verdict) {
+				expression = strings.TrimSuffix(expression, " "+verdict) + " counter " + verdict + " comment \"fwui-advanced:" + rule.ID + "\""
+			}
 			script.WriteString("  " + expression + "\n")
 		}
 	}
@@ -472,12 +480,22 @@ func applyManagedNftables(ctx context.Context, binary string, rules []FirewallRu
 		}
 	}
 	script.WriteString(" }\n}\n")
+	policy := script.String()
+	policy = strings.TrimPrefix(policy, "delete table inet "+managedNftTable+"\n")
+	desiredHash := sha256.Sum256([]byte(policy))
+	if exists && desiredHash == managedNFTDesiredHash && managedNFTObservedHash != ([32]byte{}) {
+		if currentHash, checkErr := currentManagedNFTFingerprint(ctx, binary); checkErr == nil && currentHash == managedNFTObservedHash {
+			return nil
+		}
+	}
 	cmd := firewallCommand(ctx, binary, "-f", "-")
 	cmd.Stdin = strings.NewReader(script.String())
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("apply nftables firewall: %w: %s", err, strings.TrimSpace(string(out)))
 	}
+	managedNFTDesiredHash = desiredHash
+	managedNFTObservedHash, _ = currentManagedNFTFingerprint(ctx, binary)
 	return nil
 }
 
