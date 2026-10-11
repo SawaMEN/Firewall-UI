@@ -16,6 +16,7 @@ mkdir -p "$FIXTURE/volume"
 # No real Docker, firewall, package or service operations are permitted here.
 docker_require_engine() { :; }
 docker_prepare_host_firewall() { :; }
+docker_panel_ready() { return 0; }
 docker_setup_updates() { :; }
 docker_download_image() { printf 'download image\n' >> "$FIXTURE/commands"; return "${MOCK_IMAGE_RESULT:-0}"; }
 systemctl() { return 1; }
@@ -212,6 +213,8 @@ echo 'Failed Docker startup and runtime rollback/retry passed'
  cert="$(docker_read_setting FIREWALL_UI_TLS_CERT '')"
  openssl x509 -in "${cert/#\/etc\/firewall-ui/$DOCKER_CONFIG_DIR}" -noout -checkhost panel.example.com
  [[ "$(docker_read_setting FIREWALL_UI_PUBLIC_HOST '')" == panel.example.com ]]
+ # Access display uses the actual configuration, not wizard metadata.
+ printf '{"listenHost":"0.0.0.0","listenPort":9443,"publicHost":"panel.example.com","tlsCert":"/etc/firewall-ui/cert.pem"}\n' > "$DOCKER_CONFIG_DIR/config.json"
  [[ "$(docker_show_access)" == *https://panel.example.com:9443/* ]]
  : > "$FIXTURE/commands"
  docker_apply_runtime_settings

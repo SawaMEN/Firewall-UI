@@ -583,30 +583,46 @@ installer_config_value() {
   sed -n "s/.*\"$2\":[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$1" 2>/dev/null | head -n 1
 }
 
+# Probe the local listener rather than a public IP (which may require NAT hairpin).
+installer_panel_ready() {
+  local config="$1" host port scheme=http body code
+  [[ -r "$config" ]] || return 1
+  host="$(installer_config_value "$config" listenHost)"
+  port="$(sed -n 's/.*"listenPort":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$config" | head -n 1)"
+  [[ "$port" =~ ^[0-9]+$ && -n "$host" ]] || return 1
+  case "$host" in 0.0.0.0) host=127.0.0.1;; ::) host=::1;; esac
+  [[ "$host" != *:* ]] || host="[$host]"
+  [[ -z "$(installer_config_value "$config" tlsCert)" ]] || scheme=https
+  body="$(curl --noproxy '*' -ksS -w $'\n%{http_code}' --connect-timeout 1 --max-time 2 --max-filesize 4096 "$scheme://$host:$port/api/health" 2>/dev/null)" || return 1
+  code="${body##*$'\n'}"; body="${body%$'\n'*}"; body="${body%$'\n'}"
+  # IP restrictions may intentionally deny the local health request.
+  [[ "$code" == 403 && "$body" == 'access denied' ]] ||
+    [[ "$code" == 200 && "$body" =~ \"success\":[[:space:]]*true && "$body" == *'"version"'* ]]
+}
+
+installer_panel_address() {
+  local config="$1" label="$2" host bind port cert scheme=http
+  [[ -r "$config" ]] || return 1
+  bind="$(installer_config_value "$config" listenHost)"
+  host="$(installer_config_value "$config" publicHost)"
+  [[ -n "$host" ]] || host="$bind"
+  port="$(sed -n 's/.*"listenPort":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$config" | head -n 1)"
+  cert="$(installer_config_value "$config" tlsCert)"; [[ -z "$cert" ]] || scheme=https
+  case "$host" in 0.0.0.0|::|'') host='<IP-сервера>';; *:*) host="[$host]";; esac
+  printf '%s: %s://%s:%s/\n' "$label" "$scheme" "$host" "$port"
+  printf 'Слушает: %s:%s\n' "$bind" "$port"
+  case "$bind" in 127.*|::1|localhost) echo 'Доступ только с сервера. Для внешнего доступа выберите домен или IP в настройках адреса.';; esac
+}
+
 installer_connection_info() {
-  local config="$CONFIG_DIR/config.json" host port cert scheme=http docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui}"
+  local docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui}" config
   [[ -f "$docker_dir/docker.env" ]] || docker_dir="${FIREWALL_UI_LEGACY_DOCKER_DIR:-/opt/firewall-ui-docker}"
-  if [[ -f "$config" ]]; then
-    host="$(installer_config_value "$config" publicHost)"
-    [[ -n "$host" ]] || host="$(installer_config_value "$config" listenHost)"
-    port="$(sed -n 's/.*"listenPort":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$config" | head -n 1)"
-    cert="$(installer_config_value "$config" tlsCert)"; [[ -z "$cert" ]] || scheme=https
-    case "$host" in 0.0.0.0|::|'') host='<IP-сервера>';; *:*) host="[$host]";; esac
-    printf 'Обычная панель: %s://%s:%s\n' "$scheme" "$host" "$port"
-    [[ -z "$cert" ]] || printf 'Сертификат: %s\n' "$cert"
-  fi
   if [[ -f "$docker_dir/docker.env" ]]; then
-    host="$(sed -n 's/^FIREWALL_UI_DOCKER_HOST=//p' "$docker_dir/docker.env" | head -n 1)"
-    port="$(sed -n 's/^FIREWALL_UI_DOCKER_PORT=//p' "$docker_dir/docker.env" | head -n 1)"
-    [[ "$host" != 0.0.0.0 ]] || host='<IP-сервера>'
-    local public_host docker_cert docker_scheme=http
-    public_host="$(sed -n 's/^FIREWALL_UI_PUBLIC_HOST=//p' "$docker_dir/docker.env" | head -n 1)"
-    docker_cert="$(sed -n 's/^FIREWALL_UI_TLS_CERT=//p' "$docker_dir/docker.env" | head -n 1)"
-    [[ -z "$public_host" ]] || host="$public_host"
-    [[ "$host" != *:* ]] || host="[$host]"
-    [[ -z "$docker_cert" ]] || docker_scheme=https
-    printf 'Docker: %s://%s:%s/ (параметры установщика)\n' "$docker_scheme" "$host" "$port"
-    echo 'Адрес и HTTPS, изменённые в веб-панели, проверяйте в её настройках.'
+    config="${FIREWALL_UI_CONFIG_DIR:-/etc/firewall-ui}/config.json"
+    [[ "$docker_dir" != "${FIREWALL_UI_LEGACY_DOCKER_DIR:-/opt/firewall-ui-docker}" ]] || config="$docker_dir/access/config.json"
+    installer_panel_address "$config" Docker || echo 'Docker: конфигурация недоступна; проверьте Диагностику и журнал.'
+  elif [[ -f "$CONFIG_DIR/config.json" ]]; then
+    installer_panel_address "$CONFIG_DIR/config.json" 'Обычная панель'
   fi
 }
 
@@ -618,7 +634,9 @@ installer_diagnostics() {
     docker version --format 'Docker Engine: {{.Server.Version}}' 2>/dev/null || echo 'Docker Engine недоступен.'
     docker compose version 2>/dev/null || echo 'Docker Compose недоступен.'
   fi
-  echo 'При проблемах с подключением проверьте порт в файрволле хостинга.'
+  installer_connection_info
+  if command -v ss >/dev/null 2>&1; then ss -ltnp; fi
+  echo 'Если панель отвечает локально, проверьте правила доступа на сервере и файрволл хостинга.'
 }
 
 installer_install_target() {
@@ -702,7 +720,12 @@ installer_status() {
     compose='установлен, остановлен'
     if command -v docker >/dev/null 2>&1; then
       state="$(docker ps --filter "label=com.docker.compose.project=${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}" --filter label=com.docker.compose.service=firewall-ui --filter status=running --format '{{.Names}}' 2>/dev/null)" || true
-      [[ -z "$state" ]] || compose='установлен, запущен'
+      if [[ -n "$state" ]]; then
+        local docker_config="${FIREWALL_UI_CONFIG_DIR:-/etc/firewall-ui}/config.json"
+        [[ ! -f "${FIREWALL_UI_LEGACY_DOCKER_DIR:-/opt/firewall-ui-docker}/docker.env" || -f "${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui}/docker.env" ]] || docker_config="${FIREWALL_UI_LEGACY_DOCKER_DIR:-/opt/firewall-ui-docker}/access/config.json"
+        compose='контейнер запущен, веб-панель не отвечает'
+        if installer_panel_ready "$docker_config"; then compose='установлен, веб-панель отвечает локально'; fi
+      fi
     fi
   fi
   printf 'Обычная установка: %s\nDocker Compose: %s\n' "$native" "$compose"

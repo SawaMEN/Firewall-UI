@@ -285,28 +285,31 @@ docker_runtime_backup() {
   ' sh "$action"
 }
 
+docker_panel_ready() (
+  source "$DOCKER_DIR/source/install.sh"
+  installer_panel_ready "$DOCKER_CONFIG_DIR/config.json"
+)
+
 docker_wait_for_service() {
   local cid attempt stable=0
   cid="$(docker_compose ps -q firewall-ui)"
   [[ -n "$cid" ]] || return 1
   for attempt in {1..15}; do
-    if [[ "$(docker inspect --format '{{.State.Running}} {{.State.Restarting}}' "$cid")" == 'true false' ]]; then
+    if [[ "$(docker inspect --format '{{.State.Running}} {{.State.Restarting}}' "$cid")" == 'true false' ]] && docker_panel_ready; then
       stable=$((stable+1)); ((stable < 3)) || return 0
     else stable=0; fi
     sleep 1
   done
+  echo 'Контейнер не прошёл проверку /api/health. Проверьте адрес прослушивания, порт и сертификат в конфигурации.' >&2
   docker_compose logs --tail 30
   return 1
 }
 
 docker_show_access() {
-  local host port scheme=http
-  port="$(docker_read_setting FIREWALL_UI_DOCKER_PORT 8088)"
-  host="$(docker_read_setting FIREWALL_UI_PUBLIC_HOST "$(docker_read_setting FIREWALL_UI_DOCKER_HOST 127.0.0.1)")"
-  [[ "$host" != 0.0.0.0 && "$host" != :: ]] || host='<IP-сервера>'
-  [[ "$host" != *:* ]] || host="[$host]"
-  [[ -z "$(docker_read_setting FIREWALL_UI_TLS_CERT '')" ]] || scheme=https
-  echo "Панель: $scheme://$host:$port/"
+  (
+    source "$DOCKER_DIR/source/install.sh"
+    installer_panel_address "$DOCKER_CONFIG_DIR/config.json" Панель || echo 'Адрес панели недоступен: конфигурация не найдена.'
+  )
   echo "Управление: fw-ui; конфигурация — $DOCKER_CONFIG_DIR, данные — $DOCKER_STATE_DIR."
   if [[ "$(docker_read_auto_update)" == 1 ]]; then echo "Автообновление Docker: включено, канал $(docker_update_channel), каждый час без подтверждения."; else echo 'Автообновление Docker: отключено.'; fi
 }

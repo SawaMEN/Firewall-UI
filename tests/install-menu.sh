@@ -138,6 +138,7 @@ select_installer_action > /dev/null
 [[ "$(awk '/Установка и обслуживание/ {n++} END {print n}' "$FIXTURE/failed-menu")" == 2 ]]
 # Addresses format IPv6 correctly, and no credential file is displayed.
 mkdir -p "$CONFIG_DIR"
+rm -f "$FIREWALL_UI_DOCKER_DIR/docker.env"
 printf '{"publicHost":"2001:db8::1","listenPort":8443,"tlsCert":"/etc/firewall-ui/cert.pem"}\n' > "$CONFIG_DIR/config.json"
 printf 'SECRET-PASSWORD' > "$CONFIG_DIR/environment"
 installer_connection_info > "$FIXTURE/connection"
