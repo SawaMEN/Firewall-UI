@@ -848,6 +848,14 @@ run_installer_docker_action() (
     fetch_repo_file deploy/firewall-ui-docker "$stage/docker-manager" || {
       [[ -x "$installed" ]] && cp "$installed" "$stage/docker-manager" || return 1
     }
+    # During a branch rollout, main may still ship an older cleanup helper.
+    # Prefer a newer installed helper if the fetched version cannot remove
+    # the separate dev timer created by that installation.
+    if [[ -x "$installed" ]] &&
+       grep -Fq 'firewall-ui-docker-dev-update' "$installed" &&
+       ! grep -Fq 'firewall-ui-docker-dev-update' "$stage/docker-manager"; then
+      cp "$installed" "$stage/docker-manager"
+    fi
   elif [[ "$1" != install && -x "$installed" ]]; then cp "$installed" "$stage/docker-manager"
   else
     command -v curl >/dev/null || pkg_install curl ca-certificates
