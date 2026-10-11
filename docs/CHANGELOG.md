@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.7
+
+- Restore the password prompt with Enter-to-generate behavior for native and Docker installations.
+- Generate a 10-character alphanumeric password when an installation or password reset leaves it blank.
+- Offer optional hourly automatic updates for the stable Docker channel; automatically check and install dev builds every 30 minutes without prompts.
+- Keep channel-specific Docker update timers and switch correctly when the channel changes in the web panel.
+- Route manual Docker updates to the selected channel and suppress dev update confirmation banners.
+- Clean up or restore both update timers during Docker removal and migration; extend regression and CI coverage.
+
 ## 1.3.6
 
 - Recover failed firewall transactions with independent cleanup timeouts and report restoration errors.
