@@ -49,7 +49,13 @@ if os.environ.get("FIREWALL_UI_TEST_UPDATES") == "1":
     request = Request(base + "/api/update/status", headers={"Cookie": session})
     with urlopen(request, timeout=30, context=context) as response:
         update = json.load(response)
-    assert update["success"], update.get("msg")
+    # A fresh stable release has no public update.json until both CI builds
+    # finish and the publishing workflow creates it. Verify local wiring even
+    # when the upstream release manifest has not yet been published.
+    if not update["success"]:
+        assert update.get("msg", "").startswith(
+            "fetch update manifest: HTTP 404"
+        ), update
     assert update["obj"]["docker"] and not update["obj"].get("manualInstall", False), update
     assert not update["obj"].get("automatic", False), update
-    print("Docker update endpoint is configured and the host update service is available")
+    print("Docker update endpoint and host update service are configured")
