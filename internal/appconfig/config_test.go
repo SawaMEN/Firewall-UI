@@ -200,3 +200,30 @@ func TestLoadRejectsNullConfiguration(t *testing.T) {
 		t.Fatal("invalid configuration was rewritten")
 	}
 }
+
+func TestRemovedCertificateCanBeReplacedBeforeValidation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	cfg := Default()
+	cfg.TLSCert = filepath.Join(dir, "gone.pem")
+	cfg.TLSKey = filepath.Join(dir, "gone.key")
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("startup accepted missing certificate")
+	}
+	editable, err := LoadForEdit(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	editable.TLSCert = ""
+	editable.TLSKey = ""
+	if err := Save(path, editable); err != nil {
+		t.Fatal("cannot clear broken certificate", err)
+	}
+}

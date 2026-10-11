@@ -49,7 +49,20 @@ func (s *Server) credentials(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	escape := func(v string) string { return strings.NewReplacer("\\", "\\\\", "\"", "\\\"").Replace(v) }
-	raw := fmt.Sprintf("FIREWALL_UI_USERNAME=\"%s\"\nFIREWALL_UI_PASSWORD=\"%s\"\n", escape(req.Username), escape(req.Password))
+	previous, err := os.ReadFile(envPath)
+	if err != nil && !os.IsNotExist(err) {
+		reply(w, 500, nil, err)
+		return
+	}
+	var retained strings.Builder
+	for _, line := range strings.Split(string(previous), "\n") {
+		key, _, _ := strings.Cut(strings.TrimSpace(line), "=")
+		if key == "FIREWALL_UI_USERNAME" || key == "FIREWALL_UI_PASSWORD" || line == "" {
+			continue
+		}
+		retained.WriteString(line + "\n")
+	}
+	raw := retained.String() + fmt.Sprintf("FIREWALL_UI_USERNAME=\"%s\"\nFIREWALL_UI_PASSWORD=\"%s\"\n", escape(req.Username), escape(req.Password))
 	if err := writeCredentialFile(envPath, []byte(raw)); err != nil {
 		reply(w, 500, nil, err)
 		return

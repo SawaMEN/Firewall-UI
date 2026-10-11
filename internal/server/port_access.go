@@ -47,19 +47,20 @@ func (s *Server) setPortAccess(w http.ResponseWriter, r *http.Request) {
 	}
 	rules, err := s.Firewall.SetPortClosedSafe(ctx, req.Port, req.Protocol, *req.Closed, s.Port)
 	if err != nil {
+		err = s.recoverFirewallChange(before, err, r)
 		reply(w, 200, nil, err)
 		return
 	}
 	if !*req.Closed {
 		if _, err := s.Firewall.AddManagedManualRuleSafe(ctx, req.Port, req.Protocol, "Открыт вручную", s.Port); err != nil {
-			_ = s.Firewall.RestoreBackup(ctx, before, s.Port)
+			err = s.recoverFirewallChange(before, err, r)
 			reply(w, 200, nil, err)
 			return
 		}
 	}
 	pending, err := s.beginRollback(before, "port.access", r)
 	if err != nil {
-		_ = s.Firewall.RestoreBackup(ctx, before, s.Port)
+		err = s.recoverFirewallChange(before, err, r)
 		reply(w, 200, nil, err)
 		return
 	}

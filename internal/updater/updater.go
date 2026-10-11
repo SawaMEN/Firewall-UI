@@ -459,7 +459,7 @@ func (m *Manager) downloadAndReplace(ctx context.Context, asset Asset) error {
 	return nil
 }
 
-func (m *Manager) Run(ctx context.Context, configPath string) {
+func (m *Manager) Run(ctx context.Context, configPath string, apply func(context.Context, string) (Status, error)) {
 	initial := time.NewTimer(15 * time.Second)
 	defer initial.Stop()
 	ticker := time.NewTicker(5 * time.Minute)
@@ -481,7 +481,7 @@ func (m *Manager) Run(ctx context.Context, configPath string) {
 		updateCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		status, err := m.Check(updateCtx, "dev")
 		if err == nil && status.Available {
-			_, _ = m.Apply(updateCtx, "dev")
+			_, _ = apply(updateCtx, "dev")
 		}
 		cancel()
 	}

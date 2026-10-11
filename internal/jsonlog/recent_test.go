@@ -40,3 +40,24 @@ func TestRecentMissingFileAndLimits(t *testing.T) {
 		t.Fatal("accepted zero record size")
 	}
 }
+
+func TestRecentReadsOnlyTailOfLargeSparseLog(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sparse.jsonl")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Seek(1<<30, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString("\n1\n2\n3\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	values, err := Recent[int](path, 2, 100)
+	if err != nil || !reflect.DeepEqual(values, []int{3, 2}) {
+		t.Fatalf("tail reading: %v %v", values, err)
+	}
+}

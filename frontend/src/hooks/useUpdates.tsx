@@ -240,7 +240,7 @@ export function UpdateNotice() {
   if (!status?.available) return null;
   return <Alert className="update-banner" type="info" showIcon icon={<CloudDownloadOutlined />}
     title={ru ? `Доступно обновление Firewall-UI ${status.latestVersion}` : `Firewall-UI ${status.latestVersion} is available`}
-    action={<Button type="primary" size="small" loading={busy} onClick={confirm} disabled={status.selectedChannel === 'dev' && !status.manualInstall}>
-      {status.manualInstall ? (ru ? 'Как обновить' : 'How to update') : status.selectedChannel === 'dev' ? (ru ? 'Автообновление' : 'Automatic update') : (ru ? 'Обновить' : 'Update')}
+    action={<Button type="primary" size="small" loading={busy} onClick={confirm} disabled={status.selectedChannel === 'dev' && !status.manualInstall && !status.docker}>
+      {status.manualInstall ? (ru ? 'Как обновить' : 'How to update') : status.selectedChannel === 'dev' && !status.docker ? (ru ? 'Автообновление' : 'Automatic update') : (ru ? 'Обновить' : 'Update')}
     </Button>} />;
 }

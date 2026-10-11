@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/SawaMEN/Firewall-UI/internal/hostexec"
 )
@@ -302,18 +303,6 @@ func (s *FirewallService) syncManagedLocked(ctx context.Context, backend firewal
 	if err != nil {
 		return err
 	}
-	if backend.name == "nftables" {
-		if err := applyManagedNftables(ctx, backend.binary, desired); err != nil {
-			return err
-		}
-		return saveManagedOwnedRules(desired)
-	}
-	if backend.name == "iptables" {
-		if err := applyManagedIPTables(ctx, backend.binary, desired); err != nil {
-			return err
-		}
-		return saveManagedOwnedRules(desired)
-	}
 
 	existing, err := listFirewallRules(ctx, backend)
 	if err != nil {
@@ -343,6 +332,19 @@ func (s *FirewallService) syncManagedLocked(ctx context.Context, backend firewal
 				return err
 			}
 			rule.Owned = true
+			// Persist ownership after each successful add. A later failed command
+			// must not leave an untracked allow rule that recovery cannot remove.
+			old[key] = rule
+			ledger := make([]FirewallRule, 0, len(old))
+			for _, owned := range old {
+				ledger = append(ledger, owned)
+			}
+			sortFirewallRules(ledger)
+			if err := saveFirewallJSON(firewallManagedRulesKey, ledger); err != nil {
+				recovery, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				return errors.Join(err, deleteFirewallRule(recovery, backend, rule))
+			}
 			existing[key] = true
 		}
 		rule.Exists = true
@@ -384,8 +386,12 @@ func saveManagedOwnedRules(rules []FirewallRule) error {
 func disableManagedBackend(ctx context.Context, backend firewallBackend) error {
 	switch backend.name {
 	case "nftables":
-		_, _ = runFirewallCommand(ctx, backend.binary, "delete", "table", "inet", managedNftTable)
-		return nil
+		exists, err := managedNFTExists(ctx, backend.binary)
+		if err != nil || !exists {
+			return err
+		}
+		_, err = runFirewallCommand(ctx, backend.binary, "delete", "table", "inet", managedNftTable)
+		return err
 	case "iptables":
 		return removeManagedIPTables(ctx, backend.binary)
 	default:
@@ -403,24 +409,40 @@ func nftPortExpression(rule FirewallRule) string {
 	return strconv.Itoa(rule.Port)
 }
 
+func managedNFTExists(ctx context.Context, binary string) (bool, error) {
+	tables, err := runFirewallCommand(ctx, binary, "list", "tables")
+	if err != nil {
+		return false, err
+	}
+	return firewallOutputHasFields(tables, "table", "inet", managedNftTable), nil
+}
+
 func applyManagedNftables(ctx context.Context, binary string, rules []FirewallRule) error {
 	safe, err := nftablesSafeForManagedFirewall(ctx, binary)
 	if err != nil {
 		return err
 	}
 	if !safe {
-		_, _ = runFirewallCommand(ctx, binary, "delete", "table", "inet", managedNftTable)
-		return errors.New("another nftables input hook appeared; Firewall-UI removed its managed table to avoid overriding administrator firewall policy")
+		cleanupErr := disableManagedBackend(ctx, firewallBackend{name: "nftables", binary: binary})
+		return errors.Join(errors.New("another nftables input hook appeared; cannot reconcile Firewall-UI policy"), cleanupErr)
 	}
-	_, _ = runFirewallCommand(ctx, binary, "delete", "table", "inet", managedNftTable)
+	exists, err := managedNFTExists(ctx, binary)
+	if err != nil {
+		return err
+	}
 	var script strings.Builder
+	// Delete and replace in one nft batch. A rejected batch retains the old
+	// policy and never creates an interval with no filtering.
+	if exists {
+		script.WriteString("delete table inet " + managedNftTable + "\n")
+	}
 	script.WriteString("table inet " + managedNftTable + " {\n")
 	script.WriteString(" chain " + managedNftChain + " {\n")
 	script.WriteString("  type filter hook input priority 100; policy drop;\n")
 	script.WriteString("  ct state established,related accept\n")
 	script.WriteString("  iifname \"lo\" accept\n")
 	script.WriteString("  ip protocol icmp accept\n")
-	script.WriteString("  ip6 nexthdr ipv6-icmp accept\n")
+	script.WriteString("  meta l4proto ipv6-icmp accept\n")
 	writePortRule := func(rule FirewallRule) {
 		spec := firewallRuleSpec(rule)
 		if spec == "" {
@@ -469,73 +491,43 @@ func iptablesPortExpression(rule FirewallRule) string {
 	return strconv.Itoa(rule.Port)
 }
 
-func applyManagedIPTables(ctx context.Context, binary string, rules []FirewallRule) error {
-	if err := applyManagedIPTablesBinary(ctx, binary, "icmp", rules); err != nil {
-		return err
-	}
-	if ip6, err := hostexec.LookPath("ip6tables"); err == nil {
-		if err := applyManagedIPTablesBinary(ctx, ip6, "ipv6-icmp", rules); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func applyManagedIPTablesBinary(ctx context.Context, binary, icmpProto string, rules []FirewallRule) error {
-	_, _ = runFirewallCommand(ctx, binary, "-N", managedIPTablesChain)
-	if _, err := runFirewallCommand(ctx, binary, "-F", managedIPTablesChain); err != nil {
-		return err
-	}
-	base := [][]string{
-		{"-A", managedIPTablesChain, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"},
-		{"-A", managedIPTablesChain, "-i", "lo", "-j", "ACCEPT"},
-		{"-A", managedIPTablesChain, "-p", icmpProto, "-j", "ACCEPT"},
-	}
-	for _, args := range base {
-		if _, err := runFirewallCommand(ctx, binary, args...); err != nil {
-			return err
-		}
-	}
-	for _, rule := range rules {
-		spec := firewallRuleSpec(rule)
-		if spec == "" {
-			continue
-		}
-		parts := strings.SplitN(spec, "/", 2)
-		args := []string{"-A", managedIPTablesChain, "-p", parts[1], "--dport", iptablesPortExpression(rule), "-j", "ACCEPT"}
-		if _, err := runFirewallCommand(ctx, binary, args...); err != nil {
-			return err
-		}
-	}
-	if _, err := runFirewallCommand(ctx, binary, "-A", managedIPTablesChain, "-j", "DROP"); err != nil {
-		return err
-	}
-	for {
-		cmd := firewallCommand(ctx, binary, "-C", "INPUT", "-j", managedIPTablesChain)
-		if cmd.Run() != nil {
-			break
-		}
-		_, _ = runFirewallCommand(ctx, binary, "-D", "INPUT", "-j", managedIPTablesChain)
-	}
-	_, err := runFirewallCommand(ctx, binary, "-A", "INPUT", "-j", managedIPTablesChain)
-	return err
-}
-
 func removeManagedIPTables(ctx context.Context, binary string) error {
 	for _, candidate := range []string{binary, "ip6tables"} {
 		path, err := hostexec.LookPath(candidate)
 		if err != nil {
 			continue
 		}
-		for {
-			cmd := firewallCommand(ctx, path, "-C", "INPUT", "-j", managedIPTablesChain)
-			if cmd.Run() != nil {
+		rules, err := runFirewallCommand(ctx, path, "-S")
+		if err != nil {
+			if unsupportedFirewallKernel(err) {
+				continue
+			}
+			return err
+		}
+		if !firewallOutputHasFields(rules, "-N", managedIPTablesChain) {
+			continue
+		}
+		for attempts := 0; ; attempts++ {
+			exists, err := managedIPTablesJumpExists(ctx, path)
+			if err != nil {
+				return err
+			}
+			if !exists {
 				break
 			}
-			_, _ = runFirewallCommand(ctx, path, "-D", "INPUT", "-j", managedIPTablesChain)
+			if attempts >= 128 {
+				return errors.New("too many managed iptables jumps")
+			}
+			if _, err := runFirewallCommand(ctx, path, "-D", "INPUT", "-j", managedIPTablesChain); err != nil {
+				return err
+			}
 		}
-		_, _ = runFirewallCommand(ctx, path, "-F", managedIPTablesChain)
-		_, _ = runFirewallCommand(ctx, path, "-X", managedIPTablesChain)
+		if _, err := runFirewallCommand(ctx, path, "-F", managedIPTablesChain); err != nil {
+			return err
+		}
+		if _, err := runFirewallCommand(ctx, path, "-X", managedIPTablesChain); err != nil {
+			return err
+		}
 	}
 	return nil
 }

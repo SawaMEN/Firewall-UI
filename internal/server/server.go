@@ -105,7 +105,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	allowedCIDRs := append([]string(nil), s.RuntimeConfig.AllowedCIDRs...)
 	s.mu.Unlock()
-	if !security.IPAllowed(r.RemoteAddr, allowedCIDRs) {
+	remoteHost, _, _ := net.SplitHostPort(r.RemoteAddr)
+	remoteIP := net.ParseIP(remoteHost)
+	localHealth := r.Method == http.MethodGet && r.URL.Path == "/api/health" && remoteIP != nil && remoteIP.IsLoopback()
+	if !localHealth && !security.IPAllowed(r.RemoteAddr, allowedCIDRs) {
 		http.Error(w, "access denied", http.StatusForbidden)
 		return
 	}
@@ -145,7 +148,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			reply(w, http.StatusMethodNotAllowed, nil, fmt.Errorf("method not allowed"))
 			return
 		}
-		reply(w, http.StatusOK, buildinfo.Current(), nil)
+		reply(w, http.StatusOK, struct {
+			buildinfo.Info
+			RollbackPending bool `json:"rollbackPending"`
+		}{buildinfo.Current(), s.Rollbacks != nil && s.Rollbacks.HasPending()}, nil)
 		return
 	}
 
@@ -647,12 +653,18 @@ func (s *Server) manage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
+		if before != nil {
+			err = s.recoverFirewallChange(*before, err, r)
+		}
 		reply(w, http.StatusOK, nil, err)
 		return
 	}
 
 	ping, err := s.Firewall.ManagedPingEnabled()
 	if err != nil {
+		if before != nil {
+			err = s.recoverFirewallChange(*before, err, r)
+		}
 		reply(w, http.StatusOK, nil, err)
 		return
 	}
@@ -660,6 +672,7 @@ func (s *Server) manage(w http.ResponseWriter, r *http.Request) {
 	if before != nil {
 		tx, txErr := s.beginRollback(*before, "firewall."+operation, r)
 		if txErr != nil {
+			txErr = s.recoverFirewallChange(*before, txErr, r)
 			reply(w, http.StatusOK, nil, txErr)
 			return
 		}

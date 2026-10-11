@@ -2,8 +2,6 @@
 package jsonlog
 
 import (
-	"bufio"
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,45 +21,59 @@ func Recent[T any](path string, limit, maxLine int) ([]T, error) {
 		return nil, err
 	}
 	defer file.Close()
-	reader := bufio.NewReaderSize(file, min(maxLine, 64*1024))
-	ring := make([]T, limit)
-	next, count := 0, 0
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	// Start at the tail and stop once enough valid records have been found.
+	// Reading the entire history made every refresh grow with the log's lifetime.
+	position := info.Size()
+	buffer := make([]byte, min(maxLine, 64*1024))
+	items := make([]T, 0, limit)
 	var line []byte
 	oversized := false
-	for {
-		part, err := reader.ReadSlice('\n')
-		part = bytes.TrimSuffix(part, []byte{'\n'})
-		if !oversized {
-			if len(line)+len(part) > maxLine {
-				oversized = true
-				line = line[:0]
-			} else {
-				line = append(line, part...)
-			}
-		}
-		if err == bufio.ErrBufferFull {
-			continue
-		}
-		if err != nil && err != io.EOF {
-			return nil, err
-		}
+	consume := func() {
 		if !oversized && len(line) > 0 {
+			for i, j := 0, len(line)-1; i < j; i, j = i+1, j-1 {
+				line[i], line[j] = line[j], line[i]
+			}
 			var item *T
 			if json.Unmarshal(line, &item) == nil && item != nil {
-				ring[next] = *item
-				next = (next + 1) % limit
-				count = min(count+1, limit)
+				items = append(items, *item)
 			}
 		}
 		line = line[:0]
 		oversized = false
-		if err == io.EOF {
-			break
+	}
+	for position > 0 && len(items) < limit {
+		size := min(int64(len(buffer)), position)
+		position -= size
+		part := buffer[:int(size)]
+		n, err := file.ReadAt(part, position)
+		if err != nil || n != len(part) {
+			if err == nil {
+				err = io.ErrUnexpectedEOF
+			}
+			return nil, err
+		}
+		for i := len(part) - 1; i >= 0; i-- {
+			if part[i] == '\n' {
+				consume()
+				if len(items) == limit {
+					return items, nil
+				}
+			} else if !oversized {
+				if len(line) == maxLine {
+					oversized = true
+					line = line[:0]
+				} else {
+					line = append(line, part[i])
+				}
+			}
 		}
 	}
-	items := make([]T, 0, count)
-	for i := 0; i < count; i++ {
-		items = append(items, ring[(next-1-i+limit)%limit])
+	if len(items) < limit {
+		consume()
 	}
 	return items, nil
 }

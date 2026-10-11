@@ -41,6 +41,16 @@ func Default() Config {
 }
 
 func Load(path string) (Config, error) {
+	return load(path, true)
+}
+
+// LoadForEdit parses existing settings before CLI overrides are validated.
+// This permits replacing a certificate whose file was removed or changed.
+func LoadForEdit(path string) (Config, error) {
+	return load(path, false)
+}
+
+func load(path string, validate bool) (Config, error) {
 	cfg := Default()
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -59,8 +69,10 @@ func Load(path string) (Config, error) {
 	if cfg.PortScanInterval == 0 {
 		cfg.PortScanInterval = 2
 	}
-	if err := Validate(cfg); err != nil {
-		return Config{}, err
+	if validate {
+		if err := Validate(cfg); err != nil {
+			return Config{}, err
+		}
 	}
 	cfg.AllowedCIDRs = security.NormalizeCIDRs(cfg.AllowedCIDRs)
 	// Remove retired integration credentials from existing installations.
@@ -71,7 +83,7 @@ func Load(path string) (Config, error) {
 	if fields == nil {
 		return Config{}, errors.New("configuration must be a JSON object, not null")
 	}
-	if _, obsolete := fields["xui"]; obsolete {
+	if _, obsolete := fields["xui"]; obsolete && validate {
 		if err := Save(path, cfg); err != nil {
 			return Config{}, fmt.Errorf("remove retired configuration: %w", err)
 		}

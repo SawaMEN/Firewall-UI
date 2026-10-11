@@ -39,7 +39,12 @@ func ReadContainerPorts(ctx context.Context) []ContainerPort {
 			continue
 		}
 		commandCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
-		cmd := exec.CommandContext(commandCtx, path, "ps", "--format", "{{json .}}")
+		// Select formatted fields explicitly: Podman raw JSON uses arrays/objects
+		// for Names and Ports, unlike Docker. Both runtimes expose string fields
+		// through their presentation templates.
+		format := `{"ID":{{json .ID}},"Names":{{json .Names}},"Image":{{json .Image}},"Ports":{{json .Ports}}}`
+		cmd := exec.CommandContext(commandCtx, path, "ps", "--format", format)
+		cmd.WaitDelay = 2 * time.Second
 		raw, err := cmd.Output()
 		cancel()
 		if err != nil {

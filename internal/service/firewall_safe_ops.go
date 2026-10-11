@@ -127,7 +127,7 @@ func (s *FirewallService) managedStatusSafeLocked(ctx context.Context, safetyPor
 		if enabled, configured, prefErr := firewallManagedEnabledPreference(); prefErr != nil {
 			return FirewallManagedStatus{}, prefErr
 		} else if configured {
-			status.Enabled = enabled
+			status.Enabled = enabled && status.Enabled
 		}
 	}
 	return status, nil
@@ -255,11 +255,11 @@ func (s *FirewallService) changeManagedManualRuleSafe(ctx context.Context, port 
 	firewallMu.Lock()
 	defer firewallMu.Unlock()
 	if port < 1 || port > 65535 {
-		return FirewallManagedStatus{}, fmt.Errorf("invalid port %d", port)
+		return FirewallManagedStatus{}, fmt.Errorf("%w: invalid port %d", ErrInvalidFirewallChange, port)
 	}
 	protocols, err := normalizeFirewallProtocols(protocol)
 	if err != nil {
-		return FirewallManagedStatus{}, err
+		return FirewallManagedStatus{}, fmt.Errorf("%w: %v", ErrInvalidFirewallChange, err)
 	}
 	manual, err := loadManualFirewallRules()
 	if err != nil {

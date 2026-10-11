@@ -44,7 +44,7 @@ export async function request<T>(
   options: { silent?: boolean; signal?: AbortSignal; ignoreUnauthorized?: boolean } = {},
 ): Promise<Response<T>> {
   const res = await fetch(path, {
-    signal: options.signal,
+    signal: options.signal || AbortSignal.timeout(path === '/api/firewall/install-ufw' ? 330000 : 45000),
     method: data === undefined ? 'GET' : 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
@@ -54,7 +54,16 @@ export async function request<T>(
     if (sessionRestarting) expirationPending = true;
     else window.dispatchEvent(new Event('session-expired'));
   }
-  const result: Response<T> = await res.json();
+  let result: Response<T>;
+  try {
+    result = await res.json() as Response<T>;
+    if (!result || typeof result !== 'object' || typeof result.success !== 'boolean') throw new Error('Invalid API response');
+  } catch {
+    result = { success: false, msg: res.status === 403
+      ? 'Доступ запрещён. Проверьте разрешённые IP/CIDR.'
+      : `Сервер вернул некорректный ответ (HTTP ${res.status})` };
+  }
+  if (!res.ok) result = { ...result, success: false, msg: result.msg || `HTTP ${res.status}` };
   if (!options.silent && !result.success && path === '/api/login') {
     void message.error(result.msg === 'invalid credentials'
       ? 'Неверный логин или пароль'

@@ -728,6 +728,14 @@ docker_update_channel() {
   case "$selected" in dev) printf dev;; *) printf stable;; esac
 }
 
+docker_update_safe() (
+  source "$DOCKER_DIR/source/install.sh"
+  local response
+  response="$(installer_health_response "$DOCKER_CONFIG_DIR/config.json")" || return 1
+  [[ "$response" == *'"version"'* && "$response" =~ \"success\":[[:space:]]*true ]] || return 1
+  [[ ! "$response" =~ \"rollbackPending\":[[:space:]]*true ]]
+)
+
 docker_auto_update() (
   set -Eeuo pipefail
   docker_existing_installation || return 1
@@ -743,6 +751,13 @@ docker_auto_update() (
   }
   trap finish_auto_update EXIT
   docker_update_status checking
+  # Publish maintenance state first, so new web mutations cannot begin between
+  # the rollback check and container replacement. Confirmation remains allowed.
+  if ! docker_update_safe; then
+    docker_update_status deferred
+    echo 'Обновление отложено: панель недоступна для проверки или ожидается откат правил.'
+    return 0
+  fi
   local channel manifest_url
   channel="$(docker_update_channel)"
   if [[ "$channel" == dev ]]; then

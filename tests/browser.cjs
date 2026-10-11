@@ -90,6 +90,17 @@ const { chromium } = require(path.join(process.env.PLAYWRIGHT_TOOLS, 'node_modul
   await page.getByRole('menuitem', { name: 'Настройки' }).click();
   await page.getByRole('button', { name: 'Сохранить настройки' }).waitFor();
   assert.equal(await page.locator('input[type=file]').evaluate(input => getComputedStyle(input).display), 'none');
+  // Restoring a backup must hydrate the form before a later save can use it.
+  let settingsFixture = await page.evaluate(async () => (await (await fetch('/api/settings')).json()).obj);
+  await page.route('**/api/settings', route => json(route, settingsFixture));
+  await page.route('**/api/backup/restore', route => {
+    settingsFixture = { ...settingsFixture, publicHost: 'restored.example.com', externalPort: 443, secureCookies: true };
+    return json(route, { restored: true, restartRequired: false });
+  });
+  await page.locator('input[type=file]').setInputFiles({ name: 'backup.json', mimeType: 'application/json', buffer: Buffer.from('{"version":1}') });
+  await page.waitForFunction(() => document.querySelector('#publicHost')?.value === 'restored.example.com');
+  await page.getByText('https://restored.example.com:443/', { exact: true }).waitFor();
+
   await page.screenshot({ path: path.join(output, 'settings-desktop.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'Mobile layout overflows');
@@ -179,5 +190,5 @@ const { chromium } = require(path.join(process.env.PLAYWRIGHT_TOOLS, 'node_modul
   await blockedPage.getByText(/Браузер не сохранил сессию/).waitFor();
   assert.equal(await blockedPage.locator('.page-header').count(), 0);
   await browser.close();
-  console.log('Browser login/session, update banner/progress/restart verification, Docker instructions, protocol deletion and desktop/mobile checks passed');
+  console.log('Browser login/session, update banner/progress/restart verification, Docker instructions, backup form hydration, protocol deletion and desktop/mobile checks passed');
 })().catch(error => { console.error(error); process.exit(1); });

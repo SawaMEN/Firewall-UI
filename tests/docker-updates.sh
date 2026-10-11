@@ -30,6 +30,7 @@ docker_remove_updates
 test ! -e "$SYSTEMD_DIR/firewall-ui-docker-update.service"
 test ! -e "$SYSTEMD_DIR/firewall-ui-docker-update.timer"
 
+docker_update_safe() { return "${MOCK_UPDATE_BLOCKED:-0}"; }
 docker_compose() { [[ "$*" == 'ps -q firewall-ui' ]] && echo running-container; }
 SHA="$(printf 'a%.0s' {1..64})"; COMMIT="$(printf 'b%.0s' {1..40})"
 cat > "$FIXTURE/manifest" <<JSON
@@ -69,6 +70,11 @@ MANAGER
   fi
 }
 printf '%s\n' "$SHA" > "$DOCKER_DIR/image.sha256"
+MOCK_UPDATE_BLOCKED=1
+docker_auto_update
+grep -q '"phase":"deferred"' "$DOCKER_DIR/update-status.json"
+test ! -e "$FIXTURE/curl"
+unset MOCK_UPDATE_BLOCKED
 docker_auto_update
 test ! -e "$FIXTURE/install"
 grep -q '"phase":"success"' "$DOCKER_DIR/update-status.json"

@@ -17,6 +17,7 @@ type Pending struct {
 
 type entry struct {
 	timer    *time.Timer
+	deadline time.Time
 	rollback func(service.FirewallBackup)
 	backup   service.FirewallBackup
 }
@@ -41,7 +42,7 @@ func (m *Manager) Begin(backup service.FirewallBackup, ttl time.Duration, rollba
 	}
 	token := hex.EncodeToString(raw)
 	deadline := time.Now().Add(ttl)
-	item := &entry{backup: backup, rollback: rollback}
+	item := &entry{backup: backup, rollback: rollback, deadline: deadline}
 
 	m.mu.Lock()
 	if len(m.entries) != 0 || m.running {
@@ -82,7 +83,7 @@ func (m *Manager) Confirm(token string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	item, ok := m.entries[token]
-	if !ok {
+	if !ok || !time.Now().Before(item.deadline) {
 		return false
 	}
 	delete(m.entries, token)

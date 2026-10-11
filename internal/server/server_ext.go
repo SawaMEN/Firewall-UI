@@ -254,7 +254,7 @@ func summarizePorts(ports []service.Port, covered map[string]bool) (int, int, []
 }
 
 func runtimeRestartRequired(old, next appconfig.Config) bool {
-	return old.TLSCert != next.TLSCert || old.TLSKey != next.TLSKey || old.ListenHost != next.ListenHost || old.ListenPort != next.ListenPort || old.ExternalPort != next.ExternalPort || old.SecureCookies != next.SecureCookies || old.PortScanInterval != next.PortScanInterval
+	return old.PublicHost != next.PublicHost || old.TLSCert != next.TLSCert || old.TLSKey != next.TLSKey || old.ListenHost != next.ListenHost || old.ListenPort != next.ListenPort || old.ExternalPort != next.ExternalPort || old.SecureCookies != next.SecureCookies || old.PortScanInterval != next.PortScanInterval
 }
 
 func uniqueContainers(ports []service.ContainerPort) int {
@@ -328,11 +328,13 @@ func (s *Server) historyRestore(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	if err := s.Firewall.RestoreBackup(ctx, item.Backup, s.Port); err != nil {
+		err = s.recoverFirewallChange(before, err, r)
 		reply(w, http.StatusOK, nil, err)
 		return
 	}
 	pending, err := s.beginRollback(before, "history.restore", r)
 	if err != nil {
+		err = s.recoverFirewallChange(before, err, r)
 		reply(w, http.StatusOK, nil, err)
 		return
 	}
@@ -408,6 +410,10 @@ func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusBadRequest, nil, fmt.Errorf("unsupported backup version"))
 		return
 	}
+	if err := service.ValidateFirewallBackup(payload.Firewall); err != nil {
+		reply(w, http.StatusBadRequest, nil, err)
+		return
+	}
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
 
@@ -435,11 +441,12 @@ func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
 	if err := s.Firewall.RestoreBackup(ctx, payload.Firewall, s.Port); err != nil {
+		err = s.recoverFirewallChange(before, err, r)
 		reply(w, http.StatusOK, nil, err)
 		return
 	}
 	if err := appconfig.Save(s.ConfigPath, nextCfg); err != nil {
-		_ = s.Firewall.RestoreBackup(ctx, before, s.Port)
+		err = s.recoverFirewallChange(before, err, r)
 		reply(w, http.StatusOK, nil, err)
 		return
 	}
@@ -448,6 +455,8 @@ func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	pending, err := s.beginRollbackWithConfig(before, oldCfg, "backup.restore", r)
 	if err != nil {
+		err = s.recoverFirewallChange(before, err, r)
+		err = errors.Join(err, s.restoreRuntimeAfterRollbackLocked(oldCfg, runtimeBackupFromConfig(nextCfg)))
 		reply(w, http.StatusOK, nil, err)
 		return
 	}
@@ -485,11 +494,13 @@ func (s *Server) advancedRules(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	rules, err := s.Firewall.AddAdvancedRuleSafe(ctx, req, s.Port)
 	if err != nil {
+		err = s.recoverFirewallChange(before, err, r)
 		reply(w, http.StatusOK, nil, err)
 		return
 	}
 	pending, err := s.beginRollback(before, "advanced.add", r)
 	if err != nil {
+		err = s.recoverFirewallChange(before, err, r)
 		reply(w, http.StatusOK, nil, err)
 		return
 	}
@@ -523,11 +534,13 @@ func (s *Server) deleteAdvancedRule(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	rules, err := s.Firewall.DeleteAdvancedRuleSafe(ctx, req.ID, s.Port)
 	if err != nil {
+		err = s.recoverFirewallChange(before, err, r)
 		reply(w, http.StatusOK, nil, err)
 		return
 	}
 	pending, err := s.beginRollback(before, "advanced.delete", r)
 	if err != nil {
+		err = s.recoverFirewallChange(before, err, r)
 		reply(w, http.StatusOK, nil, err)
 		return
 	}
@@ -578,8 +591,41 @@ func (s *Server) confirmRollback(w http.ResponseWriter, r *http.Request) {
 	reply(w, http.StatusOK, map[string]bool{"confirmed": true}, nil)
 }
 
+// The request context may already be cancelled when a command fails. Recovery
+// must get its own deadline and report errors instead of silently discarding them.
+func (s *Server) recoverFirewallChange(before service.FirewallBackup, cause error, r *http.Request) error {
+	if errors.Is(cause, service.ErrInvalidFirewallChange) {
+		return cause
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	err := s.Firewall.RestoreBackup(ctx, before, s.Port)
+	if err != nil {
+		cause = errors.Join(cause, fmt.Errorf("restore failed firewall change: %w", err))
+	}
+	s.audit(r, "firewall.change.failed", false, cause.Error(), nil)
+	return cause
+}
+
 func (s *Server) beginRollback(before service.FirewallBackup, reason string, r *http.Request) (rollback.Pending, error) {
 	return s.beginRollbackWithConfig(before, appconfig.Config{}, reason, r)
+}
+
+// Automatic updates use the same configuration lock and rollback guards as
+// manual updates. A dev update must not terminate a pending recovery timer.
+func (s *Server) ApplyAutomaticUpdate(ctx context.Context, channel string) (updater.Status, error) {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	s.mu.Lock()
+	selected := s.RuntimeConfig.UpdateChannel
+	s.mu.Unlock()
+	if selected != channel || channel != "dev" {
+		return updater.Status{}, errors.New("automatic update channel changed")
+	}
+	if s.Updater == nil || s.Updater.InProgress() || time.Now().Before(s.restartUntil) || (s.Rollbacks != nil && s.Rollbacks.HasPending()) {
+		return updater.Status{}, errors.New("automatic update postponed: maintenance or rollback pending")
+	}
+	return s.Updater.Apply(ctx, channel)
 }
 
 func (s *Server) requireNoPendingRollback(w http.ResponseWriter) bool {

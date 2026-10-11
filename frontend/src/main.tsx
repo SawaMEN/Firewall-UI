@@ -19,11 +19,12 @@ import FirewallPage from '@/pages/firewall/FirewallPage';
 import FullScreenLoader from '@/components/FullScreenLoader';
 import { UpdateProvider } from '@/hooks/useUpdates';
 import { request, setCSRF } from '@/utils';
+import { savedLanguage } from '@/preferences';
 import './styles/theme.css';
 import './styles/app.css';
 
 void i18n.use(initReactI18next).init({
-  lng: localStorage.getItem('firewall-language') || 'ru',
+  lng: savedLanguage(),
   fallbackLng: 'en',
   resources: { ru: { translation: {} }, en: { translation: {} } },
   interpolation: { escapeValue: false },
@@ -41,21 +42,24 @@ function Application() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
+    const controller = new AbortController();
     const expired = () => {
+      controller.abort();
       setCSRF('');
       setAuthenticated(false);
+      setLoading(false);
     };
     window.addEventListener('session-expired', expired);
-    void request<Session>('/api/session')
+    void request<Session>('/api/session', undefined, { signal: controller.signal })
       .then((result) => {
-        if (result.success && result.obj) {
+        if (!controller.signal.aborted && result.success && result.obj) {
           setCSRF(result.obj.csrf);
           setAuthenticated(true);
         }
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
-    return () => window.removeEventListener('session-expired', expired);
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => { controller.abort(); window.removeEventListener('session-expired', expired); };
   }, []);
 
   async function login(values: LoginValues) {

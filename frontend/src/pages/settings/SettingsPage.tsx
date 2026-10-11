@@ -69,6 +69,7 @@ export default function SettingsPage() {
   const ru = i18n.language.startsWith('ru');
   const [form] = Form.useForm<FormSettings>();
   const restoreInput = useRef<HTMLInputElement>(null);
+  const beforeRestore = useRef<RuntimeSettings | null>(null);
   const [current, setCurrent] = useState<RuntimeSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -182,6 +183,45 @@ export default function SettingsPage() {
     [ru],
   );
 
+  const failedMessage = useRef(text.failed);
+  failedMessage.current = text.failed;
+
+  function navigateAfterRestart(old: RuntimeSettings | null, next: RuntimeSettings) {
+    const browserPort = Number(window.location.port || (window.location.protocol === 'https:' ? 443 : 80));
+    window.setTimeout(() => {
+      if (old?.listenPort === browserPort) {
+        const target = new URL(window.location.href);
+        if (next.publicHost) target.hostname = next.publicHost.includes(':') ? `[${next.publicHost}]` : next.publicHost;
+        target.port = String(next.listenPort);
+        target.protocol = next.tlsEnabled ? 'https:' : 'http:';
+        window.location.assign(target.toString());
+      } else window.location.reload();
+    }, 2200);
+  }
+
+  function applySettings(settings: RuntimeSettings) {
+    setCurrent(settings);
+    form.setFieldsValue({
+      publicHost: settings.publicHost,
+      tlsCert: settings.tlsCert,
+      tlsKey: settings.tlsKey,
+      listenHost: settings.listenHost,
+      listenPort: settings.listenPort,
+      externalPort: settings.externalPort,
+      secureCookies: settings.secureCookies,
+      updateChannel: settings.updateChannel,
+      rollbackSeconds: settings.rollbackSeconds,
+      portScanInterval: settings.portScanInterval,
+      allowedCidrsText: (settings.allowedCidrs || []).join('\n'),
+    });
+  }
+
+  async function refreshSettings() {
+    const result = await HttpUtil.get<RuntimeSettings>('/api/settings');
+    if (result.success && result.obj) applySettings(result.obj);
+    else setError(result.msg || text.failed);
+  }
+
   async function loadActivity() {
     const [auditResult, historyResult] = await Promise.all([
       HttpUtil.get<AuditEntry[]>('/api/audit'),
@@ -200,32 +240,21 @@ export default function SettingsPage() {
       .then((result) => {
         if (cancelled) return;
         if (!result.success || !result.obj) {
-          setError(result.msg || text.failed);
+          setError(result.msg || failedMessage.current);
           return;
         }
-        setCurrent(result.obj);
-        form.setFieldsValue({
-          publicHost: result.obj.publicHost,
-          tlsCert: result.obj.tlsCert,
-          tlsKey: result.obj.tlsKey,
-          listenHost: result.obj.listenHost,
-          listenPort: result.obj.listenPort,
-          externalPort: result.obj.externalPort,
-          secureCookies: result.obj.secureCookies,
-          updateChannel: result.obj.updateChannel,
-          rollbackSeconds: result.obj.rollbackSeconds,
-          portScanInterval: result.obj.portScanInterval,
-          allowedCidrsText: (result.obj.allowedCidrs || []).join('\n'),
-        });
+        applySettings(result.obj);
         void loadActivity();
       })
-      .catch(() => !cancelled && setError(text.failed))
+      .catch(() => !cancelled && setError(failedMessage.current))
       .finally(() => !cancelled && setLoading(false));
     return () => { cancelled = true; };
-  }, [form, text.failed]);
+  }, [form]);
 
   async function save(values: FormSettings) {
+    if (!current) return;
     setSaving(true);
+    setError('');
     try {
       const old = current;
       const allowedCidrs = values.allowedCidrsText
@@ -252,19 +281,7 @@ export default function SettingsPage() {
       setCurrent(result.obj);
       if (result.obj.restarting) {
         void message.success(text.restarting);
-        const browserPort = Number(window.location.port || (window.location.protocol === 'https:' ? 443 : 80));
-        const direct = old?.listenPort === browserPort;
-        window.setTimeout(() => {
-          if (direct && (old?.listenPort !== values.listenPort || old?.tlsEnabled !== Boolean(values.tlsCert))) {
-            const target = new URL(window.location.href);
-            if (values.publicHost) target.hostname = values.publicHost.includes(':') ? `[${values.publicHost}]` : values.publicHost;
-            target.port = String(values.listenPort);
-            target.protocol = values.tlsCert ? 'https:' : 'http:';
-            window.location.assign(target.toString());
-          } else {
-            window.location.reload();
-          }
-        }, 2200);
+        navigateAfterRestart(old, result.obj);
       } else {
         void message.success(ru ? 'Настройки сохранены' : 'Settings saved');
         void loadUpdateStatus(true);
@@ -301,10 +318,14 @@ export default function SettingsPage() {
 
   async function restoreBackupFile(file: File) {
     try {
+      if (file.size > 4 * 1024 * 1024) throw new Error('size');
       const parsed = JSON.parse(await file.text()) as Record<string, unknown>;
+      if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error('object');
       const result = await HttpUtil.post<BackupRestoreResult>('/api/backup/restore', parsed);
       if (result.success && result.obj) {
+        if (!beforeRestore.current) beforeRestore.current = current;
         setRestartRequired(Boolean(result.obj.restartRequired));
+        await refreshSettings();
         void loadActivity();
         void message.success(ru ? 'Backup восстановлен' : 'Backup restored');
       }
@@ -328,7 +349,7 @@ export default function SettingsPage() {
 
   async function restart() {
     const result = await HttpUtil.post<{ restarting: boolean }>('/api/system/restart', {});
-    if (result.success) window.setTimeout(() => window.location.reload(), 2200);
+    if (result.success && current) navigateAfterRestart(beforeRestore.current || current, current);
   }
 
   if (loading) return <FullScreenLoader label={ru ? "Загрузка настроек…" : "Loading settings…"} />;
@@ -410,7 +431,7 @@ export default function SettingsPage() {
           </div>
           {current?.publicHost ? <Typography.Paragraph>
             {ru ? 'Адрес панели: ' : 'Panel URL: '}
-            <Typography.Text copyable>{`${current.tlsEnabled ? 'https' : 'http'}://${current.publicHost.includes(':') ? `[${current.publicHost}]` : current.publicHost}:${current.externalPort || current.listenPort}/`}</Typography.Text>
+            <Typography.Text copyable>{`${current.tlsEnabled || current.secureCookies ? 'https' : 'http'}://${current.publicHost.includes(':') ? `[${current.publicHost}]` : current.publicHost}:${current.externalPort || current.listenPort}/`}</Typography.Text>
           </Typography.Paragraph> : null}
           <Space>
             <Typography.Text type="secondary">{text.tls}:</Typography.Text>
@@ -433,7 +454,7 @@ export default function SettingsPage() {
             <Typography.Text>{text.current}: <Tag>{updateStatus?.currentVersion || '—'}</Tag></Typography.Text>
             <Typography.Text>{text.latest}: <Tag color={updateStatus?.available ? 'processing' : undefined}>{updateStatus?.latestVersion || '—'}</Tag></Typography.Text>
             <Button icon={<ReloadOutlined />} loading={checkingUpdate} onClick={() => void loadUpdateStatus(true)}>{text.check}</Button>
-            {(channel === 'stable' || updateStatus?.manualInstall) && updateStatus?.available ? (
+            {(channel === 'stable' || updateStatus?.manualInstall || updateStatus?.docker) && updateStatus?.available ? (
               <Button type="primary" icon={<SyncOutlined />} loading={applyingUpdate} onClick={confirmUpdate}>{updateStatus.manualInstall ? (ru ? "Как обновить" : "How to update") : text.update}</Button>
             ) : updateStatus && !updateStatus.available ? <Typography.Text type="secondary">{text.noUpdate}</Typography.Text> : null}
           </Space>
@@ -504,7 +525,7 @@ export default function SettingsPage() {
           />
         </Card>
 
-        <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={saving}>
+        <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={saving} disabled={!current}>
           {text.save}
         </Button>
       </Space>

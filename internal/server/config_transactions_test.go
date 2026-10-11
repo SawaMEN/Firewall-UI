@@ -143,3 +143,27 @@ func TestBackupDecoderRejectsTrailingJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCredentialsPreserveUnrelatedEnvironment(t *testing.T) {
+	s := New("admin", "test-password", 8088, fstest.MapFS{})
+	s.ConfigPath = filepath.Join(t.TempDir(), "config.json")
+	path := filepath.Join(filepath.Dir(s.ConfigPath), "environment")
+	if err := os.WriteFile(path, []byte("OTHER_SETTING=\"keep\"\nFIREWALL_UI_USERNAME=\"admin\"\nFIREWALL_UI_PASSWORD=\"test-password\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	s.credentials(w, httptest.NewRequest("POST", "/api/security/credentials", bytes.NewBufferString(`{"username":"new","password":"1","currentPassword":"test-password"}`)))
+	raw, _ := os.ReadFile(path)
+	if w.Code != 200 || !bytes.Contains(raw, []byte("OTHER_SETTING=\"keep\"")) || bytes.Contains(raw, []byte("test-password")) {
+		t.Fatalf("lost environment values: %s %s", w.Body, raw)
+	}
+}
+
+func TestPublicHostRequiresListenerRestart(t *testing.T) {
+	cfg := appconfig.Default()
+	next := cfg
+	next.PublicHost = "new.example.com"
+	if !runtimeRestartRequired(cfg, next) {
+		t.Fatal("HTTPS redirect retains old public hostname")
+	}
+}

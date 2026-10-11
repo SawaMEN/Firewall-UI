@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -64,31 +66,45 @@ func exportFirewallBackupLocked() (FirewallBackup, error) {
 	}, nil
 }
 
-func (s *FirewallService) RestoreBackup(ctx context.Context, backup FirewallBackup, safetyPort int) error {
-	firewallMu.Lock()
-	defer firewallMu.Unlock()
+func ValidateFirewallBackup(backup FirewallBackup) error {
+	_, err := validatedFirewallBackup(backup)
+	return err
+}
+
+func validatedFirewallBackup(backup FirewallBackup) (FirewallBackup, error) {
 	if backup.Version != 1 {
-		return fmt.Errorf("unsupported firewall backup version %d", backup.Version)
+		return FirewallBackup{}, fmt.Errorf("unsupported firewall backup version %d", backup.Version)
 	}
 	// Validate a private copy before touching either saved state or live rules.
 	backup.ManualRules = append([]FirewallManualRule(nil), backup.ManualRules...)
 	backup.AdvancedRules = append([]FirewallAdvancedRule(nil), backup.AdvancedRules...)
 	if err := validateManualFirewallRules(backup.ManualRules); err != nil {
-		return err
+		return FirewallBackup{}, err
 	}
 	ids := make(map[string]bool, len(backup.AdvancedRules))
 	for i := range backup.AdvancedRules {
 		if err := validateAdvancedRule(&backup.AdvancedRules[i]); err != nil {
-			return fmt.Errorf("advanced rule %d: %w", i+1, err)
+			return FirewallBackup{}, fmt.Errorf("advanced rule %d: %w", i+1, err)
 		}
 		rule := &backup.AdvancedRules[i]
 		if rule.ID == "" || ids[rule.ID] {
-			return fmt.Errorf("advanced rule %d: missing or duplicate ID", i+1)
+			return FirewallBackup{}, fmt.Errorf("advanced rule %d: missing or duplicate ID", i+1)
 		}
 		if strings.HasPrefix(rule.ID, "close-port-") && !isClosePortRule(*rule) {
-			return fmt.Errorf("advanced rule %d: invalid reserved port rule", i+1)
+			return FirewallBackup{}, fmt.Errorf("advanced rule %d: invalid reserved port rule", i+1)
 		}
 		ids[rule.ID] = true
+	}
+	return backup, nil
+}
+
+func (s *FirewallService) RestoreBackup(ctx context.Context, backup FirewallBackup, safetyPort int) error {
+	firewallMu.Lock()
+	defer firewallMu.Unlock()
+	var err error
+	backup, err = validatedFirewallBackup(backup)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidFirewallChange, err)
 	}
 	currentAdvanced, err := loadAdvancedFirewallRules()
 	if err != nil {
@@ -100,32 +116,37 @@ func (s *FirewallService) RestoreBackup(ctx context.Context, backup FirewallBack
 	}
 	on := false
 	if backendErr == nil {
-		on, _ = backend.enabled(ctx)
+		on, err = backend.enabled(ctx)
+		if err != nil {
+			return err
+		}
 	}
 	if on && (backend.name == "ufw" || backend.name == "firewalld") {
 		for _, rule := range currentAdvanced {
-			_ = applySystemAdvancedRule(ctx, backend, rule, false)
+			if err := applySystemAdvancedRule(ctx, backend, rule, false); err != nil {
+				return err
+			}
 		}
 	}
 
-	if err := saveFirewallJSON(firewallManualRulesKey, backup.ManualRules); err != nil {
-		return err
-	}
-	if err := saveFirewallManualLabels(cloneStringMap(backup.ManualLabels)); err != nil {
-		return err
-	}
 	sortAdvancedRules(backup.AdvancedRules)
-	if err := saveFirewallJSON(firewallAdvancedRulesKey, backup.AdvancedRules); err != nil {
-		return err
+	changes := map[string]string{
+		firewallAutoSyncKey:       strconv.FormatBool(backup.AutoSync),
+		firewallManagedEnabledKey: strconv.FormatBool(backup.ManagedEnabled),
+		firewallPingEnabledKey:    strconv.FormatBool(backup.PingEnabled),
 	}
-	settings := &SettingService{}
-	if err := settings.setBool(firewallAutoSyncKey, backup.AutoSync); err != nil {
-		return err
+	for key, value := range map[string]any{
+		firewallManualRulesKey:   backup.ManualRules,
+		firewallManualLabelsKey:  cloneStringMap(backup.ManualLabels),
+		firewallAdvancedRulesKey: backup.AdvancedRules,
+	} {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		changes[key] = string(raw)
 	}
-	if err := setFirewallManagedEnabledPreference(backup.ManagedEnabled); err != nil {
-		return err
-	}
-	if err := settings.setBool(firewallPingEnabledKey, backup.PingEnabled); err != nil {
+	if err := (&SettingService{}).setStrings(changes); err != nil {
 		return err
 	}
 

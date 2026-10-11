@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.6
+
+- Recover failed firewall transactions with independent cleanup timeouts and report restoration errors.
+- Replace nftables policies atomically and preserve ownership of partially applied UFW/firewalld rules.
+- Guard native and Docker automatic updates while firewall rollback is pending.
+- Fix backup/settings synchronization, credential environment preservation and configuration repair with missing certificates.
+- Harden API error handling and session bootstrap; reuse port snapshots and seek recent logs from the end.
+- Correct Podman published-port discovery and add targeted regression coverage.
+
 ## 1.3.5
 
 - Center the full-screen loader without viewport overflow on desktop and mobile.

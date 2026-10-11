@@ -52,14 +52,20 @@ func (*SettingService) getSetting(key string) (setting, error) {
 	}
 	return setting{value}, nil
 }
-func (*SettingService) setString(key, value string) error {
+func (s *SettingService) setString(key, value string) error {
+	return s.setStrings(map[string]string{key: value})
+}
+
+func (*SettingService) setStrings(changes map[string]string) error {
 	settingsMu.Lock()
 	defer settingsMu.Unlock()
 	values, err := readSettings()
 	if err != nil {
 		return err
 	}
-	values[key] = value
+	for key, value := range changes {
+		values[key] = value
+	}
 	raw, err := json.MarshalIndent(values, "", "  ")
 	if err != nil {
 		return err

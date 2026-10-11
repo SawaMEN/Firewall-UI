@@ -21,6 +21,7 @@ func CommandContext(ctx context.Context, binary string, args ...string) *exec.Cm
 		binary = "nsenter"
 	}
 	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd.WaitDelay = 2 * time.Second
 	cmd.Env = append(os.Environ(), "LC_ALL=C", "LANG=C")
 	return cmd
 }

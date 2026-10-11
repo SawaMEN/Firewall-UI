@@ -24,6 +24,9 @@ const (
 
 var firewallMu sync.Mutex
 
+// Validation failures happen before live rules or saved policy are changed.
+var ErrInvalidFirewallChange = errors.New("invalid firewall change")
+
 type FirewallRule struct {
 	Port      int    `json:"port,omitempty"`
 	PortRange string `json:"portRange,omitempty"`
@@ -39,149 +42,13 @@ type FirewallManualRule struct {
 	Protocol string `json:"protocol"`
 }
 
-type FirewallStatus struct {
-	Supported   bool                 `json:"supported"`
-	Backend     string               `json:"backend"`
-	Enabled     bool                 `json:"enabled"`
-	AutoSync    bool                 `json:"autoSync"`
-	Rules       []FirewallRule       `json:"rules"`
-	ManualRules []FirewallManualRule `json:"manualRules"`
-	Message     string               `json:"message,omitempty"`
+type FirewallService struct {
+	PortMonitor *PortMonitor
 }
-
-type FirewallService struct{}
 
 type firewallBackend struct {
 	name, binary, offline, zone string
 	enabled                     func(context.Context) (bool, error)
-}
-
-func (s *FirewallService) status(ctx context.Context, safetyPort int) (FirewallStatus, error) {
-	auto, err := firewallAutoSync()
-	if err != nil {
-		return FirewallStatus{}, err
-	}
-	manual, err := loadManualFirewallRules()
-	if err != nil {
-		return FirewallStatus{}, err
-	}
-	st := FirewallStatus{AutoSync: auto, ManualRules: manual}
-	b, err := detectFirewallBackend(ctx)
-	if err != nil {
-		st.Message = err.Error()
-		return st, nil
-	}
-	st.Supported, st.Backend = true, b.name
-	st.Enabled, _ = b.enabled(ctx)
-	desired, err := s.desiredRules(auto, safetyPort)
-	if err != nil {
-		return FirewallStatus{}, err
-	}
-	existing, err := listFirewallRules(ctx, b)
-	if err != nil {
-		return FirewallStatus{}, err
-	}
-	managed, err := loadManagedFirewallRules()
-	if err != nil {
-		return FirewallStatus{}, err
-	}
-	owned := map[string]bool{}
-	for _, r := range managed {
-		if key := firewallRuleSpec(r); key != "" {
-			owned[key] = r.Owned
-		}
-	}
-	seen := make(map[string]bool, len(desired))
-	for i := range desired {
-		key := firewallRuleSpec(desired[i])
-		seen[key] = true
-		desired[i].Exists, desired[i].Owned = existing[key], owned[key]
-	}
-	// When auto-sync is disabled, inbound rules are intentionally frozen rather
-	// than deleted. Keep showing those managed rules in the UI so the operator
-	// sees the actual firewall state instead of an incomplete desired-only view.
-	if !auto {
-		for _, r := range managed {
-			key := firewallRuleSpec(r)
-			if key == "" || r.Source != "service" || seen[key] {
-				continue
-			}
-			r.Exists = existing[key]
-			desired = append(desired, r)
-			seen[key] = true
-		}
-		sortFirewallRules(desired)
-	}
-	st.Rules = desired
-	return st, nil
-}
-
-func (s *FirewallService) sync(ctx context.Context, b firewallBackend, safetyPort int) error {
-	auto, err := firewallAutoSync()
-	if err != nil {
-		return err
-	}
-	desired, err := s.desiredRules(auto, safetyPort)
-	if err != nil {
-		return err
-	}
-	existing, err := listFirewallRules(ctx, b)
-	if err != nil {
-		return err
-	}
-	managed, err := loadManagedFirewallRules()
-	if err != nil {
-		return err
-	}
-	old := map[string]FirewallRule{}
-	for _, r := range managed {
-		if key := firewallRuleSpec(r); key != "" {
-			old[key] = r
-		}
-	}
-	want := map[string]bool{}
-	next := make([]FirewallRule, 0, len(desired)+len(managed))
-	for _, r := range desired {
-		key := firewallRuleSpec(r)
-		if key == "" {
-			continue
-		}
-		want[key] = true
-		r.Owned = old[key].Owned
-		if !existing[key] {
-			if err := addFirewallRule(ctx, b, r); err != nil {
-				return err
-			}
-			r.Owned = true
-			existing[key] = true
-		}
-		r.Exists = true
-		next = append(next, r)
-	}
-	for _, r := range managed {
-		key := firewallRuleSpec(r)
-		if key == "" || want[key] {
-			continue
-		}
-		// Auto-sync off means freeze the last reconciled inbound rules. Manual
-		// rule changes, firewall enable/disable and Sync-now must not silently
-		// close working proxy ports merely because background automation is off.
-		if !auto && r.Source == "service" {
-			r.Exists = false
-			next = append(next, r)
-			continue
-		}
-		if !r.Owned || !existing[key] {
-			continue
-		}
-		if err := deleteFirewallRule(ctx, b, r); err != nil {
-			return err
-		}
-	}
-	for i := range next {
-		next[i].Exists = false
-	}
-	return saveFirewallJSON(firewallManagedRulesKey, next)
 }
 
 func (s *FirewallService) desiredRules(auto bool, safetyPort int) ([]FirewallRule, error) {
@@ -192,6 +59,20 @@ func (s *FirewallService) desiredRules(auto bool, safetyPort int) ([]FirewallRul
 			return
 		}
 		if old, ok := m[key]; ok && firewallSourcePriority(r.Source) <= firewallSourcePriority(old.Source) {
+			if r.Source == "service" && old.Source == "service" {
+				seen := map[string]bool{}
+				var names []string
+				for _, name := range strings.Split(old.Label+", "+r.Label, ",") {
+					name = strings.TrimSpace(name)
+					if name != "" && !seen[name] {
+						seen[name] = true
+						names = append(names, name)
+					}
+				}
+				sort.Strings(names)
+				old.Label = strings.Join(names, ", ")
+				m[key] = old
+			}
 			return
 		}
 		m[key] = r
@@ -220,9 +101,18 @@ func (s *FirewallService) desiredRules(auto bool, safetyPort int) ([]FirewallRul
 		add(r.Port, r.Protocol, "manual", "Manual rule")
 	}
 	if auto {
-		ports, err := ReadPorts("/proc")
-		if err != nil {
-			return nil, err
+		var ports []Port
+		if s.PortMonitor != nil {
+			snapshot := s.PortMonitor.Snapshot()
+			if !snapshot.UpdatedAt.IsZero() && time.Since(snapshot.UpdatedAt) < max(10*time.Second, s.PortMonitor.interval+5*time.Second) {
+				ports = snapshot.Ports
+			}
+		}
+		if ports == nil {
+			ports, err = ReadPorts("/proc")
+			if err != nil {
+				return nil, err
+			}
 		}
 		for _, p := range ports {
 			if !p.Listening || p.Loopback || len(p.Processes) == 0 {
@@ -251,8 +141,6 @@ func firewallSourcePriority(s string) int {
 		return 50
 	case "ssh":
 		return 40
-	case "subscription":
-		return 30
 	case "manual":
 		return 20
 	case "service":
@@ -541,7 +429,13 @@ func addFirewallRule(ctx context.Context, b firewallBackend, r FirewallRule) err
 		return err
 	}
 	_, err := runFirewallCommand(ctx, b.binary, "--zone="+b.zone, "--add-port="+spec)
-	return err
+	if err != nil {
+		recovery, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_, cleanupErr := runFirewallCommand(recovery, b.binary, "--permanent", "--zone="+b.zone, "--remove-port="+spec)
+		return errors.Join(err, cleanupErr)
+	}
+	return nil
 }
 
 func deleteFirewallRule(ctx context.Context, b firewallBackend, r FirewallRule) error {

@@ -1,3 +1,4 @@
+import { saveLanguage } from '@/preferences';
 import { useState, type CSSProperties } from 'react';
 import { Button, Drawer, Layout, Menu, Select, Space } from 'antd';
 import {
@@ -63,7 +64,7 @@ export default function AppSidebar({ page, onPageChange }: Props) {
         aria-label="Language"
         value={ru ? 'ru' : 'en'}
         onChange={(value) => {
-          localStorage.setItem('firewall-language', value);
+          saveLanguage(value);
           void i18n.changeLanguage(value);
         }}
         style={{ width: '100%' }}

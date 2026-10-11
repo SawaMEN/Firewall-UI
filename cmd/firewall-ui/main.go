@@ -76,15 +76,14 @@ func main() {
 		return
 	}
 
-	cfg, err := appconfig.Load(*configPath)
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	visited := map[string]bool{}
 	flag.CommandLine.Visit(func(f *flag.Flag) {
 		visited[f.Name] = true
 	})
+	cfg, err := appconfig.LoadForEdit(*configPath)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	if visited["public-host"] {
 		cfg.PublicHost = strings.TrimSpace(*publicHostFlag)
@@ -115,6 +114,12 @@ func main() {
 	}
 	if visited["secure-cookies"] {
 		cfg.SecureCookies = *secureFlag
+	}
+	if len(visited) == 0 || (len(visited) == 1 && visited["config"]) {
+		cfg, err = appconfig.Load(*configPath)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 	if err := appconfig.Validate(cfg); err != nil {
 		log.Fatal(err)
@@ -176,6 +181,7 @@ func main() {
 	app.History = history.New(filepath.Join(dataDir, "history.jsonl"))
 	portMonitor := service.NewPortMonitor("/proc", time.Duration(cfg.PortScanInterval)*time.Second)
 	app.PortMonitor = portMonitor
+	app.Firewall.PortMonitor = portMonitor
 	app.Firewall.StartAutoSync()
 
 	srv := &http.Server{
@@ -194,7 +200,7 @@ func main() {
 	defer stop()
 	portMonitor.Start(ctx)
 	if !containerMode {
-		go updateManager.Run(ctx, *configPath)
+		go updateManager.Run(ctx, *configPath, app.ApplyAutomaticUpdate)
 	}
 	go func() {
 		<-ctx.Done()

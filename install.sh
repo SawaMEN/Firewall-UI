@@ -584,8 +584,8 @@ installer_config_value() {
 }
 
 # Probe the local listener rather than a public IP (which may require NAT hairpin).
-installer_panel_ready() {
-  local config="$1" host port scheme=http body code
+installer_health_response() {
+  local config="$1" host port scheme=http
   [[ -r "$config" ]] || return 1
   host="$(installer_config_value "$config" listenHost)"
   port="$(sed -n 's/.*"listenPort":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$config" | head -n 1)"
@@ -593,7 +593,12 @@ installer_panel_ready() {
   case "$host" in 0.0.0.0) host=127.0.0.1;; ::) host=::1;; esac
   [[ "$host" != *:* ]] || host="[$host]"
   [[ -z "$(installer_config_value "$config" tlsCert)" ]] || scheme=https
-  body="$(curl --noproxy '*' -ksS -w $'\n%{http_code}' --connect-timeout 1 --max-time 2 --max-filesize 4096 "$scheme://$host:$port/api/health" 2>/dev/null)" || return 1
+  curl --noproxy '*' -ksS -w $'\n%{http_code}' --connect-timeout 1 --max-time 2 --max-filesize 4096 "$scheme://$host:$port/api/health" 2>/dev/null
+}
+
+installer_panel_ready() {
+  local body code
+  body="$(installer_health_response "$1")" || return 1
   code="${body##*$'\n'}"; body="${body%$'\n'*}"; body="${body%$'\n'}"
   # IP restrictions may intentionally deny the local health request.
   [[ "$code" == 403 && "$body" == 'access denied' ]] ||

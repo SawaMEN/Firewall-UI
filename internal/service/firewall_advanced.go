@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const firewallAdvancedRulesKey = "firewallAdvancedRules"
@@ -40,12 +41,12 @@ func (s *FirewallService) AdvancedRules() ([]FirewallAdvancedRule, error) {
 
 func (s *FirewallService) AddAdvancedRuleSafe(ctx context.Context, rule FirewallAdvancedRule, safetyPort int) ([]FirewallAdvancedRule, error) {
 	if strings.HasPrefix(rule.ID, "close-port-") {
-		return nil, errors.New("use the port access action for reserved close rules")
+		return nil, fmt.Errorf("%w: use the port access action for reserved close rules", ErrInvalidFirewallChange)
 	}
 	firewallMu.Lock()
 	defer firewallMu.Unlock()
 	if err := validateAdvancedRule(&rule); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrInvalidFirewallChange, err)
 	}
 	if rule.ID == "" {
 		rule.ID = newFirewallRuleID()
@@ -56,7 +57,7 @@ func (s *FirewallService) AddAdvancedRuleSafe(ctx context.Context, rule Firewall
 	}
 	for _, existing := range rules {
 		if existing.ID == rule.ID {
-			return nil, errors.New("advanced rule ID already exists")
+			return nil, fmt.Errorf("%w: advanced rule ID already exists", ErrInvalidFirewallChange)
 		}
 	}
 	rules = append(rules, rule)
@@ -66,8 +67,11 @@ func (s *FirewallService) AddAdvancedRuleSafe(ctx context.Context, rule Firewall
 	}
 	if err := s.applyAdvancedChangeLocked(ctx, rule, true, safetyPort); err != nil {
 		rules = removeAdvancedByID(rules, rule.ID)
-		_ = saveFirewallJSON(firewallAdvancedRulesKey, rules)
-		return nil, err
+		restoreErr := saveFirewallJSON(firewallAdvancedRulesKey, rules)
+		recovery, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		removeErr := s.applyAdvancedChangeLocked(recovery, rule, false, safetyPort)
+		return nil, errors.Join(err, restoreErr, removeErr)
 	}
 	return rules, nil
 }
@@ -88,15 +92,18 @@ func (s *FirewallService) DeleteAdvancedRuleSafe(ctx context.Context, id string,
 		}
 	}
 	if target == nil {
-		return nil, errors.New("advanced rule not found")
+		return nil, fmt.Errorf("%w: advanced rule not found", ErrInvalidFirewallChange)
 	}
 	next := removeAdvancedByID(rules, id)
 	if err := saveFirewallJSON(firewallAdvancedRulesKey, next); err != nil {
 		return nil, err
 	}
 	if err := s.applyAdvancedChangeLocked(ctx, *target, false, safetyPort); err != nil {
-		_ = saveFirewallJSON(firewallAdvancedRulesKey, rules)
-		return nil, err
+		restoreErr := saveFirewallJSON(firewallAdvancedRulesKey, rules)
+		recovery, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		applyErr := s.applyAdvancedChangeLocked(recovery, *target, true, safetyPort)
+		return nil, errors.Join(err, restoreErr, applyErr)
 	}
 	return next, nil
 }
@@ -114,6 +121,13 @@ func loadAdvancedFirewallRules() ([]FirewallAdvancedRule, error) {
 		if err := validateAdvancedRule(&rules[i]); err != nil {
 			return nil, fmt.Errorf("stored advanced rule %q: %w", rules[i].ID, err)
 		}
+	}
+	ids := map[string]bool{}
+	for _, rule := range rules {
+		if rule.ID == "" || ids[rule.ID] || (strings.HasPrefix(rule.ID, "close-port-") && !isClosePortRule(rule)) {
+			return nil, errors.New("stored advanced rules contain missing, duplicate or invalid reserved IDs")
+		}
+		ids[rule.ID] = true
 	}
 	sortAdvancedRules(rules)
 	return rules, nil

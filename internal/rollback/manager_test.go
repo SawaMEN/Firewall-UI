@@ -72,3 +72,22 @@ func TestPendingAndRunningRollbackCannotOverlap(t *testing.T) {
 		t.Fatal("new transaction was accepted during rollback execution")
 	}
 }
+
+func TestConfirmCannotBeatExpiredTimerCallback(t *testing.T) {
+	m := NewManager()
+	pending, err := m.Begin(service.FirewallBackup{}, time.Minute, func(service.FirewallBackup) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	item := m.entries[pending.Token]
+	item.timer.Stop()
+	item.deadline = time.Now().Add(-time.Second)
+	m.mu.Unlock()
+	if m.Confirm(pending.Token) {
+		t.Fatal("confirmation after deadline cancelled recovery")
+	}
+	if !m.HasPending() {
+		t.Fatal("expired transaction was discarded before recovery")
+	}
+}
