@@ -710,15 +710,31 @@ docker_read_auto_update() {
 }
 
 docker_setup_updates() {
-  local unit=firewall-ui-docker-update
+  local unit channel calendar
   [[ -d "$SYSTEMD_DIR" ]] || { echo 'Для обновлений Docker нужен systemd.' >&2; return 1; }
-  printf '[Unit]\nDescription=Update Firewall-UI Docker image\nWants=network-online.target\nAfter=network-online.target docker.service\n\n[Service]\nType=oneshot\nEnvironment="FIREWALL_UI_DOCKER_DIR=%s"\nEnvironment="FIREWALL_UI_DOCKER_MANAGER=%s"\nEnvironment="FIREWALL_UI_MANAGER=%s"\nEnvironment="FIREWALL_UI_DOCKER_PROJECT=%s"\nEnvironment=FIREWALL_UI_NONINTERACTIVE=1\nExecStart=/usr/bin/env bash "%s" auto-update\nTimeoutStartSec=10min\nUMask=0077\n' \
-    "$DOCKER_DIR" "$DOCKER_MANAGER" "$PUBLIC_MANAGER" "$DOCKER_PROJECT" "$DOCKER_MANAGER" > "$SYSTEMD_DIR/$unit.service" || return 1
-  printf '[Unit]\nDescription=Check selected Firewall-UI Docker release channel\n\n[Timer]\nOnCalendar=hourly\nRandomizedDelaySec=300\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n' > "$SYSTEMD_DIR/$unit.timer" || return 1
-  chmod 644 "$SYSTEMD_DIR/$unit.service" "$SYSTEMD_DIR/$unit.timer" || return 1
+  for channel in stable dev; do
+    if [[ "$channel" == stable ]]; then
+      unit=firewall-ui-docker-update
+      calendar=hourly
+    else
+      unit=firewall-ui-docker-dev-update
+      calendar='*-*-* *:00/30:00'
+    fi
+    printf '[Unit]\nDescription=Update Firewall-UI Docker image (%s)\nWants=network-online.target\nAfter=network-online.target docker.service\n\n[Service]\nType=oneshot\nEnvironment="FIREWALL_UI_DOCKER_DIR=%s"\nEnvironment="FIREWALL_UI_DOCKER_MANAGER=%s"\nEnvironment="FIREWALL_UI_MANAGER=%s"\nEnvironment="FIREWALL_UI_DOCKER_PROJECT=%s"\nEnvironment=FIREWALL_UI_NONINTERACTIVE=1\nExecStart=/usr/bin/env bash "%s" auto-update %s\nTimeoutStartSec=10min\nUMask=0077\n' \
+      "$channel" "$DOCKER_DIR" "$DOCKER_MANAGER" "$PUBLIC_MANAGER" "$DOCKER_PROJECT" "$DOCKER_MANAGER" "$channel" > "$SYSTEMD_DIR/$unit.service" || return 1
+    printf '[Unit]\nDescription=Check Firewall-UI Docker %s updates\n\n[Timer]\nOnCalendar=%s\nRandomizedDelaySec=300\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n' \
+      "$channel" "$calendar" > "$SYSTEMD_DIR/$unit.timer" || return 1
+    chmod 644 "$SYSTEMD_DIR/$unit.service" "$SYSTEMD_DIR/$unit.timer" || return 1
+  done
   systemctl daemon-reload || return 1
-  if [[ "$(docker_read_auto_update)" == 1 ]]; then systemctl enable --now "$unit.timer"
-  else systemctl disable --now "$unit.timer"; fi
+  # The stable opt-in is independent of the selected channel. Keep the dev
+  # timer enabled so changing channels in the web panel needs no installer.
+  if [[ "$(docker_read_auto_update)" == 1 ]]; then
+    systemctl enable --now firewall-ui-docker-update.timer || return 1
+  else
+    systemctl disable --now firewall-ui-docker-update.timer || return 1
+  fi
+  systemctl enable --now firewall-ui-docker-dev-update.timer
 }
 
 docker_auto_settings() {
@@ -727,14 +743,17 @@ docker_auto_settings() {
 }
 
 docker_remove_updates() {
-  local unit=firewall-ui-docker-update
-  if [[ -f "$SYSTEMD_DIR/$unit.timer" || -f "$SYSTEMD_DIR/$unit.service" ]]; then
-    systemctl disable --now "$unit.timer" "$unit.service" >/dev/null 2>&1 || {
-      systemctl is-active --quiet "$unit.timer" "$unit.service" && return 1
-    }
-    rm -f -- "$SYSTEMD_DIR/$unit.timer" "$SYSTEMD_DIR/$unit.service" || return 1
-    systemctl daemon-reload || return 1
-  fi
+  local unit found=0
+  for unit in firewall-ui-docker-update firewall-ui-docker-dev-update; do
+    if [[ -f "$SYSTEMD_DIR/$unit.timer" || -f "$SYSTEMD_DIR/$unit.service" ]]; then
+      systemctl disable --now "$unit.timer" "$unit.service" >/dev/null 2>&1 || {
+        systemctl is-active --quiet "$unit.timer" "$unit.service" && return 1
+      }
+      rm -f -- "$SYSTEMD_DIR/$unit.timer" "$SYSTEMD_DIR/$unit.service" || return 1
+      found=1
+    fi
+  done
+  if ((found)); then systemctl daemon-reload || return 1; fi
 }
 
 docker_update_channel() {
@@ -753,6 +772,11 @@ docker_update_safe() (
 
 docker_auto_update() (
   set -Eeuo pipefail
+  local expected_channel="${1:-}" channel
+  case "$expected_channel" in ''|stable|dev) ;; *) echo 'Неизвестный канал Docker.' >&2; return 1;; esac
+  # Both timers remain installed. Only the selected channel performs work.
+  channel="$(docker_update_channel)"
+  if [[ -n "$expected_channel" && "$channel" != "$expected_channel" ]]; then return 0; fi
   docker_existing_installation || return 1
   # Do not restart a panel that the administrator deliberately stopped.
   [[ -n "$(docker_compose ps -q firewall-ui)" ]] || return 0
@@ -773,8 +797,7 @@ docker_auto_update() (
     echo 'Обновление отложено: панель недоступна для проверки или ожидается откат правил.'
     return 0
   fi
-  local channel manifest_url
-  channel="$(docker_update_channel)"
+  local manifest_url
   if [[ "$channel" == dev ]]; then
     manifest_url=https://github.com/SawaMEN/Firewall-UI/releases/download/dev/update.json
   else
