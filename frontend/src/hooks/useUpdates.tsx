@@ -237,7 +237,8 @@ export function UpdateNotice() {
   const { status, busy, confirm } = useUpdates();
   const { i18n } = useTranslation();
   const ru = i18n.language.startsWith('ru');
-  if (!status?.available) return null;
+  // Dev Docker updates are applied on the host automatically; no prompt is needed.
+  if (!status?.available || (status.docker && status.selectedChannel === 'dev')) return null;
   return <Alert className="update-banner" type="info" showIcon icon={<CloudDownloadOutlined />}
     title={ru ? `Доступно обновление Firewall-UI ${status.latestVersion}` : `Firewall-UI ${status.latestVersion} is available`}
     action={<Button type="primary" size="small" loading={busy} onClick={confirm} disabled={status.selectedChannel === 'dev' && !status.manualInstall && !status.docker}>
