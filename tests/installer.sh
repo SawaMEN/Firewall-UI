@@ -38,7 +38,7 @@ cmp "$FIXTURE/config.before" "$CONFIG_DIR/config.json";cmp "$FIXTURE/environment
 # Blank native password also generates exactly 10 alphanumeric characters.
 rm -f "$CONFIG_DIR/environment"
 FIREWALL_UI_PASSWORD='' create_settings > "$FIXTURE/password-generation"
-generated_password="$(sed -n 's/^FIREWALL_UI_PASSWORD="\\([^"]*\\)"/\\1/p' "$CONFIG_DIR/environment")"
+generated_password="$(sed -n 's/^FIREWALL_UI_PASSWORD="\([^"]*\)"/\1/p' "$CONFIG_DIR/environment")"
 [[ "$generated_password" =~ ^[A-Za-z0-9]{10}$ ]]
 grep -Fq "Сгенерированный пароль Firewall-UI: $generated_password" "$FIXTURE/password-generation"
 # Release verification must fail closed before any installation files are replaced.
