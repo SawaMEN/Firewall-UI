@@ -54,10 +54,10 @@ switch_stop_docker() {
 switch_remove_docker() {
   local container containers volume project="${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}"
   switch_stop_docker || return 1
-  for unit in firewall-ui-docker-update.timer firewall-ui-docker-cert-renew.timer; do
+  for unit in firewall-ui-docker-update.timer firewall-ui-docker-dev-update.timer firewall-ui-docker-cert-renew.timer; do
     systemctl disable --now "$unit" >/dev/null 2>&1 || true
   done
-  for unit in firewall-ui-docker-update.service firewall-ui-docker-cert-renew.service firewall-ui-docker-update.timer firewall-ui-docker-cert-renew.timer; do
+  for unit in firewall-ui-docker-update.service firewall-ui-docker-dev-update.service firewall-ui-docker-cert-renew.service firewall-ui-docker-update.timer firewall-ui-docker-dev-update.timer firewall-ui-docker-cert-renew.timer; do
     rm -f "/etc/systemd/system/$unit" || return 1
   done
   systemctl daemon-reload || return 1
@@ -175,7 +175,7 @@ switch_native_to_docker() (
 # Modern Docker uses the same host data as the native service.
 switch_docker_to_native_bind() (
   set -Eeuo pipefail
-  local docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui}" stage started=0 succeeded=0 previously_running=0 timer_active=0 renew_active=0
+  local docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui}" stage started=0 succeeded=0 previously_running=0 timer_active=0 dev_timer_active=0 renew_active=0
   [[ -f "$docker_dir/.installer-managed" && -f "$CONFIG_DIR/config.json" && -f "$CONFIG_DIR/environment" ]] || return 1
   [[ ! -e "$SERVICE_FILE" && ! -e "$INSTALL_DIR/firewall-ui" ]] || {
     echo 'Файлы обычной службы уже существуют. Переключение остановлено.' >&2; return 1;
@@ -184,6 +184,7 @@ switch_docker_to_native_bind() (
   [[ ! -f "$MANAGER" ]] || cp -p "$MANAGER" "$stage/docker-manager"
   [[ -z "$(docker ps -q --filter "label=com.docker.compose.project=${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}" --filter label=com.docker.compose.service=firewall-ui)" ]] || previously_running=1
   systemctl is-active --quiet firewall-ui-docker-update.timer && timer_active=1 || true
+  systemctl is-active --quiet firewall-ui-docker-dev-update.timer && dev_timer_active=1 || true
   systemctl is-active --quiet firewall-ui-docker-cert-renew.timer && renew_active=1 || true
   rollback() {
     local result=$?
@@ -199,13 +200,14 @@ switch_docker_to_native_bind() (
         "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}" start || true
       fi
       if ((timer_active)); then systemctl enable --now firewall-ui-docker-update.timer >/dev/null 2>&1 || true; fi
+      if ((dev_timer_active)); then systemctl enable --now firewall-ui-docker-dev-update.timer >/dev/null 2>&1 || true; fi
       if ((renew_active)); then systemctl enable --now firewall-ui-docker-cert-renew.timer >/dev/null 2>&1 || true; fi
     fi
     rm -rf -- "$stage"
     return "$result"
   }
   trap rollback EXIT
-  systemctl stop firewall-ui-docker-update.timer firewall-ui-docker-cert-renew.timer >/dev/null 2>&1 || true
+  systemctl stop firewall-ui-docker-update.timer firewall-ui-docker-dev-update.timer firewall-ui-docker-cert-renew.timer >/dev/null 2>&1 || true
   switch_stop_docker || return 1
   started=1
   INSTALL_INTERACTIVE=0 installer_native_install || return 1
@@ -218,7 +220,7 @@ switch_docker_to_native_bind() (
 switch_docker_to_native() (
   set -Eeuo pipefail
   local docker_dir="${FIREWALL_UI_DOCKER_DIR:-/opt/firewall-ui}" stage succeeded=0 committed=0 old_running=0 native_started=0 native_attempted=0 copied=0
-  local docker_update_active=0 docker_renew_active=0
+  local docker_update_active=0 docker_dev_update_active=0 docker_renew_active=0
   # Existing pre-migration installations still use /opt/firewall-ui-docker.
   # Preserve their volume-based migration route when switching to native.
   if [[ ! -f "$docker_dir/deployment" && -f "${FIREWALL_UI_LEGACY_DOCKER_DIR:-/opt/firewall-ui-docker}/deployment" ]]; then
@@ -245,6 +247,7 @@ switch_docker_to_native() (
   mkdir "$stage/config" "$stage/data"
   [[ -n "$(docker ps -q --filter "label=com.docker.compose.project=${FIREWALL_UI_DOCKER_PROJECT:-firewall-ui}" --filter label=com.docker.compose.service=firewall-ui)" ]] && old_running=1 || true
   systemctl is-active --quiet firewall-ui-docker-update.timer && docker_update_active=1 || true
+  systemctl is-active --quiet firewall-ui-docker-dev-update.timer && docker_dev_update_active=1 || true
   systemctl is-active --quiet firewall-ui-docker-cert-renew.timer && docker_renew_active=1 || true
   [[ ! -f "$MANAGER" ]] || cp -p "$MANAGER" "$stage/docker-public-manager"
   rollback() {
@@ -265,13 +268,14 @@ switch_docker_to_native() (
         "${FIREWALL_UI_DOCKER_MANAGER:-/usr/local/bin/fw-ui-docker}" start || echo 'Не удалось повторно запустить старый контейнер.' >&2
       fi
       if ((docker_update_active)); then systemctl enable --now firewall-ui-docker-update.timer >/dev/null 2>&1 || true; fi
+      if ((docker_dev_update_active)); then systemctl enable --now firewall-ui-docker-dev-update.timer >/dev/null 2>&1 || true; fi
       if ((docker_renew_active)); then systemctl enable --now firewall-ui-docker-cert-renew.timer >/dev/null 2>&1 || true; fi
     fi
     rm -rf -- "$stage"
     return "$result"
   }
   trap rollback EXIT
-  systemctl stop firewall-ui-docker-update.timer firewall-ui-docker-cert-renew.timer >/dev/null 2>&1 || true
+  systemctl stop firewall-ui-docker-update.timer firewall-ui-docker-dev-update.timer firewall-ui-docker-cert-renew.timer >/dev/null 2>&1 || true
   switch_stop_docker || return 1
   cp -a "$SWITCH_CONFIG_MOUNT/." "$stage/config/" || return 1
   cp -a "$SWITCH_DATA_MOUNT/." "$stage/data/" || return 1
