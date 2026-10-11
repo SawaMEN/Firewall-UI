@@ -249,6 +249,18 @@ func (s *FirewallService) InspectAccess(ctx context.Context, safetyPort int, pro
 		return out, err
 	}
 	sortAdvancedRules(advanced)
+	if len(out.Containers) == 0 && (status.Backend == "nftables" || status.Backend == "iptables") {
+		// Native backends evaluate protected panel/SSH access before advanced rules.
+		for _, rule := range status.Rules {
+			if rule.Exists && isFirewallSafetyRule(rule) && rule.Protocol == probe.Protocol &&
+				probe.Port >= firewallRuleStart(rule) && probe.Port <= firewallRuleEnd(rule) {
+				out.Rule = firewallRuleSpec(rule)
+				out.Verdict = "predicted-allow"
+				out.Reason = "Protected panel or SSH rule precedes advanced rules"
+				return out, nil
+			}
+		}
+	}
 	for _, rule := range advanced {
 		if !matchAdvancedProbe(rule, probe, ip) {
 			continue
@@ -263,6 +275,21 @@ func (s *FirewallService) InspectAccess(ctx context.Context, safetyPort int, pro
 		if !out.Listener && len(out.Containers) == 0 {
 			out.Notes = append(out.Notes, "No matching listening service or published container was detected")
 		}
+		return out, nil
+	}
+	if len(out.Containers) > 0 {
+		// Docker's published-port policy deliberately does NOT use automatic
+		// service rules as exceptions. Only explicit manual/advanced allow rules.
+		for _, manual := range status.ManualRules {
+			if manual.Port == probe.Port && manual.Protocol == probe.Protocol {
+				out.Rule = firewallRuleKey(manual.Port, manual.Protocol)
+				out.Verdict = "predicted-allow"
+				out.Reason = "Explicit container FORWARD exception"
+				return out, nil
+			}
+		}
+		out.Verdict = "predicted-deny"
+		out.Reason = "Container FORWARD default-deny rule matches this published port"
 		return out, nil
 	}
 	for _, rule := range status.Rules {
