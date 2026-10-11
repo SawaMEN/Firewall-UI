@@ -540,7 +540,7 @@ installer_settings_menu() {
     installer_item 1 'Адрес, порт и сертификат' 'Локальный доступ, домен или IP; выбор сертификата HTTPS'
     installer_item 2 'Изменить логин и пароль'
     installer_detect_installations
-    if ((COMPOSE_INSTALLED)); then installer_item 3 'Автообновление Docker' 'Проверка stable/dev каждый час без подтверждения'; fi
+    if ((COMPOSE_INSTALLED)); then installer_item 3 'Автообновление Docker' 'Stable — по выбору каждый час, Dev — автоматически каждые 30 минут'; fi
     installer_item 0 'Назад'
     ask choice 'Выберите настройку' 0 || return 1
     case "$choice" in
