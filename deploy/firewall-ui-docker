@@ -36,13 +36,17 @@ docker_ask() {
 docker_password() {
   local value="${FIREWALL_UI_PASSWORD:-}"
   if [[ "$DOCKER_INTERACTIVE" == 1 ]]; then
-    read -r -s -p 'Пароль (любая непустая длина): ' value <&3 || return 1
+    read -r -s -p 'Пароль (Enter — сгенерировать): ' value <&3 || return 1
     echo
   fi
-  [[ -n "$value" && "$value" != *$'\r'* && "$value" != *$'\n'* ]] || { echo 'Укажите непустой пароль без перевода строки.' >&2; return 1; }
+  if [[ -z "$value" ]]; then
+    value="$(od -An -N20 -tx1 /dev/urandom | tr -d ' \n')" || return 1
+    [[ "${#value}" == 40 ]] || { echo 'Не удалось сгенерировать пароль.' >&2; return 1; }
+    echo "Сгенерированный пароль Firewall-UI: $value"
+  fi
+  [[ "$value" != *$'\r'* && "$value" != *$'\n'* ]] || { echo 'Перевод строки в пароле не поддерживается.' >&2; return 1; }
   DOCKER_PASSWORD="$value"
 }
-
 # New deployments use only the host-network Compose layout.
 # One-time migration handles installations that still use Docker volumes.
 docker_compose() {
@@ -311,7 +315,13 @@ docker_show_access() {
     installer_panel_address "$DOCKER_CONFIG_DIR/config.json" Панель || echo 'Адрес панели недоступен: конфигурация не найдена.'
   )
   echo "Управление: fw-ui; конфигурация — $DOCKER_CONFIG_DIR, данные — $DOCKER_STATE_DIR."
-  if [[ "$(docker_read_auto_update)" == 1 ]]; then echo "Автообновление Docker: включено, канал $(docker_update_channel), каждый час без подтверждения."; else echo 'Автообновление Docker: отключено.'; fi
+  if [[ "$(docker_update_channel)" == dev ]]; then
+    echo 'Автообновление Docker: dev, каждые 30 минут без подтверждения.'
+  elif [[ "$(docker_read_auto_update)" == 1 ]]; then
+    echo 'Автообновление Docker: stable, каждый час.'
+  else
+    echo 'Автообновление Docker: stable, отключено (включается в установщике).'
+  fi
 }
 
 docker_require_exclusive() {
@@ -682,12 +692,17 @@ docker_prepare_host_firewall() (
 )
 
 docker_choose_auto_update() {
+  # Dev updates run automatically. Retain the previous stable preference,
+  # defaulting to opt-out for installations started on the dev channel.
+  if [[ "$(docker_update_channel)" == dev ]]; then
+    [[ -f "$DOCKER_DIR/auto-update" ]] || printf '0\n' > "$DOCKER_DIR/auto-update"
+    return 0
+  fi
   local choice=y current="$(docker_read_auto_update)"
   [[ "$current" != 0 ]] || choice=n
-  docker_ask choice 'Автоматически проверять выбранный канал (stable/dev) и обновлять Docker каждый час без подтверждения? (y/n)' "$choice" || return 1
+  docker_ask choice 'Проверять и устанавливать обновления stable для Docker каждый час? (y/n)' "$choice" || return 1
   case "$choice" in y|Y) printf '1\n' > "$DOCKER_DIR/auto-update";; n|N) printf '0\n' > "$DOCKER_DIR/auto-update";; *) echo 'Введите y или n.' >&2; return 1;; esac
 }
-
 docker_read_auto_update() {
   if [[ -n "${FIREWALL_UI_DOCKER_AUTO_UPDATE:-}" ]]; then printf '%s' "$FIREWALL_UI_DOCKER_AUTO_UPDATE"
   elif [[ -f "$DOCKER_DIR/auto-update" ]]; then cat "$DOCKER_DIR/auto-update"
