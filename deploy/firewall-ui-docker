@@ -36,12 +36,12 @@ docker_ask() {
 docker_password() {
   local value="${FIREWALL_UI_PASSWORD:-}"
   if [[ "$DOCKER_INTERACTIVE" == 1 ]]; then
-    read -r -s -p 'Пароль (Enter — сгенерировать): ' value <&3 || return 1
+    read -r -s -p 'Пароль (любая длина; Enter — сгенерировать): ' value <&3 || return 1
     echo
   fi
   if [[ -z "$value" ]]; then
-    value="$(od -An -N20 -tx1 /dev/urandom | tr -d ' \n')" || return 1
-    [[ "${#value}" == 40 ]] || { echo 'Не удалось сгенерировать пароль.' >&2; return 1; }
+    value="$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-10)" || return 1
+    [[ "${#value}" == 10 ]] || { echo 'Не удалось сгенерировать пароль.' >&2; return 1; }
     echo "Сгенерированный пароль Firewall-UI: $value"
   fi
   [[ "$value" != *$'\r'* && "$value" != *$'\n'* ]] || { echo 'Перевод строки в пароле не поддерживается.' >&2; return 1; }
