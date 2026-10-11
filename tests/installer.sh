@@ -35,6 +35,12 @@ FIREWALL_UI_PORT=9090;FIREWALL_UI_LISTEN_HOST=0.0.0.0;FIREWALL_UI_PASSWORD=anoth
 create_settings
 [[ "$PANEL_HOST" == 127.0.0.1 && "$PANEL_PORT" == 8088 ]]
 cmp "$FIXTURE/config.before" "$CONFIG_DIR/config.json";cmp "$FIXTURE/environment.before" "$CONFIG_DIR/environment"
+# Blank native password also generates exactly 10 alphanumeric characters.
+rm -f "$CONFIG_DIR/environment"
+FIREWALL_UI_PASSWORD='' create_settings > "$FIXTURE/password-generation"
+generated_password="$(sed -n 's/^FIREWALL_UI_PASSWORD="\\([^"]*\\)"/\\1/p' "$CONFIG_DIR/environment")"
+[[ "$generated_password" =~ ^[A-Za-z0-9]{10}$ ]]
+grep -Fq "Сгенерированный пароль Firewall-UI: $generated_password" "$FIXTURE/password-generation"
 # Release verification must fail closed before any installation files are replaced.
 MOCK_COMMANDS=sha256sum;ARCH=amd64;UPDATE_CHANNEL=stable
 curl() {
