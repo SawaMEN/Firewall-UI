@@ -120,6 +120,8 @@ jobs:
           docker volume inspect ci-unrelated-volume >/dev/null
           sudo -E bash -c 'source install.sh; installer_detect_installations; test "$COMPOSE_INSTALLED" = 0'
           docker volume rm ci-unrelated-volume
+          # Diagnose the precise post-uninstall assertion if it fails in CI.
+          set -x
           test "$(sysctl -n net.ipv4.icmp_echo_ignore_all)" = 0
           if [ -f /proc/sys/net/ipv6/icmp/echo_ignore_all ]; then test "$(sysctl -n net.ipv6.icmp.echo_ignore_all)" = 0; fi
           test ! -e /etc/systemd/system/firewall-ui-docker-update.service
