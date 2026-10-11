@@ -195,6 +195,9 @@ func (s *FirewallService) SetManagedEnabledSafe(ctx context.Context, enabled boo
 			return FirewallManagedStatus{}, err
 		}
 	}
+	if err := s.syncContainerProtectionLocked(ctx); err != nil {
+		return FirewallManagedStatus{}, err
+	}
 	if err := s.reconcileManagedPingStateLocked(enabled); err != nil {
 		return FirewallManagedStatus{}, err
 	}
