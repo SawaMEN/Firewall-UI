@@ -38,8 +38,9 @@ func NewDockerManager(dir string) *DockerManager {
 }
 
 func (m *DockerManager) ReadStatus(status *Status) {
+	status.Automatic = status.SelectedChannel == "dev"
 	if raw, err := os.ReadFile(filepath.Join(m.dir, "auto-update")); err == nil {
-		status.Automatic = strings.TrimSpace(string(raw)) == "1"
+		status.Automatic = status.SelectedChannel == "dev" || strings.TrimSpace(string(raw)) == "1"
 	}
 	file, err := os.Open(filepath.Join(m.dir, "update-status.json"))
 	if err != nil {
@@ -74,7 +75,7 @@ func (m *DockerManager) ReadStatus(status *Status) {
 	}
 }
 
-func (m *DockerManager) Start(ctx context.Context) error {
+func (m *DockerManager) Start(ctx context.Context, channel string) error {
 	binary, err := hostexec.LookPath("systemctl")
 	if err != nil {
 		return err
@@ -82,7 +83,11 @@ func (m *DockerManager) Start(ctx context.Context) error {
 	m.mu.Lock()
 	m.requestedAt = time.Now().UnixNano()
 	m.mu.Unlock()
-	out, err := hostexec.CommandContext(ctx, binary, "start", "--no-block", "firewall-ui-docker-update.service").CombinedOutput()
+	unit := "firewall-ui-docker-update.service"
+	if channel == "dev" {
+		unit = "firewall-ui-docker-dev-update.service"
+	}
+	out, err := hostexec.CommandContext(ctx, binary, "start", "--no-block", unit).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("start Docker update: %w: %s", err, strings.TrimSpace(string(out)))
 	}

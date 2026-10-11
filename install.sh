@@ -421,7 +421,11 @@ create_settings() {
       read -r -s -p 'Пароль (любая длина; Enter — сгенерировать): ' password <&3 || true
       printf '\n' >&3
     fi
-    if [[ -z "$password" ]]; then password="$(od -An -N20 -tx1 /dev/urandom | tr -d ' \n')"; echo "Сгенерированный пароль Firewall-UI: $password"; fi
+    if [[ -z "$password" ]]; then
+      password="$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-10)" || return 1
+      [[ "${#password}" == 10 ]] || { echo 'Не удалось сгенерировать пароль.' >&2; return 1; }
+      echo "Сгенерированный пароль Firewall-UI: $password"
+    fi
     echo 'Рекомендация: длинный уникальный пароль.'
     [[ -n "$password" && "$password" != *$'\n'* && "$password" != *$'\r'* ]] || { echo 'Перевод строки в пароле не поддерживается.' >&2; return 1; }
     local temp_env; temp_env="$(mktemp "$CONFIG_DIR/.environment-XXXXXX")"
@@ -540,7 +544,7 @@ installer_settings_menu() {
     installer_item 1 'Адрес, порт и сертификат' 'Локальный доступ, домен или IP; выбор сертификата HTTPS'
     installer_item 2 'Изменить логин и пароль'
     installer_detect_installations
-    if ((COMPOSE_INSTALLED)); then installer_item 3 'Автообновление Docker' 'Проверка stable/dev каждый час без подтверждения'; fi
+    if ((COMPOSE_INSTALLED)); then installer_item 3 'Автообновление Docker' 'Stable — по выбору каждый час, Dev — автоматически каждые 30 минут'; fi
     installer_item 0 'Назад'
     ask choice 'Выберите настройку' 0 || return 1
     case "$choice" in
@@ -844,6 +848,14 @@ run_installer_docker_action() (
     fetch_repo_file deploy/firewall-ui-docker "$stage/docker-manager" || {
       [[ -x "$installed" ]] && cp "$installed" "$stage/docker-manager" || return 1
     }
+    # During a branch rollout, main may still ship an older cleanup helper.
+    # Prefer a newer installed helper if the fetched version cannot remove
+    # the separate dev timer created by that installation.
+    if [[ -x "$installed" ]] &&
+       grep -Fq 'firewall-ui-docker-dev-update' "$installed" &&
+       ! grep -Fq 'firewall-ui-docker-dev-update' "$stage/docker-manager"; then
+      cp "$installed" "$stage/docker-manager"
+    fi
   elif [[ "$1" != install && -x "$installed" ]]; then cp "$installed" "$stage/docker-manager"
   else
     command -v curl >/dev/null || pkg_install curl ca-certificates

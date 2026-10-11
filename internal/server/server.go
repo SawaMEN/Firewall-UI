@@ -527,7 +527,7 @@ func (s *Server) applyUpdate(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		status, err := s.Updater.Check(ctx, channel)
 		if err == nil && status.Available {
-			err = s.DockerUpdater.Start(ctx)
+			err = s.DockerUpdater.Start(ctx, channel)
 			status.Docker = true
 			status.Restarting = err == nil
 			status.Phase = "checking"

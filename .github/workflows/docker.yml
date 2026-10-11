@@ -85,6 +85,8 @@ jobs:
           FIREWALL_UI_TEST_UPDATES=1 python3 tests/docker_host.py
           sudo test -f /etc/systemd/system/firewall-ui-docker-update.service
           sudo test -f /etc/systemd/system/firewall-ui-docker-update.timer
+          sudo test -f /etc/systemd/system/firewall-ui-docker-dev-update.service
+          sudo test -f /etc/systemd/system/firewall-ui-docker-dev-update.timer
           sudo -E bash install.sh --compose
           sudo -E bash install.sh --compose-configure
           # An occupied port must fail and restore the previous running panel.
@@ -122,6 +124,8 @@ jobs:
           if [ -f /proc/sys/net/ipv6/icmp/echo_ignore_all ]; then test "$(sysctl -n net.ipv6.icmp.echo_ignore_all)" = 0; fi
           test ! -e /etc/systemd/system/firewall-ui-docker-update.service
           test ! -e /etc/systemd/system/firewall-ui-docker-update.timer
+          test ! -e /etc/systemd/system/firewall-ui-docker-dev-update.service
+          test ! -e /etc/systemd/system/firewall-ui-docker-dev-update.timer
           test ! -e "$FIREWALL_UI_DOCKER_DIR"
           test ! -e "$FIREWALL_UI_CONFIG_DIR"
           test ! -e "$FIREWALL_UI_STATE_DIR"
