@@ -848,7 +848,7 @@ docker_main() {
       fi;;
   esac
   case "${1:-}" in
-    auto-update) docker_auto_update;; auto-settings) docker_auto_settings;;
+    auto-update) docker_auto_update "${2:-}";; auto-settings) docker_auto_settings;;
     install|update) docker_install install;; configure) docker_install configure;;
     credentials) docker_change_credentials;;
     renew-certificates) docker_renew_certificates;;
