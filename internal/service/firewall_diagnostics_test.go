@@ -70,3 +70,19 @@ func TestNFTCounterParser(t *testing.T) {
 		t.Fatalf("counters not parsed: %#v %v", result, err)
 	}
 }
+
+func TestNFTRulesetDigestIgnoresLiveCountersAndHandles(t *testing.T) {
+	before := []byte(`{"nftables":[{"metainfo":{"version":"1.0"}},{"rule":{"handle":10,"expr":[{"counter":{"packets":2,"bytes":50}},{"accept":null}],"comment":"fwui-managed:443/tcp"}}]}`)
+	after := []byte(`{"nftables":[{"metainfo":{"version":"1.0"}},{"rule":{"handle":55,"expr":[{"counter":{"packets":100,"bytes":10000}},{"accept":null}],"comment":"fwui-managed:443/tcp"}}]}`)
+	first, err := normalizedNFTRulesetFingerprint(before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := normalizedNFTRulesetFingerprint(after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatal("volatile counters or nft handles triggered policy replacement")
+	}
+}
