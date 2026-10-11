@@ -464,9 +464,11 @@ func applyManagedNftables(ctx context.Context, binary string, rules []FirewallRu
 		expression := strings.TrimSpace(advancedNFTExpression(rule))
 		if expression != "" {
 			verdict := "accept"
-			if rule.Action == "deny" { verdict = "drop" }
-			if strings.HasSuffix(expression, " " + verdict) {
-				expression = strings.TrimSuffix(expression, " " + verdict) + " counter " + verdict + " comment \"fwui-advanced:" + rule.ID + "\""
+			if rule.Action == "deny" {
+				verdict = "drop"
+			}
+			if strings.HasSuffix(expression, " "+verdict) {
+				expression = strings.TrimSuffix(expression, " "+verdict) + " counter " + verdict + " comment \"fwui-advanced:" + rule.ID + "\""
 			}
 			script.WriteString("  " + expression + "\n")
 		}
