@@ -78,8 +78,8 @@ export default function FirewallDiagnostics({ backend, enabled, ru, onReload }: 
     } finally { setBusy(''); }
   }
 
-  const min = Math.min(...history, 0);
-  const max = Math.max(...history, 1);
+  const min = history.length ? Math.min(...history) : 0;
+  const max = history.length ? Math.max(...history) : 1;
   const points = history.map((n, i) => {
     const x = history.length === 1 ? 0 : i * 100 / (history.length - 1);
     const y = 35 - (n - min) * 30 / (max - min || 1);
