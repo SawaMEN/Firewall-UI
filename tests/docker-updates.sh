@@ -19,7 +19,7 @@ printf '{"updateChannel":"stable"}\n' > "$DOCKER_CONFIG_DIR/config.json"
 # Empty Docker passwords must be generated just like native passwords.
 DOCKER_INTERACTIVE=0
 FIREWALL_UI_PASSWORD='' docker_password > "$FIXTURE/password-output"
-[[ "$DOCKER_PASSWORD" =~ ^[0-9a-f]{40}$ ]]
+[[ "$DOCKER_PASSWORD" =~ ^[A-Za-z0-9]{10}$ ]]
 grep -q "Сгенерированный пароль Firewall-UI: $DOCKER_PASSWORD" "$FIXTURE/password-output"
 export FIREWALL_UI_DOCKER_AUTO_UPDATE=1
 systemctl() { printf '%s\n' "$*" >> "$FIXTURE/systemctl"; }
