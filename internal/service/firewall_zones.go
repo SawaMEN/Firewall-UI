@@ -42,7 +42,7 @@ func parseFirewalldActiveZones(output string) map[string][]string {
 			continue
 		}
 		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
-			current = strings.TrimSpace(line)
+			current = strings.Fields(line)[0]
 			zones[current] = []string{}
 		} else if current != "" {
 			fields := strings.Fields(strings.TrimSpace(line))
