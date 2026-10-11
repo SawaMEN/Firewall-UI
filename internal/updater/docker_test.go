@@ -8,6 +8,24 @@ import (
 	"time"
 )
 
+func TestDockerDevAlwaysReportsAutomatic(t *testing.T) {
+  dir := t.TempDir()
+  m := &DockerManager{dir: dir}
+  if err := os.WriteFile(filepath.Join(dir, "auto-update"), []byte("0\n"), 0600); err != nil {
+    t.Fatal(err)
+  }
+  dev := Status{SelectedChannel: "dev"}
+  m.ReadStatus(&dev)
+  if !dev.Automatic {
+    t.Fatal("dev must report automatic updates even with stable opted out")
+  }
+  stable := Status{SelectedChannel: "stable"}
+  m.ReadStatus(&stable)
+  if stable.Automatic {
+    t.Fatal("stable must respect the stored opt-out")
+  }
+}
+
 func TestDockerProgressAndOldFailures(t *testing.T) {
 	dir := t.TempDir()
 	m := &DockerManager{dir: dir}
