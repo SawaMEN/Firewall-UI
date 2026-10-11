@@ -421,7 +421,8 @@ create_settings() {
       read -r -s -p 'Пароль (любая длина; Enter — сгенерировать): ' password <&3 || true
       printf '\n' >&3
     fi
-    if [[ -z "$password" ]]; then password="$(od -An -N20 -tx1 /dev/urandom | tr -d ' \n')"; echo "Сгенерированный пароль Firewall-UI: $password"; fi
+    if [[ -z "$password" ]]; then password="$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-10)"; echo "Сгенерированный пароль Firewall-UI: $password"; fi
+    [[ "${#password}" == 10 || "${FIREWALL_UI_PASSWORD:-}" != '' ]] || { echo 'Не удалось сгенерировать пароль.' >&2; return 1; }
     echo 'Рекомендация: длинный уникальный пароль.'
     [[ -n "$password" && "$password" != *$'\n'* && "$password" != *$'\r'* ]] || { echo 'Перевод строки в пароле не поддерживается.' >&2; return 1; }
     local temp_env; temp_env="$(mktemp "$CONFIG_DIR/.environment-XXXXXX")"
