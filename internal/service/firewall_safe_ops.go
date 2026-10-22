@@ -357,7 +357,7 @@ func (s *FirewallService) changeManagedManualRuleSafe(ctx context.Context, port 
 			return nil, err
 		}
 		return map[string]string{
-			firewallManualRulesKey: string(rulesJSON),
+			firewallManualRulesKey:  string(rulesJSON),
 			firewallManualLabelsKey: string(labelsJSON),
 		}, nil
 	}
