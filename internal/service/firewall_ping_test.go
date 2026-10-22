@@ -93,7 +93,18 @@ func TestPingPreferenceRespectsDisabledManagementWithActiveUFW(t *testing.T) {
 	path := filepath.Join(dir, "ping")
 	writePingTestFile(t, path, "0")
 	useFirewallPingTestPaths(t, path)
-	if err := os.WriteFile(filepath.Join(dir, "ufw"), []byte("#!/bin/sh\ncase \"$*\" in status*) echo 'Status: active';; esac\n"), 0755); err != nil {
+	// Mimic UFW persisting allowed rules: a successful allow command must
+	// be reflected by a subsequent "show added" check.
+	rulesPath := filepath.Join(dir, "ufw-rules")
+	t.Setenv("FWUI_TEST_UFW_RULES", rulesPath)
+	stub := `#!/bin/sh
+case "$*" in
+  status*) echo 'Status: active';;
+  'show added') [ ! -f "$FWUI_TEST_UFW_RULES" ] || /bin/cat "$FWUI_TEST_UFW_RULES";;
+  allow*) echo "ufw allow $2" >> "$FWUI_TEST_UFW_RULES";;
+esac
+`
+	if err := os.WriteFile(filepath.Join(dir, "ufw"), []byte(stub), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
