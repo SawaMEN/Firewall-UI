@@ -118,3 +118,52 @@ esac
 		t.Fatalf("owned rules remain: %s", raw)
 	}
 }
+
+func TestClosedPortDNATDropPrecedesEstablishedAndManualAllow(t *testing.T) {
+	closeRule := FirewallAdvancedRule{
+		ID: closeRuleID(9000, "tcp"), Action: "deny", Protocol: "tcp",
+		PortStart: 9000, PortEnd: 9000, IPVersion: "any", Priority: -1000,
+	}
+	script := buildContainerForwardRules(
+		[]ContainerPort{{HostPort: 9000, HostIP: "0.0.0.0", Protocol: "tcp", Public: true}},
+		[]FirewallManualRule{{Port: 9000, Protocol: "tcp"}},
+		[]FirewallAdvancedRule{closeRule},
+	)
+	deny := "meta l4proto tcp ct status dnat ct original proto-dst 9000 counter drop"
+	if strings.Index(script, deny) < 0 {
+		t.Fatalf("DNAT close was not generated: %s", script)
+	}
+	if strings.Index(script, deny) > strings.Index(script, "ct state established,related accept") {
+		t.Fatalf("established flow would bypass an explicit close: %s", script)
+	}
+	if strings.Index(script, deny) > strings.Index(script, "fwui-container-allow:") {
+		t.Fatalf("manual allow takes priority over a close: %s", script)
+	}
+	if strings.Contains(script, "fwui-container-rule:"+closeRule.ID) {
+		t.Fatalf("closed port was duplicated in per-container rules: %s", script)
+	}
+}
+
+func TestUFWCloseRejectsSuccessfulButIneffectiveInsert(t *testing.T) {
+	root := t.TempDir()
+	ufw := `#!/bin/sh
+case "$*" in
+ status) echo 'Status: active';;
+ 'status numbered') echo 'Status: active';;
+ 'show added') echo 'ufw allow 9000/tcp';;
+esac
+`
+	if err := os.WriteFile(filepath.Join(root, "ufw"), []byte(ufw), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root)
+	Configure(filepath.Join(root, "state.json"), 8088, 443)
+	_, err := (&FirewallService{}).SetPortClosedSafe(context.Background(), 9000, "tcp", true, 8088)
+	if err == nil || !strings.Contains(err.Error(), "did not install the highest-priority DENY") {
+		t.Fatalf("successful UFW no-op incorrectly treated as a closed port: %v", err)
+	}
+	rules, err := loadAdvancedFirewallRules()
+	if err != nil || len(rules) != 0 {
+		t.Fatalf("ineffective close was persisted: %v, %v", rules, err)
+	}
+}
