@@ -320,6 +320,13 @@ func (s *FirewallService) managedStatusLocked(ctx context.Context, safetyPort in
 	if err != nil {
 		return FirewallManagedStatus{}, err
 	}
+	safety, err := s.managedDesiredRules(false, safetyPort)
+	if err != nil {
+		return FirewallManagedStatus{}, err
+	}
+	for i := range unknown {
+		unknown[i].CanDelete = removableExternalRule(unknown[i].Raw, backend.name, safety)
+	}
 	status.UnknownRules = unknown
 	seen := make(map[string]bool, len(desired))
 	for i := range desired {
