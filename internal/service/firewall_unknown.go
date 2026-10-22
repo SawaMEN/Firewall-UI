@@ -9,12 +9,12 @@ import (
 // Unknown firewall rules are shown without pretending to understand their
 // effective outcome. Raw commands are for display only, never executed.
 type FirewallUnknownRule struct {
-	Raw      string `json:"raw"`
-	Port     int    `json:"port,omitempty"`
-	Protocol string `json:"protocol,omitempty"`
-	CanClose bool   `json:"canClose"`
-	CanDelete bool  `json:"canDelete"`
-	Reason   string `json:"reason"`
+	Raw       string `json:"raw"`
+	Port      int    `json:"port,omitempty"`
+	Protocol  string `json:"protocol,omitempty"`
+	CanClose  bool   `json:"canClose"`
+	CanDelete bool   `json:"canDelete"`
+	Reason    string `json:"reason"`
 }
 
 func unknownUFWRule(line string) (FirewallUnknownRule, bool) {
