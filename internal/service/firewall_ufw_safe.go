@@ -242,7 +242,7 @@ func verifyNftInputClose(ctx context.Context, rule FirewallAdvancedRule) error {
 	if err != nil {
 		return fmt.Errorf("nftables unavailable: %w", err)
 	}
-	active, err := runFirewallCommand(ctx, nft, "-nn", "list", "chain", "inet", containerNFTTable, "input")
+	active, err := runFirewallCommand(ctx, nft, "list", "chain", "inet", containerNFTTable, "input")
 	if err != nil {
 		return fmt.Errorf("read kernel INPUT drop chain: %w", err)
 	}
