@@ -42,6 +42,7 @@ type RuntimeSettings = {
   allowedCidrs: string[];
   rollbackSeconds: number;
   portScanInterval: number;
+  syncIntervalSeconds: number;
   restarting?: boolean;
 };
 
@@ -104,6 +105,8 @@ export default function SettingsPage() {
             rollback: 'Rollback timeout, сек.',
             rollbackHint: 'UI должен подтвердить доступность после опасного изменения, иначе прошлые правила восстановятся.',
             scan: 'Интервал сканирования портов, сек.',
+            syncInterval: 'Интервал синхронизации файрволла',
+            syncIntervalHint: 'Как часто проверять и восстанавливать правила. Изменения через панель применяются сразу.',
             tls: 'Встроенный TLS',
             tlsOn: 'Настроен',
             tlsOff: 'Не настроен',
@@ -151,6 +154,8 @@ export default function SettingsPage() {
             rollback: 'Rollback timeout, sec.',
             rollbackHint: 'The UI must confirm connectivity after risky changes or previous rules are restored.',
             scan: 'Port scan interval, sec.',
+            syncInterval: 'Firewall synchronization interval',
+            syncIntervalHint: 'How often to check and restore rules. Changes from this panel still apply immediately.',
             tls: 'Built-in TLS',
             tlsOn: 'Configured',
             tlsOff: 'Not configured',
@@ -213,6 +218,7 @@ export default function SettingsPage() {
       updateChannel: settings.updateChannel,
       rollbackSeconds: settings.rollbackSeconds,
       portScanInterval: settings.portScanInterval,
+      syncIntervalSeconds: settings.syncIntervalSeconds || 60,
       allowedCidrsText: (settings.allowedCidrs || []).join('\n'),
     });
   }
@@ -274,6 +280,7 @@ export default function SettingsPage() {
         allowedCidrs,
         rollbackSeconds: values.rollbackSeconds,
         portScanInterval: values.portScanInterval,
+        syncIntervalSeconds: values.syncIntervalSeconds,
       });
       if (!result.success || !result.obj) {
         setError(result.msg || text.failed);
@@ -369,6 +376,7 @@ export default function SettingsPage() {
         updateChannel: 'stable',
         rollbackSeconds: 45,
         portScanInterval: 2,
+        syncIntervalSeconds: 60,
         allowedCidrsText: '',
       }}
     >
@@ -417,6 +425,16 @@ export default function SettingsPage() {
             </Form.Item>
             <Form.Item name="portScanInterval" label={text.scan}>
               <InputNumber min={1} max={30} style={{ width: '100%' }} />
+            </Form.Item>
+            <Form.Item name="syncIntervalSeconds" label={text.syncInterval} extra={text.syncIntervalHint}>
+              <Select options={[30, 60, 120, 300, 600].map((value) => ({
+                value,
+                label: value < 60
+                  ? (ru ? '30 секунд' : '30 seconds')
+                  : value < 60 * 2
+                    ? (ru ? '1 минута' : '1 minute')
+                    : (ru ? `${value / 60} минут` : `${value / 60} minutes`),
+              }))} />
             </Form.Item>
           </div>
           <Form.Item name="allowedCidrsText" label={text.cidrs} extra={text.cidrsHint}>
