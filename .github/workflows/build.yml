@@ -24,21 +24,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       build_time: ${{ steps.metadata.outputs.build_time }}
-      distributions: ${{ steps.scope.outputs.distributions }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-      - id: scope
-        env:
-          BEFORE: ${{ github.event.before }}
-        run: |
-          scope=true
-          if [[ "$GITHUB_EVENT_NAME" == push ]] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            changed="$(git diff --name-only "$BEFORE" HEAD)"
-            if [[ -n "$changed" ]] && ! grep -Eqv '^(README\.md|docs/.*)$' <<< "$changed"; then scope=false; fi
-          fi
-          echo "distributions=$scope" >> "$GITHUB_OUTPUT"
       - id: metadata
         run: echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v4
@@ -150,7 +137,7 @@ jobs:
     # The installer/systemd matrix is expensive and duplicates the Docker
     # lifecycle smoke tests. Run it weekly or on manual request, not on
     # every release-producing commit.
-    if: needs.frontend.outputs.distributions == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
