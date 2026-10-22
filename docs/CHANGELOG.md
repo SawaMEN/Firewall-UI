@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.13
+
+- Enforce manually closed TCP/UDP ports in the running kernel using an isolated nftables INPUT drop chain at priority -50, ahead of UFW's normal input chains; keep existing FORWARD/DNAT protection for Docker/Podman.
+- Fix the 1332/udp case where an earlier UFW ALLOW remains at position 5 even after UFW reports that a DENY was inserted.
+- Verify the actual nftables INPUT drop before reporting successful closure, repair it after UFW reloads and during repeated close actions, and stop UFW reconciliation from repeatedly moving rules when a kernel drop is effective.
+- Reopening a port removes the corresponding kernel INPUT/FORWARD drop without deleting administrator-owned ALLOW rules.
+- Add regression tests for ineffective UFW prepend, IPv4/IPv6 and INPUT/FORWARD kernel enforcement.
+
 ## 1.3.12
 
 - Harden backup and rollback: capture live UFW/firewalld state and correctly restore host-wide firewall on/off status without deleting unrelated administrator rules.
