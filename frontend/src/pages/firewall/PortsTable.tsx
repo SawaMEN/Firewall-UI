@@ -72,6 +72,8 @@ type FirewallRule = {
 type AdvancedRule = {
   id: string;
   action: string;
+  enforced?: boolean;
+  enforcementError?: string;
   portStart?: number;
   portEnd?: number;
   protocol: string;
@@ -225,17 +227,20 @@ export function PortsTable() {
     }
   }
 
+  // Persisted intent and verified live kernel/UFW enforcement are different.
+  // A previously saved close must NEVER be rendered as CLOSED on its own.
+  const configuredCloseSet = useMemo(
+    () => new Set(advanced.filter((rule) =>
+      rule.id === `close-port-${rule.portStart}-${rule.protocol}` &&
+      rule.action === 'deny',
+    ).map((rule) => key(rule.portStart || 0, rule.protocol))),
+    [advanced],
+  );
   const closedSet = useMemo(
-    () =>
-      new Set(
-        advanced
-          .filter(
-            (rule) =>
-              rule.id === `close-port-${rule.portStart}-${rule.protocol}` &&
-              rule.action === 'deny',
-          )
-          .map((rule) => key(rule.portStart || 0, rule.protocol)),
-      ),
+    () => new Set(advanced.filter((rule) =>
+      rule.id === `close-port-${rule.portStart}-${rule.protocol}` &&
+      rule.action === 'deny' && rule.enforced === true,
+    ).map((rule) => key(rule.portStart || 0, rule.protocol))),
     [advanced],
   );
   const grouped = useMemo(() => {
@@ -309,6 +314,8 @@ export function PortsTable() {
     const k = key(port.port, port.protocol);
     const rule = ruleMap.get(k);
     const closed = closedSet.has(k);
+    const configuredClosed = configuredCloseSet.has(k);
+    const closeError = advanced.find((item) => item.id === `close-port-${port.port}-${port.protocol}`)?.enforcementError;
     const protectedPort = ['panel', 'session', 'ssh'].includes(
       rule?.source || '',
     );
@@ -320,7 +327,9 @@ export function PortsTable() {
               ? 'warning'
               : closed
                 ? 'error'
-                : rule?.exists
+                : configuredClosed
+                  ? 'warning'
+                  : rule?.exists
                   ? 'success'
                   : 'default'
           }
@@ -333,6 +342,10 @@ export function PortsTable() {
               ? ru
                 ? 'ЗАКРЫТ'
                 : 'CLOSED'
+              : configuredClosed
+                ? ru
+                  ? 'НЕ ЗАКРЫТ'
+                  : 'NOT CLOSED'
               : rule?.exists
                 ? rule.source === 'service'
                   ? 'AUTO'
@@ -341,6 +354,11 @@ export function PortsTable() {
                   ? 'НЕ ОПРЕДЕЛЕНО'
                   : 'UNKNOWN'}
         </Tag>
+        {configuredClosed && !closed && closeError ? (
+          <Typography.Text type="warning" title={closeError}>
+            {ru ? 'Правило не действует' : 'Rule not enforced'}
+          </Typography.Text>
+        ) : null}
         {protectedPort ? (
           <Tag>{ru ? 'Защищён' : 'Protected'}</Tag>
         ) : (
@@ -350,11 +368,15 @@ export function PortsTable() {
                 ? ru
                   ? 'Открыть порт?'
                   : 'Open port?'
-                : ru
-                  ? 'Закрыть доступ к порту? Процесс продолжит работать.'
-                  : 'Block access to this port? The process will keep running.'
+                : configuredClosed
+                  ? ru
+                    ? 'Повторить закрытие? Текущее правило не подтверждено.'
+                    : 'Retry closing? Current rule is not verified.'
+                  : ru
+                    ? 'Закрыть доступ к порту? Процесс продолжит работать.'
+                    : 'Block access to this port? The process will keep running.'
             }
-            onConfirm={() => void setPortAccess(port, !closed)}
+            onConfirm={() => void setPortAccess(port, configuredClosed ? !closed : true)}
           >
             <Button
               size="small"
@@ -367,9 +389,13 @@ export function PortsTable() {
                 ? ru
                   ? 'Открыть'
                   : 'Open'
-                : ru
-                  ? 'Закрыть порт'
-                  : 'Close port'}
+                : configuredClosed
+                  ? ru
+                    ? 'Повторить закрытие'
+                    : 'Retry close'
+                  : ru
+                    ? 'Закрыть порт'
+                    : 'Close port'}
             </Button>
           </Popconfirm>
         )}

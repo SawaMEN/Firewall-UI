@@ -477,7 +477,9 @@ func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) advancedRules(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		rules, err := s.Firewall.AdvancedRules()
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		rules, err := s.Firewall.AdvancedRulesLive(ctx)
 		reply(w, http.StatusOK, rules, err)
 		return
 	}

@@ -21,22 +21,76 @@ var interfacePattern = regexp.MustCompile(`^[A-Za-z0-9_.:@-]{1,32}$`)
 var ruleIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 type FirewallAdvancedRule struct {
-	ID         string `json:"id"`
-	Action     string `json:"action"`
-	Protocol   string `json:"protocol"`
-	PortStart  int    `json:"portStart,omitempty"`
-	PortEnd    int    `json:"portEnd,omitempty"`
-	SourceCIDR string `json:"sourceCidr,omitempty"`
-	Interface  string `json:"interface,omitempty"`
-	IPVersion  string `json:"ipVersion,omitempty"`
-	Label      string `json:"label,omitempty"`
-	Priority   int    `json:"priority"`
+	ID               string `json:"id"`
+	Action           string `json:"action"`
+	Protocol         string `json:"protocol"`
+	PortStart        int    `json:"portStart,omitempty"`
+	PortEnd          int    `json:"portEnd,omitempty"`
+	SourceCIDR       string `json:"sourceCidr,omitempty"`
+	Interface        string `json:"interface,omitempty"`
+	IPVersion        string `json:"ipVersion,omitempty"`
+	Label            string `json:"label,omitempty"`
+	Priority         int    `json:"priority"`
+	Enforced         *bool  `json:"enforced,omitempty"` // Live host firewall verification, never persisted
+	EnforcementError string `json:"enforcementError,omitempty"`
 }
 
 func (s *FirewallService) AdvancedRules() ([]FirewallAdvancedRule, error) {
 	firewallMu.Lock()
 	defer firewallMu.Unlock()
 	return loadAdvancedFirewallRules()
+}
+
+// AdvancedRulesLive separates requested/saved close rules from actual
+// installed host firewall rules. A saved close-port ID is not evidence that
+// packets are blocked. These transient fields are returned by the API only.
+func (s *FirewallService) AdvancedRulesLive(ctx context.Context) ([]FirewallAdvancedRule, error) {
+	firewallMu.Lock()
+	defer firewallMu.Unlock()
+	rules, err := loadAdvancedFirewallRules()
+	if err != nil {
+		return nil, err
+	}
+	if len(rules) == 0 {
+		return rules, nil
+	}
+	backend, detectErr := detectManagedFirewallBackend(ctx)
+	enabled := false
+	if detectErr == nil {
+		enabled, detectErr = backend.enabled(ctx)
+	}
+	for i := range rules {
+		rule := &rules[i]
+		if !isClosePortRule(*rule) {
+			continue
+		}
+		applied := false
+		rule.Enforced = &applied
+		if detectErr != nil {
+			rule.EnforcementError = "Cannot inspect active firewall: " + detectErr.Error()
+			continue
+		}
+		if !enabled {
+			rule.EnforcementError = "Host firewall is disabled"
+			continue
+		}
+		if backend.name != "ufw" && backend.name != "firewalld" {
+			rule.EnforcementError = "Live closed-port verification is unavailable for " + backend.name
+			continue
+		}
+		if err := verifyNFTPortClose(ctx, *rule); err != nil {
+			rule.EnforcementError = err.Error()
+			continue
+		}
+		if backend.name == "ufw" {
+			if _, err := verifyUFWClosedPort(ctx, backend.binary, *rule); err != nil {
+				rule.EnforcementError = "UFW DENY not effective: " + err.Error()
+				continue
+			}
+		}
+		applied = true
+	}
+	return rules, nil
 }
 
 func (s *FirewallService) AddAdvancedRuleSafe(ctx context.Context, rule FirewallAdvancedRule, safetyPort int) ([]FirewallAdvancedRule, error) {
@@ -134,6 +188,10 @@ func loadAdvancedFirewallRules() ([]FirewallAdvancedRule, error) {
 }
 
 func validateAdvancedRule(rule *FirewallAdvancedRule) error {
+	// Enforcement evidence is computed from the live host on GET.
+	// It must never be accepted from clients or persisted as configuration.
+	rule.Enforced = nil
+	rule.EnforcementError = ""
 	if rule.ID != "" && !ruleIDPattern.MatchString(rule.ID) {
 		return errors.New("invalid advanced rule ID")
 	}
@@ -458,9 +516,14 @@ func applySystemAdvancedRule(ctx context.Context, backend firewallBackend, rule 
 			// Preserve the independent INPUT/FORWARD kernel protection on
 			// hosts where UFW refuses to reorder rules. Never pretend the
 			// UFW rule itself was successfully updated.
+			// A kernel DROP is useful defence-in-depth but it does not
+			// satisfy UFW's explicit DENY contract. Returning success here
+			// made the panel display CLOSED while 'ufw status' kept ALLOW.
+			// Report failure so the saved close can be rolled back.
 			if nftErr := verifyNFTPortClose(ctx, rule); nftErr != nil {
 				return fmt.Errorf("UFW DENY for %d/%s did not precede ALLOW: %w (prepend: %v; insert: %v; nftables: %v)", rule.PortStart, rule.Protocol, err, applyErr, insertErr, nftErr)
 			}
+			return fmt.Errorf("UFW DENY for %d/%s is not the leading effective rule after prepend and insert: %w (prepend: %v; insert: %v); kernel nftables DROP exists but cannot make UFW status correct", rule.PortStart, rule.Protocol, err, applyErr, insertErr)
 		}
 		return nil
 	}
