@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.11
+
+- Fix a closed UFW port remaining reachable when an older Firewall-UI DENY is shadowed by an earlier ALLOW. Replace only the owned stale DENY and prepend the new block.
+- Verify close-port behavior for IPv4 and IPv6 independently, with a regression for 1332/udp.
+- Preserve the selected Overview, Firewall, Ports, or Settings tab on browser refresh and after panel updates using URL hashes; support browser Back/Forward.
+- Respect the current light/dark theme in the desktop sidebar and mobile navigation, rather than forcing the sidebar light.
+- Use application-themed Ant Design confirmation modals and notifications in firewall, settings, and login screens.
+
 ## 1.3.10
 
 - Make the main firewall switch control the real UFW/firewalld service, rather than toggling just Firewall-UI-owned rules; confirm host-wide shutdown and preserve existing UFW rules.
