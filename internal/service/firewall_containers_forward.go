@@ -227,6 +227,29 @@ func buildContainerForwardRules(ports []ContainerPort, manual []FirewallManualRu
 	sortAdvancedRules(advanced)
 	var b strings.Builder
 	b.WriteString("table inet " + containerNFTTable + " {\n")
+	// UFW INPUT rules can remain shadowed by an administrator's ALLOW or by
+	// another UFW rule that the panel does not own. A separate nftables
+	// INPUT base chain at priority -50 enforces explicit closes directly in
+	// the kernel. It runs before the normal UFW filter chains and does not
+	// modify any administrator-owned UFW configuration.
+	closed := false
+	for _, rule := range advanced {
+		if isClosePortRule(rule) {
+			closed = true
+			break
+		}
+	}
+	if closed {
+		b.WriteString(" chain input { type filter hook input priority -50; policy accept;\n")
+		for _, rule := range advanced {
+			if !isClosePortRule(rule) {
+				continue
+			}
+			b.WriteString("  meta l4proto " + rule.Protocol + " th dport " +
+				strconv.Itoa(rule.PortStart) + " counter drop comment \"fwui-closed-input:" + rule.ID + "\"\n")
+		}
+		b.WriteString(" }\n")
+	}
 	b.WriteString(" chain forward { type filter hook forward priority -50; policy accept;\n")
 	// A close-port action must win even for established connections and
 	// must not depend on a potentially stale published-container snapshot.
