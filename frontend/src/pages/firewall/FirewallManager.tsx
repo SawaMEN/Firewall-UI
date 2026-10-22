@@ -450,7 +450,7 @@ export function FirewallManager() {
                 } else {
                   void apply();
                 }
-              }
+              }}
             />
             <Typography.Text strong>
               {status.enabled ? text.enabled : text.disabled}
