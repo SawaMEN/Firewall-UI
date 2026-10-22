@@ -328,7 +328,8 @@ case "$*" in
   'list tables')
     if [ -f "$FWUI_KERNEL_RULES" ]; then echo 'table inet firewall_ui_containers'; fi;;
   'list chain inet firewall_ui_containers input')
-    /bin/cat "$FWUI_KERNEL_RULES";;
+    # nft normalizes the source expression when it displays live rules.
+    /bin/sed 's/meta l4proto udp th dport 1332/udp dport 1332/g' "$FWUI_KERNEL_RULES";;
   '-f -') /bin/cat > "$FWUI_KERNEL_RULES";;
   'delete table inet firewall_ui_containers')
     /bin/rm -f "$FWUI_KERNEL_RULES";;
@@ -359,9 +360,25 @@ esac
 			t.Fatalf("kernel did not block 1332/udp: missing %q in %s", clause, script)
 		}
 	}
+	// Simulate another service changing this table while the desired-policy
+	// cache is fresh. Closing the port again must repair the missing kernel
+	// rule rather than reporting a false success or returning an error.
+	withoutDrop := strings.Replace(string(script),
+		"meta l4proto udp th dport 1332 counter drop comment \"fwui-closed-input:close-port-1332-udp\"",
+		"", 1)
+	if withoutDrop == string(script) {
+		t.Fatal("test fixture did not remove its INPUT DROP")
+	}
+	if err := os.WriteFile(nftRules, []byte(withoutDrop), 0600); err != nil {
+		t.Fatal(err)
+	}
 	// Auto-sync/idempotent closes must not start a loop of UFW repairs.
 	if _, err := svc.SetPortClosedSafe(ctx, 1332, "udp", true, 8088); err != nil {
-		t.Fatalf("repeated close failed despite active nftables INPUT drop: %v", err)
+		t.Fatalf("repeated close could not repair a missing kernel INPUT drop: %v", err)
+	}
+	repaired, err := os.ReadFile(nftRules)
+	if err != nil || !strings.Contains(string(repaired), "fwui-closed-input:close-port-1332-udp") {
+		t.Fatalf("fresh policy cache hid a removed kernel DROP: %s; err: %v", repaired, err)
 	}
 	if _, err := svc.SetPortClosedSafe(ctx, 1332, "udp", false, 8088); err != nil {
 		t.Fatalf("failed to reopen kernel-blocked UDP port: %v", err)
