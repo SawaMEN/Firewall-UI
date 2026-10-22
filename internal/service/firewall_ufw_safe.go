@@ -196,11 +196,9 @@ func verifyUFWClosedPort(ctx context.Context, binary string, rule FirewallAdvanc
 // verifyNftInputClose checks that an explicit close is independently
 // enforced by an actual nftables INPUT drop rule in the running kernel.
 // A UFW numbered ALLOW cannot override this higher-priority drop chain.
-// nftables can normalize the source expression
-//     meta l4proto tcp th dport 1332
-// into
-//     tcp dport 1332
-// when listing an installed rule. We must verify the actual hook, port,
+// nftables can normalize "meta l4proto tcp th dport 1332" into
+// "tcp dport 1332" when listing an installed rule.
+// We must verify the actual hook, port,
 // protocol, DROP verdict and exact ownership marker, not the original
 // textual form of the statement sent to nft -f.
 func nftInputClosePresent(active string, rule FirewallAdvancedRule) bool {
