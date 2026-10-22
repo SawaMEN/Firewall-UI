@@ -3,12 +3,12 @@ import { useUpdates } from '@/hooks/useUpdates';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  App,
   Button,
   Card,
   Form,
   Input,
   InputNumber,
-  message,
   Popconfirm,
   Select,
   Space,
@@ -65,6 +65,7 @@ type BackupRestoreResult = {
 };
 
 export default function SettingsPage() {
+  const { message } = App.useApp();
   const { i18n } = useTranslation();
   const ru = i18n.language.startsWith('ru');
   const [form] = Form.useForm<FormSettings>();
