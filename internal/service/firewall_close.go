@@ -71,16 +71,11 @@ func (s *FirewallService) SetPortClosedSafe(ctx context.Context, port int, proto
 				// Repeated close requests must repair a missing/stale UFW rule
 				// and install the DNAT hook after an upgrade or restart.
 				if backend.name == "ufw" {
-					status, statusErr := runFirewallCommand(ctx, backend.binary, "status", "numbered")
-					if statusErr != nil {
-						return nil, statusErr
-					}
-					number := findUFWManagedRuleNumber(status, "Firewall-UI advanced "+id, "")
-					if number != 1 {
-						if number > 0 {
-							if err := deleteUFWManagedRules(ctx, backend.binary, "Firewall-UI advanced "+id, ""); err != nil {
-								return nil, err
-							}
+					if _, err := verifyUFWClosedPort(ctx, backend.binary, rule); err != nil {
+						// Reconcile only Firewall-UI-owned rules; leave other
+						// administrator rules untouched.
+						if err := deleteUFWManagedRules(ctx, backend.binary, "Firewall-UI advanced "+id, ""); err != nil {
+							return nil, err
 						}
 						if err := applySystemAdvancedRule(ctx, backend, rule, true); err != nil {
 							return nil, err
