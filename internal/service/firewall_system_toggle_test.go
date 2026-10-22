@@ -81,3 +81,29 @@ esac
 		t.Fatalf("toggle must preserve system firewall rules: %s", log)
 	}
 }
+
+func TestUFWSystemSwitchRejectsNoOpDisable(t *testing.T) {
+	root := t.TempDir()
+	stub := `#!/bin/sh
+case "$*" in
+  status|'status verbose'|'status numbered') echo 'Status: active';;
+  'show added') echo 'ufw allow 8088/tcp';;
+  disable) exit 0;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(root, "ufw"), []byte(stub), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root)
+	Configure(filepath.Join(root, "state.json"), 8088, 0)
+	if err := setFirewallManagedEnabledPreference(true); err != nil {
+		t.Fatal(err)
+	}
+	_, err := (&FirewallService{}).SetManagedEnabledSafe(context.Background(), false, 8088)
+	if err == nil || !strings.Contains(err.Error(), "remains active") {
+		t.Fatalf("no-op UFW disable reported success: %v", err)
+	}
+	if preferred, _, err := firewallManagedEnabledPreference(); err != nil || !preferred {
+		t.Fatalf("failed operation overwrote requested running state: %v, %v", preferred, err)
+	}
+}
