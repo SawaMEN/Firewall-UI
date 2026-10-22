@@ -57,6 +57,39 @@ func findUFWManagedRuleNumber(status, comment, spec string) int {
 	return 0
 }
 
+// A rule for a port range or for all ports can shadow an exact-port DENY.
+// Do not infer a successful block merely from an exact-looking DENY farther
+// down the UFW list.
+func ufwTargetCoversPort(target, spec string) bool {
+	if strings.EqualFold(target, "Anywhere") {
+		return true
+	}
+	parts := strings.Split(spec, "/")
+	if len(parts) != 2 {
+		return false
+	}
+	if strings.EqualFold(target, spec) || target == parts[0] {
+		return true
+	}
+	targetParts := strings.Split(target, "/")
+	if len(targetParts) > 2 || len(targetParts) == 2 && !strings.EqualFold(targetParts[1], parts[1]) {
+		return false
+	}
+	rangeText := targetParts[0]
+	separator := ":"
+	if strings.Contains(rangeText, "-") {
+		separator = "-"
+	}
+	limits := strings.Split(rangeText, separator)
+	if len(limits) != 2 {
+		return false
+	}
+	start, err1 := strconv.Atoi(limits[0])
+	end, err2 := strconv.Atoi(limits[1])
+	port, err3 := strconv.Atoi(parts[0])
+	return err1 == nil && err2 == nil && err3 == nil && start <= port && port <= end
+}
+
 // Numbered UFW positions are shared between IPv4 and IPv6, but rule
 // precedence is independent per IP family. Verify each family separately.
 func findUFWPortDecisionFamily(status, spec string, ipv6 bool) (int, string) {
@@ -75,7 +108,7 @@ func findUFWPortDecisionFamily(status, spec string, ipv6 bool) (int, string) {
 		}
 		before, _, _ := strings.Cut(line[end+1:], "#")
 		fields := strings.Fields(before)
-		if len(fields) < 3 || !strings.EqualFold(fields[0], spec) {
+		if len(fields) < 3 || !ufwTargetCoversPort(fields[0], spec) {
 			continue
 		}
 		actionAt := 1
@@ -87,9 +120,21 @@ func findUFWPortDecisionFamily(status, spec string, ipv6 bool) (int, string) {
 			continue
 		}
 		action := fields[actionAt]
-		if action == "ALLOW" || action == "DENY" || action == "REJECT" {
+		if action != "ALLOW" && action != "DENY" && action != "REJECT" {
+			continue
+		}
+		// Any earlier ALLOW potentially exposes the port, even if restricted
+		// to a source/interface; do not let a later broad DENY hide it.
+		if action == "ALLOW" {
 			return number, action
 		}
+		// A DENY/REJECT scoped to one source does not block every client.
+		// Continue until a globally applicable port decision is found.
+		sourceAt := actionAt + 2
+		if len(fields) <= sourceAt || !strings.EqualFold(fields[sourceAt], "Anywhere") {
+			continue
+		}
+		return number, action
 	}
 	return 0, ""
 }
@@ -120,7 +165,7 @@ func verifyUFWClosedPort(ctx context.Context, binary string, rule FirewallAdvanc
 		return 0, err
 	}
 	spec := strconv.Itoa(rule.PortStart) + "/" + rule.Protocol
-	position, action := findUFWPortDecision(status, spec)
+	position, action := findUFWPortDecisionFamily(status, spec, false)
 	if action != "DENY" {
 		return position, fmt.Errorf("UFW has no effective leading DENY for %d/%s (first matching rule: %s at position %d)", rule.PortStart, rule.Protocol, action, position)
 	}
