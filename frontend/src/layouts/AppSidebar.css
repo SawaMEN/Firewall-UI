@@ -55,6 +55,10 @@
   padding: 0 4px;
   scrollbar-width: thin;
 }
+.ant-sidebar .sider-nav.ant-menu,
+.ant-drawer .drawer-menu.ant-menu {
+  background: transparent;
+}
 .sider-nav .ant-menu-item {
   border-radius: 9px;
 }

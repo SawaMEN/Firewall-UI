@@ -26,6 +26,7 @@ export default function AppSidebar({ page, onPageChange }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { mode, setThemeMode } = useTheme();
+  const siderTheme = mode === 'light' ? 'light' : 'dark';
   const { i18n } = useTranslation();
   const ru = i18n.language.startsWith('ru');
 
@@ -94,7 +95,7 @@ export default function AppSidebar({ page, onPageChange }: Props) {
           collapsible
           onCollapse={setCollapsed}
           breakpoint="lg"
-          theme="light"
+          theme={siderTheme}
         >
           <div className="sider-brand">
             <div className="sider-brand-content">
@@ -105,6 +106,7 @@ export default function AppSidebar({ page, onPageChange }: Props) {
             </div>
           </div>
           <Menu
+            theme={siderTheme}
             className="sider-nav"
             selectedKeys={[page]}
             mode="inline"
@@ -131,6 +133,7 @@ export default function AppSidebar({ page, onPageChange }: Props) {
         styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column' } }}
       >
         <Menu
+          theme={siderTheme}
           className="drawer-menu"
           selectedKeys={[page]}
           mode="inline"

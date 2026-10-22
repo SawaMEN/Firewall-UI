@@ -26,7 +26,7 @@ case "$*" in
      echo '[ 1] 9000/tcp DENY IN Anywhere # Firewall-UI advanced close-port-9000-tcp'
    fi;;
  'show added') echo 'ufw allow 9000/tcp';;
- 'insert 1 deny'*) : > "$FW_TEST_UFW_RULE";;
+ 'prepend deny'*) : > "$FW_TEST_UFW_RULE";;
  '--force delete 1') /bin/rm -f "$FW_TEST_UFW_RULE";;
 esac
 `
@@ -58,7 +58,7 @@ esac
 		t.Fatalf("close failed: %v %v", rules, err)
 	}
 	raw, _ := os.ReadFile(logPath)
-	if !strings.Contains(string(raw), "insert 1 deny to any port 9000 proto tcp comment Firewall-UI advanced close-port-9000-tcp") {
+	if !strings.Contains(string(raw), "prepend deny to any port 9000 proto tcp comment Firewall-UI advanced close-port-9000-tcp") {
 		t.Fatalf("deny not inserted before allow: %s", raw)
 	}
 	forward, err := os.ReadFile(nftRules)
@@ -186,7 +186,7 @@ case "$*" in
     if [ -f "$UFW_CLOSE_STATE" ]; then
       echo "ufw deny to any port 1332 proto tcp comment 'Firewall-UI advanced close-port-1332-tcp'"
     fi;;
-  'insert 1 deny'*) : > "$UFW_CLOSE_STATE";;
+  'prepend deny'*) : > "$UFW_CLOSE_STATE";;
   '--force delete deny to any port 1332 proto tcp comment Firewall-UI advanced close-port-1332-tcp')
     /bin/rm -f "$UFW_CLOSE_STATE";;
 esac
@@ -223,5 +223,76 @@ esac
 	}
 	if _, err := os.Stat(activeDeny); !os.IsNotExist(err) {
 		t.Fatalf("UFW deny persisted after reopening: %v", err)
+	}
+}
+
+func TestUFWCloseRepairsShadowed1332UDPAllow(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, "ufw-state")
+	logPath := filepath.Join(root, "ufw-log")
+	nftPath := filepath.Join(root, "nft-rules")
+	if err := os.WriteFile(state, []byte("shadowed\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FW_TEST_STATE", state)
+	t.Setenv("FW_TEST_LOG", logPath)
+	t.Setenv("FW_TEST_NFT", nftPath)
+	ufw := `#!/bin/sh
+echo "$*" >> "$FW_TEST_LOG"
+state="$(/bin/cat "$FW_TEST_STATE")"
+case "$*" in
+  status) echo 'Status: active';;
+  'status numbered')
+    echo 'Status: active'
+    if [ "$state" = fixed ]; then echo '[ 1] 1332/udp DENY IN Anywhere'; fi
+    echo '[ 2] 22/tcp ALLOW IN Anywhere'
+    echo '[ 5] 1332/udp ALLOW IN Anywhere'
+    if [ "$state" = shadowed ]; then echo '[ 6] 1332/udp DENY IN Anywhere'; fi;;
+  'show added')
+    echo "ufw allow 1332/udp comment 'administrator'"
+    if [ "$state" != allow_only ]; then
+       echo "ufw deny to any port 1332 proto udp comment 'Firewall-UI advanced close-port-1332-udp'"
+    fi;;
+  '--force delete deny to any port 1332 proto udp comment Firewall-UI advanced close-port-1332-udp')
+    echo allow_only > "$FW_TEST_STATE";;
+  'prepend deny to any port 1332 proto udp comment Firewall-UI advanced close-port-1332-udp')
+    if [ "$state" = allow_only ]; then echo fixed > "$FW_TEST_STATE"; fi;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(root, "ufw"), []byte(ufw), 0755); err != nil {
+		t.Fatal(err)
+	}
+	nft := `#!/bin/sh
+case "$*" in
+ 'list tables')
+    if [ -f "$FW_TEST_NFT" ]; then echo 'table inet firewall_ui_containers'; fi;;
+ '-f -') /bin/cat > "$FW_TEST_NFT";;
+esac
+`
+	if err := os.WriteFile(filepath.Join(root, "nft"), []byte(nft), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root)
+	Configure(filepath.Join(root, "panel.json"), 8088, 443)
+	svc := &FirewallService{}
+	ctx := context.Background()
+	rules, err := svc.SetPortClosedSafe(ctx, 1332, "udp", true, 8088)
+	if err != nil || len(rules) != 1 {
+		t.Fatalf("shadowed 1332/udp DENY was not repaired: %v %#v", err, rules)
+	}
+	gotState, err := os.ReadFile(state)
+	if err != nil || strings.TrimSpace(string(gotState)) != "fixed" {
+		t.Fatalf("port remained exposed: state %q, err %v", gotState, err)
+	}
+	log, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(log), "--force delete deny to any port 1332 proto udp comment Firewall-UI advanced close-port-1332-udp") ||
+		!strings.Contains(string(log), "prepend deny to any port 1332 proto udp comment Firewall-UI advanced close-port-1332-udp") {
+		t.Fatalf("the stale owned DENY was not replaced with a top-priority rule: %s", log)
+	}
+	if strings.Contains(string(log), "delete allow 1332/udp") {
+		t.Fatalf("administrator ALLOW was modified: %s", log)
 	}
 }

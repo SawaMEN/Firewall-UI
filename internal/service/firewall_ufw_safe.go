@@ -57,11 +57,9 @@ func findUFWManagedRuleNumber(status, comment, spec string) int {
 	return 0
 }
 
-// ufw status numbered may omit comments and may list unrelated rules above a
-// port. Return the *first matching inbound rule* for the target port; only
-// that action determines whether the port is allowed or denied.
-func findUFWPortDecision(status, spec string) (int, string) {
-	ipv6Position, ipv6Action := 0, ""
+// Numbered UFW positions are shared between IPv4 and IPv6, but rule
+// precedence is independent per IP family. Verify each family separately.
+func findUFWPortDecisionFamily(status, spec string, ipv6 bool) (int, string) {
 	for _, raw := range strings.Split(status, "\n") {
 		line := strings.TrimSpace(raw)
 		if !strings.HasPrefix(line, "[") {
@@ -81,26 +79,26 @@ func findUFWPortDecision(status, spec string) (int, string) {
 			continue
 		}
 		actionAt := 1
-		ipv6 := false
-		if fields[actionAt] == "(v6)" {
-			ipv6 = true
+		isIPv6 := fields[actionAt] == "(v6)"
+		if isIPv6 {
 			actionAt++
 		}
-		if len(fields) < actionAt+2 || fields[actionAt+1] != "IN" {
+		if isIPv6 != ipv6 || len(fields) < actionAt+2 || fields[actionAt+1] != "IN" {
 			continue
 		}
 		action := fields[actionAt]
-		if action != "ALLOW" && action != "DENY" && action != "REJECT" {
-			continue
-		}
-		if !ipv6 {
+		if action == "ALLOW" || action == "DENY" || action == "REJECT" {
 			return number, action
 		}
-		if ipv6Position == 0 {
-			ipv6Position, ipv6Action = number, action
-		}
 	}
-	return ipv6Position, ipv6Action
+	return 0, ""
+}
+
+func findUFWPortDecision(status, spec string) (int, string) {
+	if position, action := findUFWPortDecisionFamily(status, spec, false); position != 0 {
+		return position, action
+	}
+	return findUFWPortDecisionFamily(status, spec, true)
 }
 
 // Check the persistent UFW command list as well as the active numbered
@@ -121,9 +119,17 @@ func verifyUFWClosedPort(ctx context.Context, binary string, rule FirewallAdvanc
 	if err != nil {
 		return 0, err
 	}
-	position, action := findUFWPortDecision(status, strconv.Itoa(rule.PortStart)+"/"+rule.Protocol)
+	spec := strconv.Itoa(rule.PortStart) + "/" + rule.Protocol
+	position, action := findUFWPortDecision(status, spec)
 	if action != "DENY" {
 		return position, fmt.Errorf("UFW has no effective leading DENY for %d/%s (first matching rule: %s at position %d)", rule.PortStart, rule.Protocol, action, position)
+	}
+	// If the host has IPv6 UFW rules, a v4-only DENY does not close IPv6.
+	if strings.Contains(status, "(v6)") {
+		ipv6Position, ipv6Action := findUFWPortDecisionFamily(status, spec, true)
+		if ipv6Action != "DENY" {
+			return ipv6Position, fmt.Errorf("UFW has no effective IPv6 DENY for %d/%s (first IPv6 rule: %s at position %d)", rule.PortStart, rule.Protocol, ipv6Action, ipv6Position)
+		}
 	}
 	comment := "Firewall-UI advanced " + rule.ID
 	if findUFWManagedRuleNumber(status, comment, "") != 0 {

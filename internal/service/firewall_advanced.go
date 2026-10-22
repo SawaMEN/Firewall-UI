@@ -360,7 +360,24 @@ func applySystemAdvancedRule(ctx context.Context, backend firewallBackend, rule 
 		}
 		args := []string{rule.Action}
 		if isClosePortRule(rule) {
-			args = []string{"insert", "1", rule.Action}
+			// A previous DENY can be shadowed by an existing ALLOW.
+			// UFW skips insertion of duplicate rules, even if the existing
+			// DENY is below that ALLOW. Remove only our own prior DENY,
+			// then prepend a fresh one to the top of each IP family's rules.
+			comment := "Firewall-UI advanced " + rule.ID
+			added, err := runFirewallCommand(ctx, backend.binary, "show", "added")
+			if err != nil {
+				return err
+			}
+			if hasUFWAdvancedRule(added, comment) {
+				if _, err := verifyUFWClosedPort(ctx, backend.binary, rule); err == nil {
+					return nil
+				}
+				if err := deleteUFWManagedRules(ctx, backend.binary, comment, ""); err != nil {
+					return fmt.Errorf("replace shadowed UFW DENY for %d/%s: %w", rule.PortStart, rule.Protocol, err)
+				}
+			}
+			args = []string{"prepend", rule.Action}
 		}
 		if rule.Interface != "" {
 			args = append(args, "in", "on", rule.Interface)

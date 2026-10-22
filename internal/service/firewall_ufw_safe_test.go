@@ -86,3 +86,18 @@ ufw allow 22/tcp comment 'administrator'
 		t.Fatal("matched unrelated rule")
 	}
 }
+
+func TestUFWPortDecisionSeparatesIPv4AndIPv6(t *testing.T) {
+	status := `Status: active
+[ 1] 1332/udp DENY IN Anywhere
+[ 2] 22/tcp (v6) ALLOW IN Anywhere (v6)
+[ 3] 1332/udp (v6) ALLOW IN Anywhere (v6)
+[ 4] 1332/udp (v6) DENY IN Anywhere (v6)
+`
+	if pos, action := findUFWPortDecisionFamily(status, "1332/udp", false); pos != 1 || action != "DENY" {
+		t.Fatalf("IPv4 first match = %d %s", pos, action)
+	}
+	if pos, action := findUFWPortDecisionFamily(status, "1332/udp", true); pos != 3 || action != "ALLOW" {
+		t.Fatalf("IPv6 ALLOW must not be hidden by IPv4 DENY: %d %s", pos, action)
+	}
+}
