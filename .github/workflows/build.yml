@@ -1,11 +1,9 @@
 name: Build and test
 on:
+  # Every main commit must build a fresh dev artifact, including docs-only
+  # changes. A numbered stable release is independent and uses VERSION.
   push:
     branches: [main]
-    paths-ignore:
-      - 'README.md'
-      - 'docs/**'
-      - '**/*.md'
   pull_request:
     paths-ignore:
       - 'README.md'
@@ -16,11 +14,11 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-# Cancel obsolete pushes in the same branch, including releases: only
-# the current main commit can be published, so earlier builds waste runners.
+# Dev is built for *every* main commit, so never cancel main push runs.
+# PR re-runs may safely supersede older PR commits.
 concurrency:
-  group: firewall-ui-ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: firewall-ui-ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   frontend:
     runs-on: ubuntu-latest
@@ -91,12 +89,12 @@ jobs:
             gofmt -d ./cmd ./internal
             exit 1
           fi
-      # PRs get the quick suite; main + weekly/manual builds run race checks.
-      - name: Go tests (pull requests)
-        if: github.event_name == 'pull_request'
+      # Each commit gets full fast Go tests; heavy race detection is kept
+      # for the scheduled/manual suite rather than delaying every dev build.
+      - name: Go tests
         run: go test -vet=off ./...
-      - name: Go tests with race detection (main and extended)
-        if: github.event_name != 'pull_request'
+      - name: Go tests with race detection (weekly/manual)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: go test -race -vet=off ./...
       - name: Go static analysis
         if: github.event_name != 'pull_request'
