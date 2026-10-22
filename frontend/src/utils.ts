@@ -1,4 +1,5 @@
 import { message } from 'antd';
+import { savedLanguage } from '@/preferences';
 
 export type Response<T> = { success: boolean; obj?: T; msg: string };
 type RollbackEnvelope = { rollback?: { token?: string } };
@@ -100,7 +101,7 @@ export const HttpUtil = {
       return await request<T>(path, data || {});
     } catch {
       void message.error('Не удалось связаться с сервером');
-      return { success: false, msg: 'Network error' };
+      return { success: false, msg: savedLanguage().startsWith('ru') ? 'Ошибка сети' : 'Network error' };
     }
   },
 };
