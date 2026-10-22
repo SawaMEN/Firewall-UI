@@ -75,11 +75,12 @@ jobs:
         run: |
           set -Eeuo pipefail
           ci_run() {
-            local label="$1"
+            local label="$1" result=0
             shift
             echo "::group::CI installer: $label"
-            timeout --signal=TERM --kill-after=15s 240s "$@"
+            timeout --signal=TERM --kill-after=15s 240s "$@" || result=$?
             echo "::endgroup::"
+            return "$result"
           }
           echo "::group::CI installer: prepare UFW"
           if ! command -v ufw >/dev/null 2>&1; then
