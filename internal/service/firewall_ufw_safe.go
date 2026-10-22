@@ -208,6 +208,11 @@ func verifyNftInputClose(ctx context.Context, rule FirewallAdvancedRule) error {
 	if err != nil {
 		return fmt.Errorf("read kernel INPUT drop chain: %w", err)
 	}
+	// A plain named chain with DROP-looking rules would not filter packets:
+	// require it to be a hooked INPUT base chain in the running ruleset.
+	if !strings.Contains(active, "hook input") || !strings.Contains(active, "type filter") {
+		return fmt.Errorf("nftables INPUT chain is not attached to the input hook")
+	}
 	expectedProtocol := "meta l4proto " + rule.Protocol
 	expectedPort := "th dport " + strconv.Itoa(rule.PortStart)
 	expectedMarker := "fwui-closed-input:" + rule.ID
@@ -245,6 +250,13 @@ func syncUFWAdvancedRulesLocked(ctx context.Context, backend firewallBackend) er
 	for _, rule := range rules {
 		comment := "Firewall-UI advanced " + rule.ID
 		exists := hasUFWAdvancedRule(added, comment)
+		// A verified INPUT DROP is authoritative even when UFW refuses to
+		// persist a duplicate DENY beside an administrator-owned ALLOW.
+		// Avoid repeated UFW add attempts and noisy false failures in this
+		// case. The nftables table is reconciled before this pass.
+		if isClosePortRule(rule) && verifyNftInputClose(ctx, rule) == nil {
+			continue
+		}
 		if exists && isClosePortRule(rule) {
 			if _, err := verifyUFWClosedPort(ctx, backend.binary, rule); err != nil {
 				// UFW may retain an earlier ALLOW, yet a validated nftables
