@@ -33,12 +33,19 @@ esac
 	if err := os.WriteFile(filepath.Join(root, "ufw"), []byte(ufw), 0755); err != nil {
 		t.Fatal(err)
 	}
+	desiredJSON := filepath.Join(root, "nft-desired.json")
+	liveJSON := filepath.Join(root, "nft-live.json")
+	if err := os.WriteFile(desiredJSON, []byte(closedPortNFTFixture("tcp", 9000)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FW_TEST_NFT_JSON", desiredJSON)
+	t.Setenv("FW_TEST_NFT_LIVE", liveJSON)
 	nft := `#!/bin/sh
 case "$*" in
  'list tables')
    if [ -f "$FW_TEST_NFT_RULES" ]; then echo 'table inet firewall_ui_containers'; fi;;
- 'list chain inet firewall_ui_containers input') /bin/cat "$FW_TEST_NFT_RULES";;
- '-f -') /bin/cat > "$FW_TEST_NFT_RULES";;
+ '-j list table inet firewall_ui_containers') /bin/cat "$FW_TEST_NFT_LIVE";;
+ '-f -') /bin/cat > "$FW_TEST_NFT_RULES"; /bin/cp "$FW_TEST_NFT_JSON" "$FW_TEST_NFT_LIVE";;
  'delete table inet firewall_ui_containers') /bin/rm -f "$FW_TEST_NFT_RULES";;
 esac
 `
@@ -83,6 +90,19 @@ esac
 	again, err := s.SetPortClosedSafe(ctx, 9000, "tcp", true, 8088)
 	if err != nil || len(again) != 1 {
 		t.Fatal("duplicate close rule")
+	}
+	// UFW's leading DENY still looks correct, but Docker's FORWARD hook
+	// was detached externally while the desired-policy hash remained fresh.
+	drift := strings.Replace(closedPortNFTFixture("tcp", 9000), `"hook":"forward"`, `"hook":"output"`, 1)
+	if err := os.WriteFile(liveJSON, []byte(drift), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetPortClosedSafe(ctx, 9000, "tcp", true, 8088); err != nil {
+		t.Fatalf("repeat close failed to repair FORWARD drift: %v", err)
+	}
+	repaired, _ := os.ReadFile(liveJSON)
+	if err := verifyNFTClosedPortJSON(repaired, rules[0]); err != nil {
+		t.Fatalf("drift was not repaired: %v", err)
 	}
 	opened, err := s.SetPortClosedSafe(ctx, 9000, "tcp", false, 8088)
 	if err != nil || len(opened) != 0 {
@@ -203,7 +223,8 @@ esac
 case "$*" in
  'list tables')
    if [ -f "$UFW_CLOSE_NFT" ]; then echo 'table inet firewall_ui_containers'; fi;;
- 'list chain inet firewall_ui_containers input') /bin/cat "$UFW_CLOSE_NFT";;
+ '-j list table inet firewall_ui_containers')
+    if [ -f "$UFW_CLOSE_NFT" ]; then echo '` + closedPortNFTFixture("tcp", 1332) + `'; else exit 1; fi;;
  '-f -') /bin/cat > "$UFW_CLOSE_NFT";;
  'delete table inet firewall_ui_containers') /bin/rm -f "$UFW_CLOSE_NFT";;
 esac
@@ -272,7 +293,8 @@ esac
 case "$*" in
  'list tables')
     if [ -f "$FW_TEST_NFT" ]; then echo 'table inet firewall_ui_containers'; fi;;
- 'list chain inet firewall_ui_containers input') /bin/cat "$FW_TEST_NFT";;
+ '-j list table inet firewall_ui_containers')
+    if [ -f "$FW_TEST_NFT" ]; then echo '` + closedPortNFTFixture("udp", 1332) + `'; else exit 1; fi;;
  '-f -') /bin/cat > "$FW_TEST_NFT";;
 esac
 `
@@ -327,8 +349,8 @@ esac
 case "$*" in
   'list tables')
     if [ -f "$FWUI_KERNEL_RULES" ]; then echo 'table inet firewall_ui_containers'; fi;;
-  'list chain inet firewall_ui_containers input')
-    /bin/cat "$FWUI_KERNEL_RULES";;
+  '-j list table inet firewall_ui_containers')
+    if [ -f "$FWUI_KERNEL_RULES" ]; then echo '` + closedPortNFTFixture("udp", 1332) + `'; else exit 1; fi;;
   '-f -') /bin/cat > "$FWUI_KERNEL_RULES";;
   'delete table inet firewall_ui_containers')
     /bin/rm -f "$FWUI_KERNEL_RULES";;
@@ -358,6 +380,13 @@ esac
 		if !strings.Contains(string(script), clause) {
 			t.Fatalf("kernel did not block 1332/udp: missing %q in %s", clause, script)
 		}
+	}
+	backend, err := detectManagedFirewallBackend(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syncUFWAdvancedRulesLocked(ctx, backend); err != nil {
+		t.Fatalf("autosync rejected kernel-enforced close: %v", err)
 	}
 	// Auto-sync/idempotent closes must not start a loop of UFW repairs.
 	if _, err := svc.SetPortClosedSafe(ctx, 1332, "udp", true, 8088); err != nil {

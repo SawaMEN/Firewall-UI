@@ -2,12 +2,9 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
-
-	"github.com/SawaMEN/Firewall-UI/internal/hostexec"
 )
 
 // parseUFWIncomingPolicy reads the policy from "ufw status verbose" in
@@ -193,39 +190,9 @@ func verifyUFWClosedPort(ctx context.Context, binary string, rule FirewallAdvanc
 	return position, nil
 }
 
-// verifyNftInputClose checks that an explicit close is independently
-// enforced by an actual nftables INPUT drop rule in the running kernel.
-// A UFW numbered ALLOW cannot override this higher-priority drop chain.
-func verifyNftInputClose(ctx context.Context, rule FirewallAdvancedRule) error {
-	if !isClosePortRule(rule) {
-		return errors.New("not an explicit closed-port rule")
-	}
-	nft, err := hostexec.LookPath("nft")
-	if err != nil {
-		return fmt.Errorf("nftables unavailable: %w", err)
-	}
-	active, err := runFirewallCommand(ctx, nft, "list", "chain", "inet", containerNFTTable, "input")
-	if err != nil {
-		return fmt.Errorf("read kernel INPUT drop chain: %w", err)
-	}
-	expectedProtocol := "meta l4proto " + rule.Protocol
-	expectedPort := "th dport " + strconv.Itoa(rule.PortStart)
-	expectedMarker := "fwui-closed-input:" + rule.ID
-	for _, line := range strings.Split(active, "\n") {
-		if strings.Contains(line, expectedProtocol) &&
-			strings.Contains(line, expectedPort) &&
-			strings.Contains(line, "drop") &&
-			strings.Contains(line, expectedMarker) {
-			return nil
-		}
-	}
-	return fmt.Errorf("nftables INPUT drop for %d/%s not present in live kernel rules", rule.PortStart, rule.Protocol)
-}
-
 // Sync saved advanced policy with UFW even after a restart or when the
-// automatic listening-port switch is off. A rule must be present in UFW's
-// persistent configuration; for closed ports it must also be the first
-// applicable inbound action for that port.
+// automatic listening-port switch is off. Explicit closes can be enforced
+// by verified nftables hooks; other rules must persist in UFW configuration.
 func syncUFWAdvancedRulesLocked(ctx context.Context, backend firewallBackend) error {
 	if backend.name != "ufw" {
 		return nil
@@ -243,6 +210,11 @@ func syncUFWAdvancedRulesLocked(ctx context.Context, backend firewallBackend) er
 		return err
 	}
 	for _, rule := range rules {
+		// A saved close is restored through the independent nft table before
+		// this reconciliation. Avoid repeating ineffective UFW writes forever.
+		if isClosePortRule(rule) && verifyNFTPortClose(ctx, rule) == nil {
+			continue
+		}
 		comment := "Firewall-UI advanced " + rule.ID
 		exists := hasUFWAdvancedRule(added, comment)
 		if exists && isClosePortRule(rule) {
@@ -250,7 +222,7 @@ func syncUFWAdvancedRulesLocked(ctx context.Context, backend firewallBackend) er
 				// UFW may retain an earlier ALLOW, yet a validated nftables
 				// INPUT rule drops the traffic before UFW evaluates it.
 				// Do not thrash existing owned UFW rules every five seconds.
-				if verifyNftInputClose(ctx, rule) == nil {
+				if verifyNFTPortClose(ctx, rule) == nil {
 					continue
 				}
 				// Only remove and replace a rule identified by its ownership
@@ -269,7 +241,7 @@ func syncUFWAdvancedRulesLocked(ctx context.Context, backend firewallBackend) er
 			if err != nil {
 				return err
 			}
-			if !hasUFWAdvancedRule(added, comment) {
+			if !hasUFWAdvancedRule(added, comment) && !(isClosePortRule(rule) && verifyNFTPortClose(ctx, rule) == nil) {
 				return fmt.Errorf("advanced UFW rule %s did not persist", rule.ID)
 			}
 		}
