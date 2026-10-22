@@ -318,7 +318,8 @@ func (s *FirewallService) managedStatusLocked(ctx context.Context, safetyPort in
 	for i := range desired {
 		key := firewallRuleSpec(desired[i])
 		seen[key] = true
-		desired[i].Exists = existing[key]
+		// UFW stores rules while disabled; those entries are not live access.
+		desired[i].Exists = status.Enabled && existing[key]
 		desired[i].Owned = owned[key]
 	}
 	if !auto {
@@ -327,13 +328,15 @@ func (s *FirewallService) managedStatusLocked(ctx context.Context, safetyPort in
 			if key == "" || rule.Source != "service" || seen[key] {
 				continue
 			}
-			rule.Exists = existing[key]
+			rule.Exists = status.Enabled && existing[key]
 			desired = append(desired, rule)
 			seen[key] = true
 		}
-		sortFirewallRules(desired)
 	}
-	status.Rules = desired
+	// UFW/firewalld can be edited outside this panel. Report unrestricted
+	// host ALLOW entries as external/read-only without adopting ownership.
+	// Do not feed these observed rules into managed policy synchronization.
+	status.Rules = appendObservedFirewallAllows(desired, existing, status.Enabled)
 	return status, nil
 }
 
