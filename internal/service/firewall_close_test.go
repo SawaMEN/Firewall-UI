@@ -363,6 +363,9 @@ esac
 	if _, err := svc.SetPortClosedSafe(ctx, 1332, "udp", true, 8088); err != nil {
 		t.Fatalf("repeated close failed despite active nftables INPUT drop: %v", err)
 	}
+	if err := syncUFWAdvancedRulesLocked(ctx, firewallBackend{name: "ufw", binary: filepath.Join(root, "ufw")}); err != nil {
+		t.Fatalf("automatic synchronization rejected the active kernel DROP because UFW kept ALLOW: %v", err)
+	}
 	if _, err := svc.SetPortClosedSafe(ctx, 1332, "udp", false, 8088); err != nil {
 		t.Fatalf("failed to reopen kernel-blocked UDP port: %v", err)
 	}
