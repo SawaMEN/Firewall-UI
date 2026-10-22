@@ -16,7 +16,7 @@ import {
   Tag,
   Typography,
 } from 'antd';
-import { PlusOutlined, ReloadOutlined, SyncOutlined } from '@ant-design/icons';
+import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { HttpUtil, request } from '@/utils';
 import { usePageVisibility } from '@/hooks/usePageVisibility';
@@ -45,6 +45,7 @@ type FirewallStatus = {
   systemActive?: boolean;
   incomingPolicy?: string;
   autoSync: boolean;
+  syncIntervalSeconds: number;
   pingEnabled: boolean;
   canInstallUfw?: boolean;
   rules: FirewallRule[];
@@ -144,9 +145,8 @@ export function FirewallManager() {
              safety:
               'Правила применяются автоматически. Выключение UFW/firewalld отключает системную защиту всего сервера. Порт панели и SSH сохраняются при включении.',
             activeRules: 'Активные и ожидаемые правила',
-            sync: 'Синхронизировать правила',
             refresh: 'Обновить',
-            liveStatus: 'Сверка с файрволлом каждые 10 секунд',
+            liveStatus: 'Автоматическая сверка файрволла',
             refreshFailed: 'Не удалось обновить состояние файрволла. Показаны последние полученные данные.',
             manual: 'Ручные правила',
             advanced: 'Расширенные правила',
@@ -180,9 +180,8 @@ export function FirewallManager() {
              safety:
               'Rules are applied automatically. Turning off UFW/firewalld disables host-wide firewall protection. Panel and SSH access is preserved when enabling.',
             activeRules: 'Active and expected rules',
-            sync: 'Sync managed rules',
             refresh: 'Refresh',
-            liveStatus: 'Live firewall state checked every 10 seconds',
+            liveStatus: 'Automatic firewall refresh',
             refreshFailed: 'Could not refresh firewall state. Showing the last received data.',
             manual: 'Manual rules',
             advanced: 'Advanced rules',
@@ -266,12 +265,12 @@ export function FirewallManager() {
         inFlight = false;
       }
     };
-    const ticker = window.setInterval(() => { void refresh(); }, 10000);
+    const ticker = window.setInterval(() => { void refresh(); }, Math.max(30, status?.syncIntervalSeconds || 60) * 1000);
     return () => {
       disposed = true;
       window.clearInterval(ticker);
     };
-  }, [visible, loading]);
+  }, [visible, loading, status?.syncIntervalSeconds]);
 
   async function mutate(
     path: string,
@@ -550,16 +549,8 @@ export function FirewallManager() {
           <Button icon={<ReloadOutlined />} loading={loading} onClick={() => { void load(); }}>
             {text.refresh}
           </Button>
-          <Button
-            icon={<SyncOutlined />}
-            loading={action === 'sync'}
-            disabled={!status.enabled || !!action}
-            onClick={() => { void mutate('/api/firewall/sync', {}, 'sync').then((ok) => { if (ok) void load(); }); }}
-          >
-            {text.sync}
-          </Button>
           <Typography.Text type="secondary">
-            {text.liveStatus}{lastRefreshed ? ` · ${lastRefreshed}` : ''}
+            {text.liveStatus} · {status.syncIntervalSeconds || 60} {ru ? 'сек.' : 'sec'}{lastRefreshed ? ` · ${lastRefreshed}` : ''}
           </Typography.Text>
 
         </Space>
