@@ -106,11 +106,24 @@ func (s *FirewallService) syncContainerProtectionLocked(ctx context.Context) err
 	if err != nil {
 		return err
 	}
-	managed, _, err := firewallManagedEnabledPreference()
+	// A manually closed port must block forwarded DNAT traffic even when
+	// the optional "protect all container ports" feature is disabled.
+	advanced, err := loadAdvancedFirewallRules()
 	if err != nil {
 		return err
 	}
-	if managed {
+	hasClosedPorts := false
+	for _, rule := range advanced {
+		if isClosePortRule(rule) {
+			hasClosedPorts = true
+			break
+		}
+	}
+	managed, configured, err := firewallManagedEnabledPreference()
+	if err != nil {
+		return err
+	}
+	if !configured || managed {
 		backend, detectErr := detectManagedFirewallBackend(ctx)
 		if detectErr != nil {
 			return detectErr
@@ -120,18 +133,19 @@ func (s *FirewallService) syncContainerProtectionLocked(ctx context.Context) err
 			return err
 		}
 	}
+	needForwardHook := managed && (enabled || hasClosedPorts)
 	nft, err := hostexec.LookPath("nft")
 	if err != nil {
-		if !enabled || !managed {
+		if !needForwardHook {
 			return nil
 		}
-		return errors.New("nftables is required for Docker/Podman published-port protection")
+		return errors.New("nftables is required to close Docker/Podman published ports (install nftables on the host)")
 	}
 	exists, err := containerTableExists(ctx, nft)
 	if err != nil {
 		return err
 	}
-	if !enabled || !managed {
+	if !needForwardHook {
 		containerPolicyHash = [32]byte{}
 		if exists {
 			_, err = runFirewallCommand(ctx, nft, "delete", "table", "inet", containerNFTTable)
@@ -139,19 +153,18 @@ func (s *FirewallService) syncContainerProtectionLocked(ctx context.Context) err
 		return err
 	}
 	var ports []ContainerPort
-	if s.PortMonitor != nil {
-		ports = s.PortMonitor.Snapshot().Containers
-	}
-	if ports == nil {
-		ports = ReadContainerPorts(ctx)
-	}
-	manual, err := loadManualFirewallRules()
-	if err != nil {
-		return err
-	}
-	advanced, err := loadAdvancedFirewallRules()
-	if err != nil {
-		return err
+	var manual []FirewallManualRule
+	if enabled {
+		if s.PortMonitor != nil {
+			ports = s.PortMonitor.Snapshot().Containers
+		}
+		if ports == nil {
+			ports = ReadContainerPorts(ctx)
+		}
+		manual, err = loadManualFirewallRules()
+		if err != nil {
+			return err
+		}
 	}
 	script := buildContainerForwardRules(ports, manual, advanced)
 	fingerprint := sha256.Sum256([]byte(script))
@@ -213,6 +226,15 @@ func buildContainerForwardRules(ports []ContainerPort, manual []FirewallManualRu
 	var b strings.Builder
 	b.WriteString("table inet " + containerNFTTable + " {\n")
 	b.WriteString(" chain forward { type filter hook forward priority -50; policy accept;\n")
+	// A close-port action must win even for established connections and
+	// must not depend on a potentially stale published-container snapshot.
+	for _, rule := range advanced {
+		if !isClosePortRule(rule) {
+			continue
+		}
+		b.WriteString("  meta l4proto " + rule.Protocol + " ct status dnat ct original proto-dst " +
+			strconv.Itoa(rule.PortStart) + " counter drop comment \"fwui-closed-port:" + rule.ID + "\"\n")
+	}
 	b.WriteString("  ct state established,related accept\n")
 	for _, key := range keys {
 		port := unique[key]
@@ -221,6 +243,10 @@ func buildContainerForwardRules(ports []ContainerPort, manual []FirewallManualRu
 		// manual allow is an explicit administrator decision. The final drop
 		// protects all other attempts, including forwarded Docker traffic.
 		for _, rule := range advanced {
+			// Explicit close rules were already installed ahead of conntrack.
+			if isClosePortRule(rule) {
+				continue
+			}
 			if rule.Protocol != "any" && rule.Protocol != port.Protocol {
 				continue
 			}

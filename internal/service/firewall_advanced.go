@@ -247,7 +247,13 @@ func (s *FirewallService) applyAdvancedChangeLocked(ctx context.Context, rule Fi
 	if backend.name == "nftables" || backend.name == "iptables" {
 		return s.syncManagedSafeLocked(ctx, backend, safetyPort)
 	}
-	return applySystemAdvancedRule(ctx, backend, rule, add)
+	if err := applySystemAdvancedRule(ctx, backend, rule, add); err != nil {
+		return err
+	}
+	// UFW's INPUT rule does not cover Docker/Podman DNAT packets, which
+	// traverse FORWARD. Reconcile the independent hook in the same change.
+	// Callers roll back the saved advanced rule and system rule on failure.
+	return s.syncContainerProtectionLocked(ctx)
 }
 
 func isFirewallSafetyRule(rule FirewallRule) bool {
@@ -372,8 +378,20 @@ func applySystemAdvancedRule(ctx context.Context, backend firewallBackend, rule 
 		if add {
 			args = append(args, "comment", "Firewall-UI advanced "+rule.ID)
 		}
-		_, err := runFirewallCommand(ctx, backend.binary, args...)
-		return err
+		if _, err := runFirewallCommand(ctx, backend.binary, args...); err != nil {
+			return err
+		}
+		if isClosePortRule(rule) {
+			status, err := runFirewallCommand(ctx, backend.binary, "status", "numbered")
+			if err != nil {
+				return fmt.Errorf("verify UFW closed port %d/%s: %w", rule.PortStart, rule.Protocol, err)
+			}
+			comment := "Firewall-UI advanced " + rule.ID
+			if number := findUFWManagedRuleNumber(status, comment, ""); number != 1 {
+				return fmt.Errorf("UFW did not install the highest-priority DENY for %d/%s (rule position %d)", rule.PortStart, rule.Protocol, number)
+			}
+		}
+		return nil
 	}
 	if backend.name != "firewalld" {
 		return errors.New("advanced rules are not supported by this firewall backend")
