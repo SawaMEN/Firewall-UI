@@ -4,10 +4,10 @@ import "testing"
 
 func TestUnknownUFWRuleClassification(t *testing.T) {
 	cases := []struct {
-		line string
-		unknown bool
+		line     string
+		unknown  bool
 		canClose bool
-		port int
+		port     int
 	}{
 		{"ufw allow 1332/tcp", false, false, 0},
 		{"ufw allow to any port 1332 proto udp", false, false, 0},
