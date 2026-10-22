@@ -165,11 +165,36 @@ func deleteUFWManagedRules(ctx context.Context, binary, comment, spec string) er
 			return nil
 		}
 		number := findUFWManagedRuleNumber(status, comment, spec)
-		if number == 0 {
+		if number > 0 {
+			if _, err := runFirewallCommand(ctx, binary, "--force", "delete", strconv.Itoa(number)); err != nil {
+				return fmt.Errorf("delete UFW rule %d: %w", number, err)
+			}
+			continue
+		}
+		// Some UFW versions omit comments from "status numbered" entirely.
+		// Find the *owned* rule in persistent configuration instead of
+		// silently treating it as deleted and leaving the port blocked.
+		added, err := runFirewallCommand(ctx, binary, "show", "added")
+		if err != nil {
+			return err
+		}
+		var args []string
+		for _, line := range strings.Split(added, "\n") {
+			candidate := ownedUFWDeleteArgs(line)
+			if len(candidate) < 6 || candidate[len(candidate)-1] != comment {
+				continue
+			}
+			if spec != "" && candidate[3] != spec {
+				continue
+			}
+			args = candidate
+			break
+		}
+		if len(args) == 0 {
 			return nil
 		}
-		if _, err := runFirewallCommand(ctx, binary, "--force", "delete", strconv.Itoa(number)); err != nil {
-			return fmt.Errorf("delete UFW rule %d: %w", number, err)
+		if _, err := runFirewallCommand(ctx, binary, args...); err != nil {
+			return fmt.Errorf("delete UFW rule with missing numbered comment: %w", err)
 		}
 	}
 	return fmt.Errorf("too many matching UFW rules for comment %q", comment)
