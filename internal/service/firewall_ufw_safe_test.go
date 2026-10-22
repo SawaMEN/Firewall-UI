@@ -129,3 +129,38 @@ func TestUFWDecisionDoesNotIgnoreGlobalAllowOrScopedRules(t *testing.T) {
 		})
 	}
 }
+
+func TestNftInputClosedPortMatchesKernelNormalizedRules(t *testing.T) {
+	tcp := FirewallAdvancedRule{
+		ID: closeRuleID(1332, "tcp"), Action: "deny", Protocol: "tcp",
+		PortStart: 1332, PortEnd: 1332, IPVersion: "any", Priority: -1000,
+	}
+	udp := tcp
+	udp.ID = closeRuleID(1332, "udp")
+	udp.Protocol = "udp"
+	const header = "table inet firewall_ui_containers {\n chain input {\n type filter hook input priority mangle; policy accept;\n"
+	const end = " }\n}\n"
+	cases := []struct {
+		name string
+		rule FirewallAdvancedRule
+		listing string
+		want bool
+	}{
+		{"normalized tcp", tcp, header + `tcp dport 1332 counter packets 0 bytes 0 drop comment "fwui-closed-input:close-port-1332-tcp"` + "\n" + end, true},
+		{"normalized udp", udp, header + `udp dport 1332 counter packets 4 bytes 200 drop comment "fwui-closed-input:close-port-1332-udp"` + "\n" + end, true},
+		{"original tcp", tcp, header + `meta l4proto tcp th dport 1332 counter packets 0 bytes 0 drop comment "fwui-closed-input:close-port-1332-tcp"` + "\n" + end, true},
+		{"wrong protocol", tcp, header + `udp dport 1332 counter drop comment "fwui-closed-input:close-port-1332-tcp"` + "\n" + end, false},
+		{"wrong port", tcp, header + `tcp dport 13321 counter drop comment "fwui-closed-input:close-port-1332-tcp"` + "\n" + end, false},
+		{"wrong ownership", tcp, header + `tcp dport 1332 counter drop comment "another-rule"` + "\n" + end, false},
+		{"missing verdict", tcp, header + `tcp dport 1332 counter accept comment "fwui-closed-input:close-port-1332-tcp"` + "\n" + end, false},
+		{"unhooked chain", tcp, `table inet firewall_ui_containers { chain input { tcp dport 1332 drop comment "fwui-closed-input:close-port-1332-tcp" } }`, false},
+		{"protocol only in comment", tcp, header + `th dport 1332 drop comment "fwui-closed-input:close-port-1332-tcp meta l4proto tcp"` + "\n" + end, false},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			if got := nftInputHasCloseDrop(test.listing, test.rule); got != test.want {
+				t.Fatalf("nftInputHasCloseDrop() = %v, want %v for %q", got, test.want, test.listing)
+			}
+		})
+	}
+}
