@@ -29,15 +29,15 @@ type FirewallManualRuleView struct {
 }
 
 type FirewallManagedStatus struct {
-	Supported   bool                     `json:"supported"`
-	Backend     string                   `json:"backend"`
-	Enabled     bool                     `json:"enabled"`
-	SystemActive bool                    `json:"systemActive"`
-	IncomingPolicy string                `json:"incomingPolicy,omitempty"`
-	AutoSync    bool                     `json:"autoSync"`
-	Rules       []FirewallRule           `json:"rules"`
-	ManualRules []FirewallManualRuleView `json:"manualRules"`
-	Message     string                   `json:"message,omitempty"`
+	Supported      bool                     `json:"supported"`
+	Backend        string                   `json:"backend"`
+	Enabled        bool                     `json:"enabled"`
+	SystemActive   bool                     `json:"systemActive"`
+	IncomingPolicy string                   `json:"incomingPolicy,omitempty"`
+	AutoSync       bool                     `json:"autoSync"`
+	Rules          []FirewallRule           `json:"rules"`
+	ManualRules    []FirewallManualRuleView `json:"manualRules"`
+	Message        string                   `json:"message,omitempty"`
 }
 
 func loadFirewallManualLabels() (map[string]string, error) {
