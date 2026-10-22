@@ -53,7 +53,7 @@ func TestRestoreDisabledBackupActuallyStopsUFW(t *testing.T) {
 echo "$*" >> "$AUDIT_UFW_LOG"
 case "$*" in
  status*)
-   if /bin/grep -q active "$AUDIT_UFW_STATE"; then echo 'Status: active'; else echo 'Status: inactive'; fi;;
+   if /bin/grep -qx active "$AUDIT_UFW_STATE"; then echo 'Status: active'; else echo 'Status: inactive'; fi;;
  'show added') echo "ufw allow 9000/tcp comment 'administrator'";;
  disable) echo inactive > "$AUDIT_UFW_STATE";;
 esac
@@ -97,7 +97,7 @@ func TestBackupRecordsActualUFWStateInsteadOfStalePreference(t *testing.T) {
 	ufw := `#!/bin/sh
 case "$*" in
  status)
-   if /bin/grep -q active "$AUDIT_UFW_STATE"; then echo 'Status: active'; else echo 'Status: inactive'; fi;;
+   if /bin/grep -qx active "$AUDIT_UFW_STATE"; then echo 'Status: active'; else echo 'Status: inactive'; fi;;
 esac
 `
 	if err := os.WriteFile(filepath.Join(root, "ufw"), []byte(ufw), 0755); err != nil {
