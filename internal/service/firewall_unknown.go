@@ -134,7 +134,7 @@ func observedHostRules(ctx context.Context, b firewallBackend) (map[string]bool,
 	}
 	if len(unknown) > 500 {
 		unknown = append(unknown[:500], FirewallUnknownRule{
-			Raw: "More than 500 unknown entries; inspect the host firewall for the complete list.",
+			Raw:    "More than 500 unknown entries; inspect the host firewall for the complete list.",
 			Reason: "truncated",
 		})
 	}
