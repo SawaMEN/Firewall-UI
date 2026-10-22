@@ -39,6 +39,8 @@ type FirewallStatus = {
   supported: boolean;
   backend: string;
   enabled: boolean;
+  systemActive?: boolean;
+  incomingPolicy?: string;
   autoSync: boolean;
   pingEnabled: boolean;
   canInstallUfw?: boolean;
@@ -115,8 +117,8 @@ export function FirewallManager() {
             failed: 'Не удалось получить состояние файрволла.',
             noFirewall: 'Поддерживаемый файрволл не найден.',
             install: 'Установить UFW',
-            enabled: 'Файрволл включён',
-            disabled: 'Файрволл выключен',
+            enabled: 'Правила Firewall-UI включены',
+            disabled: 'Правила Firewall-UI выключены',
             auto: 'Автоматически открывать порты слушающих сервисов',
             ping: 'Разрешить ping',
             sync: 'Синхронизировать',
@@ -148,8 +150,8 @@ export function FirewallManager() {
             failed: 'Failed to load firewall status.',
             noFirewall: 'No supported firewall was found.',
             install: 'Install UFW',
-            enabled: 'Firewall enabled',
-            disabled: 'Firewall disabled',
+            enabled: 'Firewall-UI rules enabled',
+            disabled: 'Firewall-UI rules disabled',
             auto: 'Automatically open listening service ports',
             ping: 'Allow ping',
             sync: 'Sync now',
@@ -441,6 +443,13 @@ export function FirewallManager() {
             </Typography.Text>
           </Space>
           <Tag>{status.backend}</Tag>
+          {status.backend === 'ufw' && (
+            <Tag color={status.systemActive ? 'success' : 'warning'}>
+              {status.systemActive
+                ? (ru ? 'UFW активен' : 'UFW active')
+                : (ru ? 'UFW неактивен' : 'UFW inactive')}
+            </Tag>
+          )}
           <Button
             loading={action === 'sync'}
             onClick={() =>
@@ -456,6 +465,27 @@ export function FirewallManager() {
           title={text.safety}
           style={{ marginTop: 16 }}
         />
+        {status.backend === 'ufw' && status.systemActive && status.incomingPolicy === 'allow' && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginTop: 12 }}
+            title={ru
+              ? 'UFW пропускает входящие соединения по умолчанию'
+              : 'UFW allows incoming connections by default'}
+            description={ru
+              ? 'Правила ALLOW не закрывают остальные порты. После проверки правил доступа к SSH и панели администратор может установить: sudo ufw default deny incoming. Смена политики влияет на весь сервер.'
+              : 'ALLOW rules do not block other ports. After checking SSH and panel access, an administrator can run: sudo ufw default deny incoming. This changes the host-wide policy.'}
+          />
+        )}
+        {status.message && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginTop: 12 }}
+            title={status.message}
+          />
+        )}
         <div className="firewall-toggle-grid">
           <Space align="start">
             <Switch
