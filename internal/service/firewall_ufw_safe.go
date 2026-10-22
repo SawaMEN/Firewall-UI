@@ -196,6 +196,68 @@ func verifyUFWClosedPort(ctx context.Context, binary string, rule FirewallAdvanc
 // verifyNftInputClose checks that an explicit close is independently
 // enforced by an actual nftables INPUT drop rule in the running kernel.
 // A UFW numbered ALLOW cannot override this higher-priority drop chain.
+// nftables can normalize the source expression
+//     meta l4proto tcp th dport 1332
+// into
+//     tcp dport 1332
+// when listing an installed rule. We must verify the actual hook, port,
+// protocol, DROP verdict and exact ownership marker, not the original
+// textual form of the statement sent to nft -f.
+func nftInputClosePresent(active string, rule FirewallAdvancedRule) bool {
+	if !isClosePortRule(rule) {
+		return false
+	}
+	// A named chain containing a drop rule is not sufficient: it must
+	// actually be registered as an INPUT filter base chain.
+	hookPresent := false
+	for _, raw := range strings.Split(active, "\n") {
+		line := strings.Join(strings.Fields(raw), " ")
+		if strings.Contains(line, "type filter hook input ") {
+			hookPresent = true
+			break
+		}
+	}
+	if !hookPresent {
+		return false
+	}
+	comment := "comment \"fwui-closed-input:" + rule.ID + "\""
+	port := strconv.Itoa(rule.PortStart)
+	for _, raw := range strings.Split(active, "\n") {
+		line := strings.Join(strings.Fields(raw), " ")
+		if !strings.Contains(line, comment) {
+			continue
+		}
+		// Ignore everything following the comment. In particular, a
+		// comment containing "drop" is not itself a DROP verdict.
+		expression, _, _ := strings.Cut(line, " comment ")
+		fields := strings.Fields(expression)
+		drop := false
+		portMatch := false
+		for i, token := range fields {
+			if token == "drop" {
+				drop = true
+			}
+			// Common nft pretty-printed syntax: tcp dport 1332
+			if i+2 < len(fields) && token == rule.Protocol &&
+				fields[i+1] == "dport" && fields[i+2] == port {
+				portMatch = true
+			}
+			// Original expression on older nft versions:
+			// meta l4proto tcp th dport 1332
+			if i+5 < len(fields) && token == "meta" &&
+				fields[i+1] == "l4proto" && fields[i+2] == rule.Protocol &&
+				fields[i+3] == "th" && fields[i+4] == "dport" &&
+				fields[i+5] == port {
+				portMatch = true
+			}
+		}
+		if drop && portMatch {
+			return true
+		}
+	}
+	return false
+}
+
 func verifyNftInputClose(ctx context.Context, rule FirewallAdvancedRule) error {
 	if !isClosePortRule(rule) {
 		return errors.New("not an explicit closed-port rule")
@@ -208,18 +270,11 @@ func verifyNftInputClose(ctx context.Context, rule FirewallAdvancedRule) error {
 	if err != nil {
 		return fmt.Errorf("read kernel INPUT drop chain: %w", err)
 	}
-	expectedProtocol := "meta l4proto " + rule.Protocol
-	expectedPort := "th dport " + strconv.Itoa(rule.PortStart)
-	expectedMarker := "fwui-closed-input:" + rule.ID
-	for _, line := range strings.Split(active, "\n") {
-		if strings.Contains(line, expectedProtocol) &&
-			strings.Contains(line, expectedPort) &&
-			strings.Contains(line, "drop") &&
-			strings.Contains(line, expectedMarker) {
-			return nil
-		}
+	if !nftInputClosePresent(active, rule) {
+		return fmt.Errorf("nftables INPUT drop for %d/%s not found or not effective in live kernel rules; inspect with: nft -a list chain inet %s input",
+			rule.PortStart, rule.Protocol, containerNFTTable)
 	}
-	return fmt.Errorf("nftables INPUT drop for %d/%s not present in live kernel rules", rule.PortStart, rule.Protocol)
+	return nil
 }
 
 // Sync saved advanced policy with UFW even after a restart or when the
