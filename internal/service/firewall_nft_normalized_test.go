@@ -97,7 +97,11 @@ esac
 	if err := verifyNftInputClose(ctx, rules[0]); err != nil {
 		t.Fatalf("live kernel verifier rejected blocked 1332/tcp: %v", err)
 	}
-	if err := syncUFWAdvancedRulesLocked(ctx, firewallBackend{name: "ufw", binary: filepath.Join(root, "ufw")}); err != nil {
+	backend, err := detectManagedFirewallBackend(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syncUFWAdvancedRulesLocked(ctx, backend); err != nil {
 		t.Fatalf("background sync required UFW rule despite working nft DROP: %v", err)
 	}
 	if _, err := svc.SetPortClosedSafe(ctx, 1332, "tcp", true, 8088); err != nil {
