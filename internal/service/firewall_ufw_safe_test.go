@@ -112,7 +112,7 @@ func TestUFWDecisionDoesNotIgnoreEarlierPortRangeAllow(t *testing.T) {
 func TestUFWDecisionDoesNotIgnoreGlobalAllowOrScopedRules(t *testing.T) {
 	cases := []struct {
 		name, status, action string
-		position int
+		position             int
 	}{
 		{"global allow", "Status: active\n[ 1] Anywhere ALLOW IN Anywhere\n[ 2] 1332/udp DENY IN Anywhere\n", "ALLOW", 1},
 		{"scoped deny", "Status: active\n[ 1] 1332/udp DENY IN 10.0.0.0/8\n[ 2] 1332/udp ALLOW IN Anywhere\n", "ALLOW", 2},
