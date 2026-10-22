@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.9
+
+- Make explicit Close Port actions enforce a DNAT/FORWARD drop for Docker/Podman published ports even when broad container protection is disabled.
+- Apply manual port blocks before established-connection and manual-allow rules; remove the targeted FORWARD hook when reopening the last closed port.
+- Verify that UFW persists the close-port DENY at the highest priority and reject commands that report success without installing it.
+- Reconcile the forwarding rules immediately when advanced rules change and repair saved close-port rules on a repeated close request.
+- Add regression tests for forwarded traffic blocking, UFW no-op behavior and safe reopen.
+
 ## 1.3.8
 
 - Show the real UFW daemon state separately from Firewall-UI-managed rules.
