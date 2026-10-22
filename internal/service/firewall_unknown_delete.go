@@ -59,7 +59,7 @@ func parseExternalUFWDestination(line string) (int, int, []string, error) {
 		target = ""
 	}
 	afterTo := false
-	for i := verb+1; i < len(fields); i++ {
+	for i := verb + 1; i < len(fields); i++ {
 		switch fields[i] {
 		case "to":
 			afterTo = true
