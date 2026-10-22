@@ -133,3 +133,24 @@ esac
 		t.Fatal("UFW inactive but backup captured enabled")
 	}
 }
+
+func TestFailedAutoSyncDoesNotPersistEnabledPreference(t *testing.T) {
+	root := t.TempDir()
+	ufw := "#!/bin/sh\ncase \"$*\" in\n status) echo 'Status: active';;\n 'show added') :;;\n allow*) exit 31;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(root, "ufw"), []byte(ufw), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root)
+	Configure(filepath.Join(root, "state.json"), 8088, 0)
+	if err := (&SettingService{}).setBool(firewallAutoSyncKey, false); err != nil {
+		t.Fatal(err)
+	}
+	_, err := (&FirewallService{}).SetManagedAutoSyncPreferenceSafe(context.Background(), true, 8088)
+	if err == nil {
+		t.Fatal("sync failure should be reported")
+	}
+	after, err := firewallAutoSync()
+	if err != nil || after {
+		t.Fatalf("failed activation persisted auto-sync enabled: %v %v", after, err)
+	}
+}
