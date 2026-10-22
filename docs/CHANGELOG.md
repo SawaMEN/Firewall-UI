@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.17
+
+- Stop adding or restoring Firewall-UI-managed `ALLOW` rules for TCP/UDP ports marked closed, including manually added rules and frozen auto-sync rules.
+- On explicit UFW close, remove only Firewall-UI-owned `ALLOW` for the exact port/protocol before installing `DENY`; never remove administrator-owned or broader allow rules.
+- Preserve strict live UFW DENY and nftables INPUT/FORWARD verification. A non-working UFW rule continues to produce an error rather than claiming the port is closed.
+- Add TCP/UDP regression tests confirming owned allow cleanup, preservation of third-party rules, and exclusion of closed ports from the desired managed policy.
+
 ## 1.3.16
 
 - Stop treating a persisted closed-port flag as proof that traffic is blocked: verify the live kernel nftables INPUT/FORWARD DROP and leading UFW DENY before returning a closed state to the UI.
