@@ -37,6 +37,9 @@ type FirewallRule = {
   members?: FirewallRule[];
   sparse?: boolean;
   groupId?: string;
+  unknownRaw?: string;
+  unknownIndex?: number;
+  canDelete?: boolean;
 };
 type FirewallManualRule = { port: number; protocol: string; label?: string };
 type UnknownFirewallRule = {
@@ -44,6 +47,7 @@ type UnknownFirewallRule = {
   port?: number;
   protocol?: string;
   canClose: boolean;
+  canDelete: boolean;
   reason: string;
 };
 type FirewallStatus = {
@@ -139,6 +143,21 @@ export function FirewallManager() {
     [status, advanced, closedIds],
   );
 
+  const overviewRows = useMemo<FirewallRule[]>(() => [
+    ...ruleGroups,
+    ...(status?.unknownRules || []).map((item, index) => ({
+      port: item.port,
+      protocol: item.protocol || 'any',
+      source: 'unknown',
+      label: item.raw,
+      owned: false,
+      exists: false,
+      unknownRaw: item.raw,
+      unknownIndex: index,
+      canDelete: item.canDelete,
+    })),
+  ], [ruleGroups, status?.unknownRules]);
+
   const text = useMemo(
     () =>
       ru
@@ -154,12 +173,10 @@ export function FirewallManager() {
              safety:
               'Правила применяются автоматически. Выключение UFW/firewalld отключает системную защиту всего сервера. Порт панели и SSH сохраняются при включении.',
             activeRules: 'Активные и ожидаемые правила',
-            unknownRules: 'Нераспознанные правила файрволла',
-            unknownHint: 'Неоднозначные или сторонние правила отображаются как есть. Блокировка конкретного порта не удаляет исходное правило. Неизвестные диапазоны и сложные условия изменяйте непосредственно в системном файрволле.',
-            unknown: 'НЕПОНЯТНО',
-            closeUnknown: 'Заблокировать порт',
+            unknown: 'НЕИЗВЕСТНО',
+            deleteUnknown: 'Удалить правило',
+            deleteUnknownConfirm: 'Удалить именно это внешнее правило из системного файрволла? Действие нельзя отменить восстановлением правил Firewall-UI.',
             unsupportedUnknown: 'Только просмотр',
-            alreadyBlocked: 'Блокировка создана',
             refresh: 'Обновить',
             liveStatus: 'Автоматическая сверка файрволла',
             refreshFailed: 'Не удалось обновить состояние файрволла. Показаны последние полученные данные.',
@@ -195,12 +212,10 @@ export function FirewallManager() {
              safety:
               'Rules are applied automatically. Turning off UFW/firewalld disables host-wide firewall protection. Panel and SSH access is preserved when enabling.',
             activeRules: 'Active and expected rules',
-            unknownRules: 'Unrecognized host firewall rules',
-            unknownHint: 'Ambiguous or third-party rules are shown verbatim. Blocking an exact port does not delete the original rule. Edit complex ranges and conditions in the host firewall.',
             unknown: 'UNKNOWN',
-            closeUnknown: 'Block port',
+            deleteUnknown: 'Delete rule',
+            deleteUnknownConfirm: 'Delete this exact external rule from the host firewall? Firewall-UI backups cannot undo this action.',
             unsupportedUnknown: 'Read-only',
-            alreadyBlocked: 'Close rule saved',
             refresh: 'Refresh',
             liveStatus: 'Automatic firewall refresh',
             refreshFailed: 'Could not refresh firewall state. Showing the last received data.',
@@ -361,6 +376,20 @@ export function FirewallManager() {
     }
   }
 
+  async function deleteUnknownRule(raw: string, index: number) {
+    ++refreshVersion.current;
+    setAction(`unknown-${index}`);
+    try {
+      const result = await HttpUtil.post<{ deleted: boolean }>(
+        '/api/firewall/unknown/delete',
+        { raw },
+      );
+      if (result.success && result.obj?.deleted) await load();
+    } finally {
+      setAction('');
+    }
+  }
+
   async function deleteAdvanced(id: string) {
     ++refreshVersion.current;
     setAction(`advanced-${id}`);
@@ -420,7 +449,9 @@ export function FirewallManager() {
       title: text.range,
       render: (_, rule) => (
         <div>
-          <strong className="port-range">{portLabel(rule)}</strong>
+          {rule.unknownRaw !== undefined
+            ? <Typography.Text code copyable style={{ whiteSpace: 'normal', wordBreak: 'break-word' }}>{rule.unknownRaw}</Typography.Text>
+            : <strong className="port-range">{portLabel(rule)}</strong>}
           {rule.members && rule.members.length > 1 ? (
             <div>
               <Typography.Text type="secondary">
@@ -437,9 +468,13 @@ export function FirewallManager() {
       title: text.protocol,
       dataIndex: 'protocol',
       width: 100,
-      render: (_, rule) => <Tag>{formatProtocols((rule.members || [rule]).map((member) => member.protocol), ' / ')}</Tag>,
+      render: (_, rule) => <Tag>{rule.unknownRaw !== undefined && rule.protocol === 'any'
+          ? (ru ? 'Неизвестен' : 'Unknown')
+          : formatProtocols((rule.members || [rule]).map((member) => member.protocol), ' / ')}</Tag>,
     },
-    { title: text.source, render: (_, rule) => firewallSourceLabel(rule.source, rule.label, ru) },
+    { title: text.source, render: (_, rule) => rule.unknownRaw !== undefined
+      ? (ru ? 'Внешнее системное правило' : 'External host rule')
+      : firewallSourceLabel(rule.source, rule.label, ru) },
     {
       title: text.state,
       width: 180,
@@ -447,8 +482,10 @@ export function FirewallManager() {
         <Space>
           <Tag
             color={
-              closedIds.has(`close-port-${rule.port}-${rule.protocol}`)
-                ? 'error'
+              rule.unknownRaw !== undefined
+                ? 'warning'
+                : closedIds.has(`close-port-${rule.port}-${rule.protocol}`)
+                  ? 'error'
                 : savedClosedIds.has(`close-port-${rule.port}-${rule.protocol}`)
                   ? 'warning'
                   : rule.exists
@@ -456,8 +493,10 @@ export function FirewallManager() {
                   : 'warning'
             }
           >
-            {status.enabled
-              ? accessStateLabel(
+            {rule.unknownRaw !== undefined
+              ? text.unknown
+              : status.enabled
+                ? accessStateLabel(
                   closedIds.has(`close-port-${rule.port}-${rule.protocol}`)
                     ? 'closed'
                     : savedClosedIds.has(`close-port-${rule.port}-${rule.protocol}`)
@@ -469,7 +508,7 @@ export function FirewallManager() {
                 )
               : ru ? 'ФАЙРВОЛЛ ВЫКЛЮЧЕН' : 'FIREWALL OFF'}
           </Tag>
-          {rule.exists ? (
+          {rule.unknownRaw === undefined && rule.exists ? (
             <Tag>{rule.owned ? 'Firewall-UI' : (ru ? 'Внешнее' : 'External')}</Tag>
           ) : null}
         </Space>
@@ -479,6 +518,16 @@ export function FirewallManager() {
       title: '',
       width: 150,
       render: (_, rule) => {
+        if (rule.unknownRaw !== undefined) {
+          if (!rule.canDelete) return <Tag>{text.unsupportedUnknown}</Tag>;
+          return (
+            <Popconfirm title={text.deleteUnknownConfirm}
+              onConfirm={() => void deleteUnknownRule(rule.unknownRaw!, rule.unknownIndex!)}>
+              <Button danger size="small" disabled={!!action}
+                loading={action === `unknown-${rule.unknownIndex}`}>{text.deleteUnknown}</Button>
+            </Popconfirm>
+          );
+        }
         if (rule.members && rule.members.length > 1)
           return (
             <Typography.Text type="secondary">
@@ -639,9 +688,11 @@ export function FirewallManager() {
         <Table<FirewallRule>
           size="small"
           rowKey={(rule) =>
-            rule.groupId || `${portLabel(rule)}-${rule.protocol}-${rule.source}`
+            rule.unknownIndex !== undefined
+              ? `unknown-${rule.unknownIndex}`
+              : rule.groupId || `${portLabel(rule)}-${rule.protocol}-${rule.source}`
           }
-          dataSource={ruleGroups}
+          dataSource={overviewRows}
           pagination={{ pageSize: 20, hideOnSinglePage: true }}
           scroll={{ x: 700 }}
           columns={activeColumns}
@@ -661,39 +712,6 @@ export function FirewallManager() {
         />
       </Card>
 
-      {(status.unknownRules?.length || 0) > 0 && (
-        <Card className="panel-card" title={text.unknownRules}>
-          <Alert type="warning" showIcon title={text.unknownHint} style={{ marginBottom: 12 }} />
-          <Table<UnknownFirewallRule>
-            size="small"
-            rowKey={(rule, index) => `${index}-${rule.raw}`}
-            dataSource={status.unknownRules || []}
-            pagination={{ pageSize: 10, hideOnSinglePage: true }}
-            scroll={{ x: 760 }}
-            columns={[
-              { title: text.state, width: 135, render: () => <Tag color="warning">{text.unknown}</Tag> },
-              { title: ru ? 'Системное правило (без изменений)' : 'Raw host rule', render: (_, rule) => <Typography.Text code copyable>{rule.raw}</Typography.Text> },
-              { title: '', width: 200, render: (_, rule) => {
-                if (!rule.canClose || !rule.port || !rule.protocol)
-                  return <Tag>{text.unsupportedUnknown}</Tag>;
-                const id = `close-port-${rule.port}-${rule.protocol}`;
-                if (savedClosedIds.has(id)) return <Tag>{text.alreadyBlocked}</Tag>;
-                return (
-                  <Popconfirm
-                    title={ru
-                      ? `Заблокировать весь порт ${rule.port}/${rule.protocol}? Это затронет все источники, исходное внешнее правило останется.`
-                      : `Block the entire port ${rule.port}/${rule.protocol}? This affects all sources; the external rule remains.`}
-                    onConfirm={() => void setPortAccess(rule.port!, rule.protocol!, true)}
-                  >
-                    <Button danger size="small" disabled={!status.enabled || !!action}
-                      loading={action === `port-${rule.port}-${rule.protocol}`}>{text.closeUnknown}</Button>
-                  </Popconfirm>
-                );
-              } },
-            ]}
-          />
-        </Card>
-      )}
 
       <Card className="panel-card" title={text.manual}>
         <Space wrap style={{ marginBottom: 14 }}>
