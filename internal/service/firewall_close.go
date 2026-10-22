@@ -70,10 +70,24 @@ func (s *FirewallService) SetPortClosedSafe(ctx context.Context, port int, proto
 				// A saved close is not proof that the live rule still exists.
 				// Repeated close requests must repair a missing/stale UFW rule
 				// and install the DNAT hook after an upgrade or restart.
+				if err := s.syncContainerProtectionLocked(ctx); err != nil {
+					return nil, err
+				}
 				if backend.name == "ufw" {
 					if _, err := verifyUFWClosedPort(ctx, backend.binary, rule); err != nil {
-						// Reconcile only Firewall-UI-owned rules; leave other
-						// administrator rules untouched.
+						if verifyNftInputClose(ctx, rule) == nil {
+							return rules, nil // Real kernel DROP already closes the port.
+						}
+						// The table may have been modified externally while
+						// the hash cache was still fresh. Force a full repair.
+						containerPolicyHash = [32]byte{}
+						if err := s.syncContainerProtectionLocked(ctx); err != nil {
+							return nil, err
+						}
+						if verifyNftInputClose(ctx, rule) == nil {
+							return rules, nil
+						}
+						// Reconcile only Firewall-UI-owned rules.
 						if err := deleteUFWManagedRules(ctx, backend.binary, "Firewall-UI advanced "+id, ""); err != nil {
 							return nil, err
 						}
@@ -81,9 +95,6 @@ func (s *FirewallService) SetPortClosedSafe(ctx context.Context, port int, proto
 							return nil, err
 						}
 					}
-				}
-				if err := s.syncContainerProtectionLocked(ctx); err != nil {
-					return nil, err
 				}
 				return rules, nil
 			}
