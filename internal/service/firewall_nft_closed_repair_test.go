@@ -22,11 +22,21 @@ case "$*" in
  'show added') echo "ufw deny to any port 1332 proto tcp comment 'Firewall-UI advanced close-port-1332-tcp'";;
 esac
 `
+	liveJSON := filepath.Join(root, "kernel.json")
+	desiredJSON := filepath.Join(root, "desired.json")
+	if err := os.WriteFile(liveJSON, []byte(`{"nftables":[]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(desiredJSON, []byte(closedPortNFTFixture("tcp", 1332)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FWUI_TEST_KERNEL_JSON", liveJSON)
+	t.Setenv("FWUI_TEST_DESIRED_JSON", desiredJSON)
 	nft := `#!/bin/sh
 case "$*" in
  'list tables') echo 'table inet firewall_ui_containers';;
- 'list chain inet firewall_ui_containers input') /bin/cat "$FWUI_TEST_KERNEL";;
- '-f -') /bin/cat > "$FWUI_TEST_KERNEL";;
+ '-j list table inet firewall_ui_containers') /bin/cat "$FWUI_TEST_KERNEL_JSON";;
+ '-f -') /bin/cat > "$FWUI_TEST_KERNEL"; /bin/cp "$FWUI_TEST_DESIRED_JSON" "$FWUI_TEST_KERNEL_JSON";;
 esac
 `
 	for name, script := range map[string]string{"ufw": ufw, "nft": nft} {

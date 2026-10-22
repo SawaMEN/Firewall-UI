@@ -255,7 +255,7 @@ func (s *FirewallService) applyAdvancedChangeLocked(ctx context.Context, rule Fi
 		if err := s.syncContainerProtectionLocked(ctx); err != nil {
 			return err
 		}
-		if err := verifyNftInputClose(ctx, rule); err != nil {
+		if err := verifyNFTPortClose(ctx, rule); err != nil {
 			// The table may exist while its INPUT rule was removed by an
 			// external firewall reload. A recent fingerprint only proves
 			// what we last wrote, not what the kernel still holds. Invalidate
@@ -264,7 +264,7 @@ func (s *FirewallService) applyAdvancedChangeLocked(ctx context.Context, rule Fi
 			if repairErr := s.syncContainerProtectionLocked(ctx); repairErr != nil {
 				return fmt.Errorf("repair kernel close for %d/%s: %w", rule.PortStart, rule.Protocol, errors.Join(err, repairErr))
 			}
-			if retryErr := verifyNftInputClose(ctx, rule); retryErr != nil {
+			if retryErr := verifyNFTPortClose(ctx, rule); retryErr != nil {
 				return fmt.Errorf("cannot enforce close for %d/%s after repair: %w", rule.PortStart, rule.Protocol, errors.Join(err, retryErr))
 			}
 		}
@@ -279,14 +279,14 @@ func (s *FirewallService) applyAdvancedChangeLocked(ctx context.Context, rule Fi
 		return err
 	}
 	if add && isClosePortRule(rule) {
-		if err := verifyNftInputClose(ctx, rule); err != nil {
+		if err := verifyNFTPortClose(ctx, rule); err != nil {
 			// An external UFW reload might have replaced the nftables
 			// chain during its own rule update; force a fresh transaction.
 			containerPolicyHash = [32]byte{}
 			if retryErr := s.syncContainerProtectionLocked(ctx); retryErr != nil {
 				return errors.Join(err, retryErr)
 			}
-			if retryErr := verifyNftInputClose(ctx, rule); retryErr != nil {
+			if retryErr := verifyNFTPortClose(ctx, rule); retryErr != nil {
 				return errors.Join(err, retryErr)
 			}
 		}
@@ -437,7 +437,7 @@ func applySystemAdvancedRule(ctx context.Context, backend firewallBackend, rule 
 			// The kernel drop is authoritative if UFW itself refuses a
 			// duplicate or cannot change the existing ordered rule list.
 			// This must never mask an ineffective nftables drop.
-			if !isClosePortRule(rule) || verifyNftInputClose(ctx, rule) != nil {
+			if !isClosePortRule(rule) || verifyNFTPortClose(ctx, rule) != nil {
 				return err
 			}
 		}
@@ -447,7 +447,7 @@ func applySystemAdvancedRule(ctx context.Context, backend firewallBackend, rule 
 			// Accept either a verified UFW DENY or a verified nftables
 			// INPUT drop, never an unverified success from ufw itself.
 			if _, err := verifyUFWClosedPort(ctx, backend.binary, rule); err != nil {
-				if nftErr := verifyNftInputClose(ctx, rule); nftErr != nil {
+				if nftErr := verifyNFTPortClose(ctx, rule); nftErr != nil {
 					return fmt.Errorf("verify UFW closed port %d/%s: %w; nftables fallback: %v", rule.PortStart, rule.Protocol, err, nftErr)
 				}
 			}
