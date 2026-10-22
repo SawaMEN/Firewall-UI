@@ -35,10 +35,12 @@ func (s *FirewallService) SetPortClosedSafe(ctx context.Context, port int, proto
 	if !enabled {
 		return nil, fmt.Errorf("%w: Включите файрволл перед изменением доступа к порту", ErrInvalidFirewallChange)
 	}
-	if desired, configured, err := firewallManagedEnabledPreference(); err != nil {
-		return nil, err
-	} else if configured && !desired {
-		return nil, fmt.Errorf("%w: Включите управление файрволлом в панели", ErrInvalidFirewallChange)
+	if isManagedNativeFirewall(backend.name) {
+		if desired, configured, err := firewallManagedEnabledPreference(); err != nil {
+			return nil, err
+		} else if configured && !desired {
+			return nil, fmt.Errorf("%w: Включите файрволл в панели", ErrInvalidFirewallChange)
+		}
 	}
 	if closed {
 		desired, err := s.managedDesiredRules(false, safetyPort)
