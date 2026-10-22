@@ -141,10 +141,10 @@ func TestNftInputClosedPortMatchesKernelNormalizedRules(t *testing.T) {
 	const header = "table inet firewall_ui_containers {\n chain input {\n type filter hook input priority mangle; policy accept;\n"
 	const end = " }\n}\n"
 	cases := []struct {
-		name string
-		rule FirewallAdvancedRule
+		name    string
+		rule    FirewallAdvancedRule
 		listing string
-		want bool
+		want    bool
 	}{
 		{"normalized tcp", tcp, header + `tcp dport 1332 counter packets 0 bytes 0 drop comment "fwui-closed-input:close-port-1332-tcp"` + "\n" + end, true},
 		{"normalized udp", udp, header + `udp dport 1332 counter packets 4 bytes 200 drop comment "fwui-closed-input:close-port-1332-udp"` + "\n" + end, true},
