@@ -35,6 +35,7 @@ type FirewallManagedStatus struct {
 	SystemActive   bool                     `json:"systemActive"`
 	IncomingPolicy string                   `json:"incomingPolicy,omitempty"`
 	AutoSync       bool                     `json:"autoSync"`
+	SyncIntervalSeconds int              `json:"syncIntervalSeconds"`
 	Rules          []FirewallRule           `json:"rules"`
 	ManualRules    []FirewallManualRuleView `json:"manualRules"`
 	Message        string                   `json:"message,omitempty"`
@@ -263,7 +264,11 @@ func (s *FirewallService) managedStatusLocked(ctx context.Context, safetyPort in
 	if err != nil {
 		return FirewallManagedStatus{}, err
 	}
-	status := FirewallManagedStatus{AutoSync: auto, ManualRules: manualRuleViews(manual, labels)}
+	interval, err := s.SyncIntervalSeconds()
+	if err != nil {
+		return FirewallManagedStatus{}, err
+	}
+	status := FirewallManagedStatus{AutoSync: auto, SyncIntervalSeconds: interval, ManualRules: manualRuleViews(manual, labels)}
 	backend, err := detectManagedFirewallBackend(ctx)
 	if err != nil {
 		status.Message = err.Error()
