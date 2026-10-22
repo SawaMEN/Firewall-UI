@@ -321,6 +321,7 @@ func (s *FirewallService) changeManagedManualRuleSafe(ctx context.Context, port 
 	if err != nil {
 		return FirewallManagedStatus{}, err
 	}
+	beforeLabels := cloneStringMap(labels)
 	set := make(map[string]FirewallManualRule, len(manual)+2)
 	for _, rule := range manual {
 		set[firewallRuleKey(rule.Port, rule.Protocol)] = rule
@@ -343,7 +344,6 @@ func (s *FirewallService) changeManagedManualRuleSafe(ctx context.Context, port 
 	// Keep a durable copy: manual[:0] would overwrite the original
 	// backing array, preventing rollback after a failed host operation.
 	beforeManual := append([]FirewallManualRule(nil), manual...)
-	beforeLabels := cloneStringMap(labels)
 	next := make([]FirewallManualRule, 0, len(set))
 	for _, rule := range set {
 		next = append(next, rule)
