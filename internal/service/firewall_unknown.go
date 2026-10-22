@@ -13,6 +13,7 @@ type FirewallUnknownRule struct {
 	Port     int    `json:"port,omitempty"`
 	Protocol string `json:"protocol,omitempty"`
 	CanClose bool   `json:"canClose"`
+	CanDelete bool  `json:"canDelete"`
 	Reason   string `json:"reason"`
 }
 
