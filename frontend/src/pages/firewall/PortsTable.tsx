@@ -331,8 +331,8 @@ export function PortsTable() {
               : 'UNFILTERED'
             : closed
               ? ru
-                ? 'ЗАПРЕЩЁН'
-                : 'DENIED'
+                ? 'ЗАКРЫТ'
+                : 'CLOSED'
               : rule?.exists
                 ? rule.source === 'service'
                   ? 'AUTO'
@@ -656,7 +656,7 @@ export function PortsTable() {
             ) : null}
             {denied ? (
               <Tag color="error">
-                {ru ? 'Запрещено' : 'Denied'}: {denied}
+                {ru ? 'Закрыто' : 'Closed'}: {denied}
               </Tag>
             ) : null}
             {ports.length > allowed + denied ? (
