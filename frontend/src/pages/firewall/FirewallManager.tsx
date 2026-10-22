@@ -18,7 +18,7 @@ import {
 import { PlusOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { HttpUtil } from '@/utils';
-import { formatProtocols, groupFirewallRules } from './portGroups';
+import { firewallOverviewRules, formatProtocols, groupFirewallRules, isManagedPortClose } from './portGroups';
 import { ProtocolRulesTable } from './ProtocolRulesTable';
 import FirewallDiagnostics from './FirewallDiagnostics';
 import type { ColumnsType } from 'antd/es/table';
@@ -95,13 +95,21 @@ export function FirewallManager() {
   });
 
   const closedIds = useMemo(
-    () => new Set(advanced.filter((item) => item.enforced === true).map((item) => item.id)),
+    () => new Set(advanced.filter((item) => isManagedPortClose(item) && item.enforced === true).map((item) => item.id)),
+    [advanced],
+  );
+  const savedClosedIds = useMemo(
+    () => new Set(advanced.filter(isManagedPortClose).map((item) => item.id)),
+    [advanced],
+  );
+  const advancedCustomRules = useMemo(
+    () => advanced.filter((item) => !isManagedPortClose(item)),
     [advanced],
   );
   const ruleGroups = useMemo(
     () =>
       groupFirewallRules(
-        status?.rules || [],
+        firewallOverviewRules(status?.rules || [], advanced),
         closedIds,
       ).map((group) => ({
         ...group.rules[0],
@@ -110,7 +118,7 @@ export function FirewallManager() {
         members: group.rules,
         sparse: group.sparse,
       })),
-    [status, closedIds],
+    [status, advanced, closedIds],
   );
 
   const text = useMemo(
@@ -344,7 +352,7 @@ export function FirewallManager() {
       width: 100,
       render: (_, rule) => <Tag>{formatProtocols((rule.members || [rule]).map((member) => member.protocol), ' / ')}</Tag>,
     },
-    { title: text.source, render: (_, rule) => rule.label || rule.source },
+    { title: text.source, render: (_, rule) => rule.source === 'closed' ? (ru ? 'Закрыт вручную' : 'Closed manually') : rule.label || rule.source },
     {
       title: text.state,
       width: 180,
@@ -354,7 +362,7 @@ export function FirewallManager() {
             color={
               closedIds.has(`close-port-${rule.port}-${rule.protocol}`)
                 ? 'error'
-                : advanced.some((item) => item.id === `close-port-${rule.port}-${rule.protocol}`)
+                : savedClosedIds.has(`close-port-${rule.port}-${rule.protocol}`)
                   ? 'warning'
                   : rule.exists
                   ? 'success'
@@ -365,7 +373,7 @@ export function FirewallManager() {
               ? ru
                 ? 'ЗАКРЫТ'
                 : 'CLOSED'
-              : advanced.some((item) => item.id === `close-port-${rule.port}-${rule.protocol}`)
+              : savedClosedIds.has(`close-port-${rule.port}-${rule.protocol}`)
                 ? ru
                   ? 'НЕ ЗАКРЫТ'
                   : 'NOT CLOSED'
@@ -391,9 +399,7 @@ export function FirewallManager() {
           );
         if (!rule.port || ['panel', 'session', 'ssh'].includes(rule.source))
           return <Tag>{ru ? 'Защищён' : 'Protected'}</Tag>;
-        const savedClosed = advanced.some(
-          (item) => item.id === `close-port-${rule.port}-${rule.protocol}`,
-        );
+        const savedClosed = savedClosedIds.has(`close-port-${rule.port}-${rule.protocol}`);
         const closed = closedIds.has(`close-port-${rule.port}-${rule.protocol}`);
         return (
           <Popconfirm
@@ -749,7 +755,7 @@ export function FirewallManager() {
           ru={ru}
           identity={advancedIdentity}
           rowKey={(rule) => rule.id}
-          rules={advanced}
+          rules={advancedCustomRules}
           scroll={{ x: 1000 }}
           columns={[
             {
