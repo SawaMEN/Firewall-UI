@@ -212,7 +212,7 @@ func nftInputHasCloseDrop(output string, rule FirewallAdvancedRule) bool {
 	for _, raw := range strings.Split(output, "\n") {
 		line := strings.TrimSpace(raw)
 		commentAt := strings.Index(line, "comment ")
-		if commentAt == -1 || !strings.Contains(line[commentAt:], "\"" + marker + "\"") {
+		if commentAt == -1 || !strings.Contains(line[commentAt:], "\""+marker+"\"") {
 			continue
 		}
 		// Ignore tokens in the comment, since they are not packet filters.
