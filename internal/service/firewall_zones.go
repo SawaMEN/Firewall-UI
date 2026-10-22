@@ -107,7 +107,17 @@ func (s *FirewallService) SetFirewalldZone(ctx context.Context, zone string) (Fi
 		return FirewalldZonesStatus{}, err
 	}
 	if !configured || preferred {
-		return FirewalldZonesStatus{}, errors.New("disable Firewall-UI firewall management before changing firewalld zone")
+		return FirewalldZonesStatus{}, errors.New("disable the system firewall before changing firewalld zone")
+	}
+	// The saved preference is not authoritative for UFW/firewalld: the
+	// administrator can enable the daemon outside the panel. Switching zones
+	// while firewalld is live can orphan existing owned rules in the old zone.
+	active, err := backend.enabled(ctx)
+	if err != nil {
+		return FirewalldZonesStatus{}, err
+	}
+	if active {
+		return FirewalldZonesStatus{}, errors.New("stop firewalld before changing its managed zone")
 	}
 	selected := strings.TrimSpace(zone)
 	status, err := s.FirewalldZones(ctx)

@@ -171,10 +171,12 @@ func (s *FirewallService) syncContainerProtectionLocked(ctx context.Context) err
 	if exists && fingerprint == containerPolicyHash && time.Since(containerPolicyLastCheck) < time.Minute {
 		return nil
 	}
-	if exists && fingerprint == containerPolicyHash {
-		containerPolicyLastCheck = time.Now()
-		return nil
-	}
+	// The hash describes our last script, not the live kernel ruleset.
+	// Previously, once a matching hash was cached, an externally removed or
+	// modified FORWARD rule was never restored because this branch refreshed
+	// the timestamp without checking nftables. Reapply the owned table after
+	// the verification interval to repair drift, without touching other
+	// nftables tables. (Reapplying resets counters for this one table.)
 	var batch strings.Builder
 	if exists {
 		batch.WriteString("delete table inet " + containerNFTTable + "\n")

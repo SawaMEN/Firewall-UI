@@ -37,7 +37,18 @@ func exportFirewallBackupLocked() (FirewallBackup, error) {
 	if err != nil {
 		return FirewallBackup{}, err
 	}
-	if !configured {
+	// UFW/firewalld can be enabled or disabled outside the panel. A backup
+	// is used for rollback, so saving the old preference instead of live
+	// state can unexpectedly disable an active host firewall on recovery.
+	probe, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if backend, detectErr := detectManagedFirewallBackend(probe); detectErr == nil &&
+		(backend.name == "ufw" || backend.name == "firewalld") {
+		enabled, err = backend.enabled(probe)
+		if err != nil {
+			return FirewallBackup{}, fmt.Errorf("read live %s state for backup: %w", backend.name, err)
+		}
+	} else if !configured {
 		enabled = false
 	}
 	ping, err := (&FirewallService{}).ManagedPingEnabled()
@@ -184,7 +195,23 @@ func (s *FirewallService) RestoreBackup(ctx context.Context, backup FirewallBack
 		return backendErr
 	}
 	if !backup.ManagedEnabled {
-		if err := disableManagedBackendSafe(ctx, backend); err != nil {
+		// The main switch now represents the host firewall itself. A backup
+		// with the switch off must not leave UFW/firewalld running while only
+		// removing Firewall-UI's rules (and must preserve administrator rules).
+		if backend.name == "ufw" || backend.name == "firewalld" {
+			if on {
+				if err := setFirewallBackendEnabled(ctx, backend, false); err != nil {
+					return err
+				}
+			}
+			active, err := backend.enabled(ctx)
+			if err != nil {
+				return err
+			}
+			if active {
+				return fmt.Errorf("%s remains active after restoring disabled firewall", backend.name)
+			}
+		} else if err := disableManagedBackendSafe(ctx, backend); err != nil {
 			return err
 		}
 		if err := s.reconcileManagedPingStateLocked(false); err != nil {
@@ -200,7 +227,13 @@ func (s *FirewallService) RestoreBackup(ctx context.Context, backup FirewallBack
 	if err := s.syncManagedSafeLocked(ctx, backend, safetyPort); err != nil {
 		return err
 	}
-	if backend.name == "ufw" || backend.name == "firewalld" {
+	if backend.name == "ufw" {
+		// Reconcile rather than blindly adding duplicates every time an
+		// existing backup is restored.
+		if err := syncUFWAdvancedRulesLocked(ctx, backend); err != nil {
+			return err
+		}
+	} else if backend.name == "firewalld" {
 		for _, rule := range backup.AdvancedRules {
 			if err := applySystemAdvancedRule(ctx, backend, rule, true); err != nil {
 				return err

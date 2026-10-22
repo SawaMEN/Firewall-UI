@@ -83,6 +83,10 @@ func TestParseUFWAllowSpecNormalization(t *testing.T) {
 		{"ufw deny to any port 1332 proto tcp", ""},
 		{"ufw allow from 192.0.2.0/24 to any port 1332 proto tcp", ""},
 		{"ufw allow in on eth0 to any port 1332 proto tcp", ""},
+		{"ufw allow 1332/tcp from 192.0.2.0/24", ""},
+		{"ufw allow 1332/tcp to 192.0.2.7", ""},
+		{"ufw allow 1332/tcp in on eth0", ""},
+		{"ufw allow 1332/tcp comment 'turn on global monitoring'", "1332/tcp"},
 	}
 	for _, tc := range cases {
 		got, _ := parseUFWAllowSpec(tc.line)
