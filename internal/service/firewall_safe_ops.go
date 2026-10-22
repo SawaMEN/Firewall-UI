@@ -2,9 +2,12 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -321,19 +324,17 @@ func (s *FirewallService) changeManagedManualRuleSafe(ctx context.Context, port 
 			delete(labels, key)
 		}
 	}
-	manual = manual[:0]
+	// Keep a durable copy: manual[:0] would overwrite the original
+	// backing array, preventing rollback after a failed host operation.
+	beforeManual := append([]FirewallManualRule(nil), manual...)
+	beforeLabels := cloneStringMap(labels)
+	next := make([]FirewallManualRule, 0, len(set))
 	for _, rule := range set {
-		manual = append(manual, rule)
+		next = append(next, rule)
 	}
-	sort.Slice(manual, func(i, j int) bool {
-		return manual[i].Port < manual[j].Port || (manual[i].Port == manual[j].Port && manual[i].Protocol < manual[j].Protocol)
+	sort.Slice(next, func(i, j int) bool {
+		return next[i].Port < next[j].Port || (next[i].Port == next[j].Port && next[i].Protocol < next[j].Protocol)
 	})
-	if err := saveFirewallJSON(firewallManualRulesKey, manual); err != nil {
-		return FirewallManagedStatus{}, err
-	}
-	if err := saveFirewallManualLabels(labels); err != nil {
-		return FirewallManagedStatus{}, err
-	}
 	backend, err := detectManagedFirewallBackend(ctx)
 	if err != nil {
 		return FirewallManagedStatus{}, err
@@ -346,9 +347,43 @@ func (s *FirewallService) changeManagedManualRuleSafe(ctx context.Context, port 
 	if err != nil {
 		return FirewallManagedStatus{}, err
 	}
+	encode := func(rules []FirewallManualRule, labels map[string]string) (map[string]string, error) {
+		rulesJSON, err := json.Marshal(rules)
+		if err != nil {
+			return nil, err
+		}
+		labelsJSON, err := json.Marshal(labels)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{
+			firewallManualRulesKey: string(rulesJSON),
+			firewallManualLabelsKey: string(labelsJSON),
+		}, nil
+	}
+	changes, err := encode(next, labels)
+	if err != nil {
+		return FirewallManagedStatus{}, err
+	}
+	// Save rules and labels together. Previously a failure in the second
+	// write left inconsistent state; a sync failure also left rules saved
+	// that were never successfully applied to the host.
+	if err := (&SettingService{}).setStrings(changes); err != nil {
+		return FirewallManagedStatus{}, err
+	}
 	if on && (!isManagedNativeFirewall(backend.name) || !configured || desiredEnabled) {
 		if err := s.syncManagedSafeLocked(ctx, backend, safetyPort); err != nil {
-			return FirewallManagedStatus{}, err
+			previous, encodeErr := encode(beforeManual, beforeLabels)
+			if encodeErr != nil {
+				return FirewallManagedStatus{}, errors.Join(err, encodeErr)
+			}
+			restoreErr := (&SettingService{}).setStrings(previous)
+			if restoreErr == nil {
+				recovery, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				restoreErr = s.syncManagedSafeLocked(recovery, backend, safetyPort)
+			}
+			return FirewallManagedStatus{}, errors.Join(err, restoreErr)
 		}
 	}
 	return s.managedStatusSafeLocked(ctx, safetyPort)
