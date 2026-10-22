@@ -77,14 +77,41 @@ func manualRuleViews(rules []FirewallManualRule, labels map[string]string) []Fir
 	return out
 }
 
+// closedPortSpecs returns ports with an explicit saved close request.
+// These ports must never be added back to the system as managed ALLOW rules,
+// regardless of whether they were discovered through a listener or manually
+// added to the UI. The close action independently enforces DENY.
+func closedPortSpecs() (map[string]bool, error) {
+	advanced, err := loadAdvancedFirewallRules()
+	if err != nil {
+		return nil, err
+	}
+	closed := make(map[string]bool, len(advanced))
+	for _, rule := range advanced {
+		if isClosePortRule(rule) {
+			closed[firewallRuleKey(rule.PortStart, rule.Protocol)] = true
+		}
+	}
+	return closed, nil
+}
+
 func (s *FirewallService) managedDesiredRules(auto bool, safetyPort int) ([]FirewallRule, error) {
 	rules, err := s.desiredRules(auto, safetyPort)
+	if err != nil {
+		return nil, err
+	}
+	closed, err := closedPortSpecs()
 	if err != nil {
 		return nil, err
 	}
 	byKey := make(map[string]FirewallRule, len(rules)+8)
 	for _, rule := range rules {
 		if key := firewallRuleSpec(rule); key != "" {
+			// Never suppress protected panel/SSH/session access. Those
+			// ports are rejected by SetPortClosedSafe before saving.
+			if closed[key] && !isFirewallSafetyRule(rule) {
+				continue
+			}
 			byKey[key] = rule
 		}
 	}
@@ -328,6 +355,10 @@ func (s *FirewallService) syncManagedLocked(ctx context.Context, backend firewal
 	if err != nil {
 		return err
 	}
+	closed, err := closedPortSpecs()
+	if err != nil {
+		return err
+	}
 	old := map[string]FirewallRule{}
 	for _, rule := range managed {
 		if key := firewallRuleSpec(rule); key != "" {
@@ -371,7 +402,7 @@ func (s *FirewallService) syncManagedLocked(ctx context.Context, backend firewal
 		if key == "" || want[key] {
 			continue
 		}
-		if !auto && rule.Source == "service" {
+		if !auto && rule.Source == "service" && !closed[key] {
 			rule.Exists = false
 			next = append(next, rule)
 			continue
