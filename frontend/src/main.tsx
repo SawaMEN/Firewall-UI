@@ -74,7 +74,7 @@ function SessionApplication() {
         } else {
           setCSRF('');
           void message.error(ru
-            ? 'Браузер не сохранил сессию. Если включён Secure cookie, откройте панель по HTTPS. Проверьте, что cookie разрешены.'
+            ? 'Браузер не сохранил сессию. Если включены защищённые файлы cookie, откройте панель по HTTPS и разрешите использование cookie.'
             : 'The browser did not save the session. Use HTTPS when Secure cookie is enabled and allow cookies.');
         }
       }
