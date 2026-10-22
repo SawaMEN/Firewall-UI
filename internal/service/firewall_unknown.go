@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"strings"
 )
@@ -20,6 +19,11 @@ type FirewallUnknownRule struct {
 func unknownUFWRule(line string) (FirewallUnknownRule, bool) {
 	line = strings.TrimSpace(line)
 	if !strings.HasPrefix(line, "ufw ") {
+		return FirewallUnknownRule{}, false
+	}
+	// Firewall-UI-created advanced/close rules already have their own
+	// dedicated UI rows. Do not incorrectly mark them as foreign/unknown.
+	if strings.Contains(line, "Firewall-UI advanced ") {
 		return FirewallUnknownRule{}, false
 	}
 	fields := strings.Fields(line)
@@ -98,9 +102,18 @@ func observedHostRules(ctx context.Context, b firewallBackend) (map[string]bool,
 		if err != nil {
 			return known, nil, nil // not supported on all firewalld versions
 		}
+		advanced, err := loadAdvancedFirewallRules()
+		if err != nil {
+			return nil, nil, err
+		}
+		ours := make(map[string]bool, len(advanced))
+		for _, rule := range advanced {
+			ours[firewalldRichRule(rule)] = true
+		}
 		var unknown []FirewallUnknownRule
 		for _, line := range strings.Split(raw, "\n") {
-			if strings.TrimSpace(line) != "" {
+			line = strings.TrimSpace(line)
+			if line != "" && !ours[line] {
 				unknown = append(unknown, unknownFirewalldRule(line))
 			}
 		}
@@ -120,7 +133,10 @@ func observedHostRules(ctx context.Context, b firewallBackend) (map[string]bool,
 		}
 	}
 	if len(unknown) > 500 {
-		return known, unknown[:500], fmt.Errorf("too many unrecognized rules (showing first 500)")
+		unknown = append(unknown[:500], FirewallUnknownRule{
+			Raw: "More than 500 unknown entries; inspect the host firewall for the complete list.",
+			Reason: "truncated",
+		})
 	}
 	return known, unknown, nil
 }
