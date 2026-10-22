@@ -378,8 +378,20 @@ func applySystemAdvancedRule(ctx context.Context, backend firewallBackend, rule 
 		if add {
 			args = append(args, "comment", "Firewall-UI advanced "+rule.ID)
 		}
-		_, err := runFirewallCommand(ctx, backend.binary, args...)
-		return err
+		if _, err := runFirewallCommand(ctx, backend.binary, args...); err != nil {
+			return err
+		}
+		if isClosePortRule(rule) {
+			status, err := runFirewallCommand(ctx, backend.binary, "status", "numbered")
+			if err != nil {
+				return fmt.Errorf("verify UFW closed port %d/%s: %w", rule.PortStart, rule.Protocol, err)
+			}
+			comment := "Firewall-UI advanced " + rule.ID
+			if number := findUFWManagedRuleNumber(status, comment, ""); number != 1 {
+				return fmt.Errorf("UFW did not install the highest-priority DENY for %d/%s (rule position %d)", rule.PortStart, rule.Protocol, number)
+			}
+		}
+		return nil
 	}
 	if backend.name != "firewalld" {
 		return errors.New("advanced rules are not supported by this firewall backend")
