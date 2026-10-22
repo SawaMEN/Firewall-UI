@@ -12,6 +12,9 @@ import (
 // one saved UFW command. If the destination is ambiguous we refuse removal:
 // a broad rule may be the only protection for SSH or the management panel.
 func parseExternalUFWDestination(line string) (int, int, []string, error) {
+	if len(line) > 2048 || strings.ContainsAny(line, "\x00\r\n") {
+		return 0, 0, nil, fmt.Errorf("%w: invalid UFW rule text", ErrInvalidFirewallChange)
+	}
 	line = strings.TrimSpace(line)
 	before, comment, hasComment := strings.Cut(line, " comment ")
 	fields := strings.Fields(before)
