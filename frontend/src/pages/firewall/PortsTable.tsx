@@ -32,7 +32,7 @@ import {
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 
-import { HttpUtil } from '@/utils';
+import { HttpUtil, request } from '@/utils';
 import { usePageVisibility } from '@/hooks/usePageVisibility';
 
 import type { ColumnsType } from 'antd/es/table';
@@ -193,6 +193,39 @@ export function PortsTable() {
     };
     return () => source.close();
   }, [live, visible, diagnostics]);
+
+  // Port sockets arrive over SSE, but firewall permissions can change via
+  // ufw/firewalld without any socket event. Refresh host firewall state too.
+  useEffect(() => {
+    if (!live || !visible) return;
+    let disposed = false;
+    let inFlight = false;
+    const refresh = async () => {
+      if (inFlight || acting) return;
+      inFlight = true;
+      const version = loadId.current;
+      try {
+        const [firewallResult, advancedResult] = await Promise.all([
+          request<FirewallStatus>('/api/firewall/status', undefined, { silent: true }),
+          request<AdvancedRule[]>('/api/firewall/advanced', undefined, { silent: true }),
+        ]);
+        if (disposed || version !== loadId.current) return;
+        if (firewallResult.success && firewallResult.obj && advancedResult.success && advancedResult.obj) {
+          setFirewall(firewallResult.obj);
+          setAdvanced(advancedResult.obj);
+        }
+      } catch {
+        // Preserve the previous known state while temporary reads fail.
+      } finally {
+        inFlight = false;
+      }
+    };
+    const timer = window.setInterval(() => { void refresh(); }, 10000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [live, visible, acting]);
 
   const ruleMap = useMemo(() => {
     const map = new Map<string, FirewallRule>();
