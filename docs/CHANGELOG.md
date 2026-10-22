@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.16
+
+- Stop treating a persisted closed-port flag as proof that traffic is blocked: verify the live kernel nftables INPUT/FORWARD DROP and leading UFW DENY before returning a closed state to the UI.
+- Expose transient enforcement status and error details in firewall and live port views. Show **НЕ ЗАКРЫТ / NOT CLOSED** when current firewall enforcement cannot be confirmed.
+- Fail explicit close operations when UFW rules remain ineffective rather than silently accepting nftables fallback and displaying a false-positive CLOSED state.
+- Fix the strict UFW close-validation path and keep regression checks for TCP and UDP.
+
 ## 1.3.15
 
 - Show explicitly closed ports as **ЗАКРЫТ / CLOSED** (rather than ЗАПРЕЩЁН / DENIED) in both firewall and process/port screens.
