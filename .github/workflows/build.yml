@@ -1,13 +1,25 @@
 name: Build and test
 on:
   push:
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
+      - '**/*.md'
   pull_request:
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
+      - '**/*.md'
+  schedule:
+    - cron: '23 3 * * 0'
   workflow_dispatch:
 permissions:
   contents: read
+# Cancel obsolete pushes in the same branch, including releases: only
+# the current main commit can be published, so earlier builds waste runners.
 concurrency:
-  group: firewall-ui-ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: firewall-ui-ci-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   frontend:
     runs-on: ubuntu-latest
@@ -38,6 +50,7 @@ jobs:
       - run: npm ci --ignore-scripts
         working-directory: frontend
       - run: npm audit --omit=dev --audit-level=high
+        if: github.event_name != 'pull_request'
         working-directory: frontend
       - run: npm test
         working-directory: frontend
@@ -77,8 +90,16 @@ jobs:
             gofmt -d ./cmd ./internal
             exit 1
           fi
-      - run: go test -race -vet=off ./...
-      - run: go vet ./...
+      # PRs get the quick suite; main + weekly/manual builds run race checks.
+      - name: Go tests (pull requests)
+        if: github.event_name == 'pull_request'
+        run: go test -vet=off ./...
+      - name: Go tests with race detection (main and extended)
+        if: github.event_name != 'pull_request'
+        run: go test -race -vet=off ./...
+      - name: Go static analysis
+        if: github.event_name != 'pull_request'
+        run: go vet ./...
   binaries:
     needs: [frontend, checks]
     runs-on: ubuntu-latest
@@ -127,7 +148,10 @@ jobs:
 
   distributions:
     needs: [binaries, frontend]
-    if: needs.frontend.outputs.distributions == 'true'
+    # The installer/systemd matrix is expensive and duplicates the Docker
+    # lifecycle smoke tests. Run it weekly or on manual request, not on
+    # every release-producing commit.
+    if: needs.frontend.outputs.distributions == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -170,6 +194,9 @@ jobs:
 
   browser:
     needs: [binaries]
+    # Browser e2e exercises login, theme, and navigation once per PR,
+    # plus weekly/manual checks. It is not rebuilt on every main commit.
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -180,7 +207,11 @@ jobs:
         with:
           name: firewall-ui-linux-amd64
           path: browser-binary
-      - name: Verify browser authentication and cyberpunk layouts
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-1.56.1
+      - name: Verify browser authentication, tabs and themes
         run: |
           npm install --prefix "$RUNNER_TEMP/browser-tools" --no-audit --no-fund --ignore-scripts playwright@1.56.1
           node "$RUNNER_TEMP/browser-tools/node_modules/playwright/cli.js" install --with-deps chromium
@@ -191,7 +222,7 @@ jobs:
           for attempt in {1..20}; do curl -fsS http://127.0.0.1:18123/ >/dev/null && break; sleep 1; done
           PLAYWRIGHT_TOOLS="$RUNNER_TEMP/browser-tools" FIREWALL_UI_SCREENSHOTS="$RUNNER_TEMP/browser-shots" node tests/browser.cjs
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: failure()
         with:
           name: browser-screenshots
           path: ${{ runner.temp }}/browser-shots
