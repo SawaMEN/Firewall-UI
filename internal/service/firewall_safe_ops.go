@@ -169,6 +169,15 @@ func (s *FirewallService) SetManagedEnabledSafe(ctx context.Context, enabled boo
 			if err := s.syncManagedSafeLocked(ctx, backend, safetyPort); err != nil {
 				return FirewallManagedStatus{}, err
 			}
+			// In particular, do not claim UFW was enabled merely because
+			// the enable command exited with code zero.
+			active, activeErr := backend.enabled(ctx)
+			if activeErr != nil {
+				return FirewallManagedStatus{}, activeErr
+			}
+			if !active {
+				return FirewallManagedStatus{}, fmt.Errorf("%s remains inactive after enabling", backend.name)
+			}
 		}
 		if backend.name == "ufw" || backend.name == "firewalld" {
 			advanced, err := loadAdvancedFirewallRules()
