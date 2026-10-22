@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.12
+
+- Harden backup and rollback: capture live UFW/firewalld state and correctly restore host-wide firewall on/off status without deleting unrelated administrator rules.
+- Save manual firewall rules and labels atomically; roll back saved state and retry host reconciliation when applying a change fails.
+- Roll back auto-sync preferences and rules after failed activation; prevent firewalld zone switches while the daemon is actually running.
+- Improve UFW effective-block checks for overlapping ranges, wildcard/source-restricted rules, and independent IPv4/IPv6 behavior.
+- Avoid treating source-restricted UFW allow rules as global allowances.
+- Periodically restore Firewall-UI-owned nftables container FORWARD rules when an earlier kernel ruleset drifts from saved configuration.
+- Add regression tests and an evidence-based audit report in docs/audit-2026-10-22.md.
+
 ## 1.3.11
 
 - Fix a closed UFW port remaining reachable when an older Firewall-UI DENY is shadowed by an earlier ALLOW. Replace only the owned stale DENY and prepend the new block.
