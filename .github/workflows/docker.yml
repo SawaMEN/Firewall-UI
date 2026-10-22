@@ -49,6 +49,7 @@ jobs:
             --cache-to type=gha,scope=firewall-ui-${{ matrix.arch }},mode=max \
             --build-arg VCS_REF="$GITHUB_SHA" -t firewall-ui:test .
       - name: Export ready image
+        if: github.event_name != 'pull_request'
         run: |
           docker tag firewall-ui:test firewall-ui:stable
           mkdir -p release-images/stable
@@ -157,7 +158,10 @@ jobs:
           test ! -e /usr/local/bin/fw-ui
           test -z "$(docker ps -aq --filter label=com.docker.compose.project=firewall-ui-installer-ci)"
           test -z "$(docker volume ls -q --filter label=com.docker.compose.project=firewall-ui-installer-ci)"
+      # On pull requests only smoke-test the image; main still builds dev
+      # for every commit, regardless of whether VERSION changed.
       - name: Build ready dev image for this commit
+        if: github.event_name != 'pull_request'
         run: |
           docker buildx build --load -f deploy/docker/Dockerfile \
             --cache-from type=gha,scope=firewall-ui-${{ matrix.arch }} \
@@ -169,6 +173,7 @@ jobs:
           mkdir -p release-images/dev
           docker save firewall-ui:stable | gzip -1 > release-images/dev/firewall-ui-docker-linux-${{ matrix.arch }}.tar.gz
       - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
         with:
           name: firewall-ui-docker-${{ matrix.arch }}
           path: release-images/**/*
