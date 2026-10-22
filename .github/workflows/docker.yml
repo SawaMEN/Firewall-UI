@@ -1,11 +1,8 @@
 name: Docker build
 on:
+  # Dev Docker images are created for each push to main.
   push:
     branches: [main]
-    paths-ignore:
-      - 'README.md'
-      - 'docs/**'
-      - '**/*.md'
   pull_request:
     paths:
       - .dockerignore
@@ -23,9 +20,10 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+# Every main commit gets its dev image; only outdated PRs can be cancelled.
 concurrency:
-  group: docker-${{ github.ref }}
-  cancel-in-progress: true
+  group: docker-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   build:
     strategy:
