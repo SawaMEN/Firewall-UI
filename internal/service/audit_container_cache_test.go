@@ -57,6 +57,6 @@ esac
 	}
 	check(1)
 	check(1)
-	containerPolicyLastCheck = time.Now().Add(-2*time.Minute)
+	containerPolicyLastCheck = time.Now().Add(-2 * time.Minute)
 	check(2)
 }
