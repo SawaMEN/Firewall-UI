@@ -374,18 +374,18 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		PublicHost       *string  `json:"publicHost"`
-		TLSCert          *string  `json:"tlsCert"`
-		TLSKey           *string  `json:"tlsKey"`
-		ListenHost       string   `json:"listenHost"`
-		ListenPort       int      `json:"listenPort"`
-		ExternalPort     int      `json:"externalPort"`
-		SecureCookies    bool     `json:"secureCookies"`
-		UpdateChannel    string   `json:"updateChannel"`
-		AllowedCIDRs     []string `json:"allowedCidrs"`
-		RollbackSeconds  int      `json:"rollbackSeconds"`
-		PortScanInterval int      `json:"portScanInterval"`
-		SyncIntervalSeconds *int `json:"syncIntervalSeconds"`
+		PublicHost          *string  `json:"publicHost"`
+		TLSCert             *string  `json:"tlsCert"`
+		TLSKey              *string  `json:"tlsKey"`
+		ListenHost          string   `json:"listenHost"`
+		ListenPort          int      `json:"listenPort"`
+		ExternalPort        int      `json:"externalPort"`
+		SecureCookies       bool     `json:"secureCookies"`
+		UpdateChannel       string   `json:"updateChannel"`
+		AllowedCIDRs        []string `json:"allowedCidrs"`
+		RollbackSeconds     int      `json:"rollbackSeconds"`
+		PortScanInterval    int      `json:"portScanInterval"`
+		SyncIntervalSeconds *int     `json:"syncIntervalSeconds"`
 	}
 	if err := decode(w, r, &req); err != nil {
 		reply(w, http.StatusBadRequest, nil, err)
