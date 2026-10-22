@@ -300,6 +300,13 @@ func syncUFWAdvancedRulesLocked(ctx context.Context, backend firewallBackend) er
 	for _, rule := range rules {
 		comment := "Firewall-UI advanced " + rule.ID
 		exists := hasUFWAdvancedRule(added, comment)
+		// Some UFW versions ignore a new DENY while an existing ALLOW
+		// shadows it. The separately owned nftables INPUT drop is the
+		// effective enforcement; don't repeatedly retry and report a
+		// false sync failure just because no UFW DENY persisted.
+		if isClosePortRule(rule) && verifyNftInputClose(ctx, rule) == nil {
+			continue
+		}
 		if exists && isClosePortRule(rule) {
 			if _, err := verifyUFWClosedPort(ctx, backend.binary, rule); err != nil {
 				// UFW may retain an earlier ALLOW, yet a validated nftables
