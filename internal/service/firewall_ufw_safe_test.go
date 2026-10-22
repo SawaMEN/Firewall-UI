@@ -22,3 +22,22 @@ func TestFindUFWManagedRuleNumber(t *testing.T) {
 		t.Fatalf("advanced rule number = %d, want 4", got)
 	}
 }
+
+func TestParseUFWIncomingPolicy(t *testing.T) {
+	cases := []struct {
+		name, output, want string
+	}{
+		{"deny", "Status: active\nDefault: deny (incoming), allow (outgoing), disabled (routed)\n", "deny"},
+		{"allow", "Status: active\nDefault: allow (incoming), deny (outgoing), disabled (routed)\n", "allow"},
+		{"reject", "Default: reject (incoming), allow (outgoing)\n", "reject"},
+		{"inactive", "Status: inactive\n", ""},
+		{"missing", "Default: deny (outgoing), allow (routed)\n", ""},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			if got := parseUFWIncomingPolicy(test.output); got != test.want {
+				t.Fatalf("parseUFWIncomingPolicy(%q) = %q; want %q", test.output, got, test.want)
+			}
+		})
+	}
+}

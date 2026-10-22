@@ -7,6 +7,28 @@ import (
 	"strings"
 )
 
+// parseUFWIncomingPolicy reads the policy from "ufw status verbose" in
+// LC_ALL=C. Other policies (outgoing/routed) must not be mistaken for incoming.
+func parseUFWIncomingPolicy(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(strings.ToLower(line), "default:") {
+			continue
+		}
+		policies := strings.TrimSpace(line[len("Default:"):])
+		for _, field := range strings.Split(policies, ",") {
+			field = strings.ToLower(strings.TrimSpace(field))
+			if policy, hasIncoming := strings.CutSuffix(field, "(incoming)"); hasIncoming {
+				switch policy = strings.TrimSpace(policy); policy {
+				case "allow", "deny", "reject":
+					return policy
+				}
+			}
+		}
+	}
+	return ""
+}
+
 func findUFWManagedRuleNumber(status, comment, spec string) int {
 	for _, raw := range strings.Split(status, "\n") {
 		line := strings.TrimSpace(raw)
