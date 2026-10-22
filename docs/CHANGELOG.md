@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.14
+
+- Fix falsely rejected TCP/UDP closes when nftables normalizes the displayed kernel rule from `meta l4proto tcp th dport 1332` to `tcp dport 1332` (or the UDP equivalent).
+- Verify the exact protocol, destination port, DROP verdict and Firewall-UI rule marker in the hooked kernel INPUT chain, avoiding accidental matches of unrelated ports or rules.
+- Rebuild Firewall-UI-owned nftables INPUT/FORWARD rules when the previously cached rule was removed by another firewall reload.
+- Include a bounded live nftables chain listing in error messages when enforcement really cannot be confirmed.
+- Add regression tests for normalized TCP/UDP rules, missing kernel drops, stale cache recovery, and incorrect-match rejection.
+
 ## 1.3.13
 
 - Enforce manually closed TCP/UDP ports in the running kernel using an isolated nftables INPUT drop chain at priority -50, ahead of UFW's normal input chains; keep existing FORWARD/DNAT protection for Docker/Podman.
