@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { Layout, Space, Typography } from 'antd';
 import {
   DashboardOutlined,
@@ -11,6 +11,7 @@ import { useTranslation } from 'react-i18next';
 import { UpdateNotice } from '@/hooks/useUpdates';
 import FullScreenLoader from '@/components/FullScreenLoader';
 import AppSidebar, { type PageKey } from '@/layouts/AppSidebar';
+import { getPageFromHash } from './navigation';
 const DashboardPage = lazy(() => import('@/pages/dashboard/DashboardPage'));
 const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage'));
 const FirewallManager = lazy(() =>
@@ -24,7 +25,20 @@ const PortsTable = lazy(() =>
 
 export default function FirewallPage() {
   const { i18n } = useTranslation();
-  const [page, setPage] = useState<PageKey>('overview');
+  const [page, setPage] = useState<PageKey>(() => getPageFromHash(window.location.hash));
+
+  useEffect(() => {
+    const restorePage = () => setPage(getPageFromHash(window.location.hash));
+    window.addEventListener('hashchange', restorePage);
+    return () => window.removeEventListener('hashchange', restorePage);
+  }, []);
+
+  const choosePage = (next: PageKey) => {
+    if (window.location.hash !== '#' + next) {
+      window.location.hash = next;
+    }
+    setPage(next);
+  };
   const ru = (i18n.resolvedLanguage || i18n.language || '')
     .toLowerCase()
     .startsWith('ru');
@@ -42,21 +56,21 @@ export default function FirewallPage() {
         icon: <SafetyOutlined />,
         title: ru ? 'Файрволл' : 'Firewall',
         subtitle: ru
-          ? 'Автосинхронизация, простые правила и расширенные CIDR/allow/deny политики.'
+          ? 'Автосинхронизация и ручные правила, включая расширенные правила разрешения и запрета для IP-подсетей.'
           : 'Auto-sync, simple rules and advanced CIDR/allow/deny policies.',
       },
       ports: {
         icon: <DatabaseOutlined />,
         title: ru ? 'Порты и процессы' : 'Ports & processes',
         subtitle: ru
-          ? 'Live TCP/UDP-сокеты, процессы и публикации Docker/Podman.'
+          ? 'Сокеты TCP/UDP в реальном времени, процессы, диагностика подключений и счётчики трафика.'
           : 'Live TCP/UDP sockets, processes and Docker/Podman publications.',
       },
       settings: {
         icon: <SettingOutlined />,
         title: ru ? 'Настройки' : 'Settings',
         subtitle: ru
-          ? 'Доступ к панели, CIDR allowlist, backup, история, журнал и обновления.'
+          ? 'Доступ к панели, разрешённые IP-подсети, резервные копии, история, журнал и обновления.'
           : 'Panel access, CIDR allowlist, backups, history, audit log and updates.',
       },
     }),
@@ -67,7 +81,7 @@ export default function FirewallPage() {
 
   return (
     <Layout className="page-layout">
-      <AppSidebar page={page} onPageChange={setPage} />
+      <AppSidebar page={page} onPageChange={choosePage} />
       <Layout className="content-shell">
         <Layout.Content id="content-layout" className="content-area">
           <div className="page-content">

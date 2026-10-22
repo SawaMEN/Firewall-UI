@@ -7,7 +7,6 @@ import {
   ConfigProvider,
   Form,
   Input,
-  message,
 } from 'antd';
 import ruRU from 'antd/locale/ru_RU';
 import enUS from 'antd/locale/en_US';
@@ -33,8 +32,8 @@ void i18n.use(initReactI18next).init({
 type Session = { csrf: string; username?: string };
 type LoginValues = { username: string; password: string };
 
-function Application() {
-  const { antdThemeConfig } = useTheme();
+function SessionApplication() {
+  const { message } = AntApp.useApp();
   const { i18n } = useTranslation();
   const ru = i18n.language.startsWith('ru');
   const [authenticated, setAuthenticated] = useState(false);
@@ -75,7 +74,7 @@ function Application() {
         } else {
           setCSRF('');
           void message.error(ru
-            ? 'Браузер не сохранил сессию. Если включён Secure cookie, откройте панель по HTTPS. Проверьте, что cookie разрешены.'
+            ? 'Браузер не сохранил сессию. Если включены защищённые файлы cookie, откройте панель по HTTPS и разрешите использование cookie.'
             : 'The browser did not save the session. Use HTTPS when Secure cookie is enabled and allow cookies.');
         }
       }
@@ -87,8 +86,7 @@ function Application() {
   }
 
   return (
-    <ConfigProvider theme={antdThemeConfig} locale={ru ? ruRU : enUS}>
-      <AntApp>
+    <>
         {loading ? (
           <FullScreenLoader label={ru ? "Загрузка Firewall-UI…" : "Loading Firewall-UI…"} />
         ) : authenticated ? (
@@ -114,7 +112,17 @@ function Application() {
             </Card>
           </div>
         )}
-      </AntApp>
+    </>
+  );
+}
+
+function Application() {
+  const { antdThemeConfig } = useTheme();
+  const { i18n } = useTranslation();
+  const ru = i18n.language.startsWith('ru');
+  return (
+    <ConfigProvider theme={antdThemeConfig} locale={ru ? ruRU : enUS}>
+      <AntApp><SessionApplication /></AntApp>
     </ConfigProvider>
   );
 }

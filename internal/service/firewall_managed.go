@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,13 +29,17 @@ type FirewallManualRuleView struct {
 }
 
 type FirewallManagedStatus struct {
-	Supported   bool                     `json:"supported"`
-	Backend     string                   `json:"backend"`
-	Enabled     bool                     `json:"enabled"`
-	AutoSync    bool                     `json:"autoSync"`
-	Rules       []FirewallRule           `json:"rules"`
-	ManualRules []FirewallManualRuleView `json:"manualRules"`
-	Message     string                   `json:"message,omitempty"`
+	Supported           bool                     `json:"supported"`
+	Backend             string                   `json:"backend"`
+	Enabled             bool                     `json:"enabled"`
+	SystemActive        bool                     `json:"systemActive"`
+	IncomingPolicy      string                   `json:"incomingPolicy,omitempty"`
+	AutoSync            bool                     `json:"autoSync"`
+	SyncIntervalSeconds int                      `json:"syncIntervalSeconds"`
+	Rules               []FirewallRule           `json:"rules"`
+	UnknownRules        []FirewallUnknownRule    `json:"unknownRules"`
+	ManualRules         []FirewallManualRuleView `json:"manualRules"`
+	Message             string                   `json:"message,omitempty"`
 }
 
 func loadFirewallManualLabels() (map[string]string, error) {
@@ -74,14 +79,41 @@ func manualRuleViews(rules []FirewallManualRule, labels map[string]string) []Fir
 	return out
 }
 
+// closedPortSpecs returns ports with an explicit saved close request.
+// These ports must never be added back to the system as managed ALLOW rules,
+// regardless of whether they were discovered through a listener or manually
+// added to the UI. The close action independently enforces DENY.
+func closedPortSpecs() (map[string]bool, error) {
+	advanced, err := loadAdvancedFirewallRules()
+	if err != nil {
+		return nil, err
+	}
+	closed := make(map[string]bool, len(advanced))
+	for _, rule := range advanced {
+		if isClosePortRule(rule) {
+			closed[firewallRuleKey(rule.PortStart, rule.Protocol)] = true
+		}
+	}
+	return closed, nil
+}
+
 func (s *FirewallService) managedDesiredRules(auto bool, safetyPort int) ([]FirewallRule, error) {
 	rules, err := s.desiredRules(auto, safetyPort)
+	if err != nil {
+		return nil, err
+	}
+	closed, err := closedPortSpecs()
 	if err != nil {
 		return nil, err
 	}
 	byKey := make(map[string]FirewallRule, len(rules)+8)
 	for _, rule := range rules {
 		if key := firewallRuleSpec(rule); key != "" {
+			// Never suppress protected panel/SSH/session access. Those
+			// ports are rejected by SetPortClosedSafe before saving.
+			if closed[key] && !isFirewallSafetyRule(rule) {
+				continue
+			}
 			byKey[key] = rule
 		}
 	}
@@ -233,7 +265,11 @@ func (s *FirewallService) managedStatusLocked(ctx context.Context, safetyPort in
 	if err != nil {
 		return FirewallManagedStatus{}, err
 	}
-	status := FirewallManagedStatus{AutoSync: auto, ManualRules: manualRuleViews(manual, labels)}
+	interval, err := s.SyncIntervalSeconds()
+	if err != nil {
+		return FirewallManagedStatus{}, err
+	}
+	status := FirewallManagedStatus{AutoSync: auto, SyncIntervalSeconds: interval, ManualRules: manualRuleViews(manual, labels)}
 	backend, err := detectManagedFirewallBackend(ctx)
 	if err != nil {
 		status.Message = err.Error()
@@ -241,7 +277,20 @@ func (s *FirewallService) managedStatusLocked(ctx context.Context, safetyPort in
 	}
 	status.Supported = true
 	status.Backend = backend.name
-	status.Enabled, _ = backend.enabled(ctx)
+	systemActive, stateErr := backend.enabled(ctx)
+	if stateErr != nil {
+		return FirewallManagedStatus{}, fmt.Errorf("read %s state: %w", backend.name, stateErr)
+	}
+	status.SystemActive = systemActive
+	status.Enabled = systemActive
+	if backend.name == "ufw" && systemActive {
+		verbose, statusErr := runFirewallCommand(ctx, backend.binary, "status", "verbose")
+		if statusErr != nil {
+			status.Message = "Could not inspect UFW incoming policy: " + statusErr.Error()
+		} else {
+			status.IncomingPolicy = parseUFWIncomingPolicy(verbose)
+		}
+	}
 	desired, err := s.managedDesiredRules(auto, safetyPort)
 	if err != nil {
 		return FirewallManagedStatus{}, err
@@ -267,15 +316,24 @@ func (s *FirewallService) managedStatusLocked(ctx context.Context, safetyPort in
 		return status, nil
 	}
 
-	existing, err := listFirewallRules(ctx, backend)
+	existing, unknown, err := observedHostRules(ctx, backend)
 	if err != nil {
 		return FirewallManagedStatus{}, err
 	}
+	safety, err := s.managedDesiredRules(false, safetyPort)
+	if err != nil {
+		return FirewallManagedStatus{}, err
+	}
+	for i := range unknown {
+		unknown[i].CanDelete = removableExternalRule(unknown[i].Raw, backend.name, safety)
+	}
+	status.UnknownRules = unknown
 	seen := make(map[string]bool, len(desired))
 	for i := range desired {
 		key := firewallRuleSpec(desired[i])
 		seen[key] = true
-		desired[i].Exists = existing[key]
+		// UFW stores rules while disabled; those entries are not live access.
+		desired[i].Exists = status.Enabled && existing[key]
 		desired[i].Owned = owned[key]
 	}
 	if !auto {
@@ -284,13 +342,15 @@ func (s *FirewallService) managedStatusLocked(ctx context.Context, safetyPort in
 			if key == "" || rule.Source != "service" || seen[key] {
 				continue
 			}
-			rule.Exists = existing[key]
+			rule.Exists = status.Enabled && existing[key]
 			desired = append(desired, rule)
 			seen[key] = true
 		}
-		sortFirewallRules(desired)
 	}
-	status.Rules = desired
+	// UFW/firewalld can be edited outside this panel. Report unrestricted
+	// host ALLOW entries as external/read-only without adopting ownership.
+	// Do not feed these observed rules into managed policy synchronization.
+	status.Rules = appendObservedFirewallAllows(desired, existing, status.Enabled)
 	return status, nil
 }
 
@@ -312,6 +372,10 @@ func (s *FirewallService) syncManagedLocked(ctx context.Context, backend firewal
 	if err != nil {
 		return err
 	}
+	closed, err := closedPortSpecs()
+	if err != nil {
+		return err
+	}
 	old := map[string]FirewallRule{}
 	for _, rule := range managed {
 		if key := firewallRuleSpec(rule); key != "" {
@@ -319,6 +383,7 @@ func (s *FirewallService) syncManagedLocked(ctx context.Context, backend firewal
 		}
 	}
 	want := map[string]bool{}
+	changed := false
 	next := make([]FirewallRule, 0, len(desired)+len(managed))
 	for _, rule := range desired {
 		key := firewallRuleSpec(rule)
@@ -331,6 +396,7 @@ func (s *FirewallService) syncManagedLocked(ctx context.Context, backend firewal
 			if err := addFirewallRule(ctx, backend, rule); err != nil {
 				return err
 			}
+			changed = true
 			rule.Owned = true
 			// Persist ownership after each successful add. A later failed command
 			// must not leave an untracked allow rule that recovery cannot remove.
@@ -355,7 +421,7 @@ func (s *FirewallService) syncManagedLocked(ctx context.Context, backend firewal
 		if key == "" || want[key] {
 			continue
 		}
-		if !auto && rule.Source == "service" {
+		if !auto && rule.Source == "service" && !closed[key] {
 			rule.Exists = false
 			next = append(next, rule)
 			continue
@@ -365,6 +431,23 @@ func (s *FirewallService) syncManagedLocked(ctx context.Context, backend firewal
 		}
 		if err := deleteFirewallRule(ctx, backend, rule); err != nil {
 			return err
+		}
+		changed = true
+	}
+	// A successful UFW command is not proof that the rule appeared in the
+	// host configuration. Re-read it before reporting a successful sync.
+	// The ownership ledger was saved after every add, so rollback can still
+	// remove any rules created before this verification failed.
+	if backend.name == "ufw" && changed {
+		applied, err := listFirewallRules(ctx, backend)
+		if err != nil {
+			return fmt.Errorf("verify UFW rules: %w", err)
+		}
+		for _, rule := range desired {
+			spec := firewallRuleSpec(rule)
+			if spec != "" && !applied[spec] {
+				return fmt.Errorf("UFW did not persist expected allow rule %s", spec)
+			}
 		}
 	}
 	for i := range next {
@@ -449,7 +532,7 @@ func applyManagedNftables(ctx context.Context, binary string, rules []FirewallRu
 			return
 		}
 		parts := strings.SplitN(spec, "/", 2)
-		script.WriteString("  " + parts[1] + " dport " + nftPortExpression(rule) + " accept\n")
+		script.WriteString("  " + parts[1] + " dport " + nftPortExpression(rule) + " counter accept comment \"fwui-managed:" + spec + "\"\n")
 	}
 	for _, rule := range rules {
 		if isFirewallSafetyRule(rule) {
@@ -463,6 +546,13 @@ func applyManagedNftables(ctx context.Context, binary string, rules []FirewallRu
 	for _, rule := range advanced {
 		expression := strings.TrimSpace(advancedNFTExpression(rule))
 		if expression != "" {
+			verdict := "accept"
+			if rule.Action == "deny" {
+				verdict = "drop"
+			}
+			if strings.HasSuffix(expression, " "+verdict) {
+				expression = strings.TrimSuffix(expression, " "+verdict) + " counter " + verdict + " comment \"fwui-advanced:" + rule.ID + "\""
+			}
 			script.WriteString("  " + expression + "\n")
 		}
 	}
@@ -472,12 +562,22 @@ func applyManagedNftables(ctx context.Context, binary string, rules []FirewallRu
 		}
 	}
 	script.WriteString(" }\n}\n")
+	policy := script.String()
+	policy = strings.TrimPrefix(policy, "delete table inet "+managedNftTable+"\n")
+	desiredHash := sha256.Sum256([]byte(policy))
+	if exists && desiredHash == managedNFTDesiredHash && managedNFTObservedHash != ([32]byte{}) {
+		if currentHash, checkErr := currentManagedNFTFingerprint(ctx, binary); checkErr == nil && currentHash == managedNFTObservedHash {
+			return nil
+		}
+	}
 	cmd := firewallCommand(ctx, binary, "-f", "-")
 	cmd.Stdin = strings.NewReader(script.String())
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("apply nftables firewall: %w: %s", err, strings.TrimSpace(string(out)))
 	}
+	managedNFTDesiredHash = desiredHash
+	managedNFTObservedHash, _ = currentManagedNFTFingerprint(ctx, binary)
 	return nil
 }
 

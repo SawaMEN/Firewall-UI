@@ -10,14 +10,17 @@ import (
 )
 
 type FirewallBackup struct {
-	Version        int                    `json:"version"`
-	CreatedAt      time.Time              `json:"createdAt"`
-	AutoSync       bool                   `json:"autoSync"`
-	ManagedEnabled bool                   `json:"managedEnabled"`
-	PingEnabled    bool                   `json:"pingEnabled"`
-	ManualRules    []FirewallManualRule   `json:"manualRules"`
-	ManualLabels   map[string]string      `json:"manualLabels,omitempty"`
-	AdvancedRules  []FirewallAdvancedRule `json:"advancedRules"`
+	Version             int                    `json:"version"`
+	CreatedAt           time.Time              `json:"createdAt"`
+	SyncIntervalSeconds *int                   `json:"syncIntervalSeconds,omitempty"`
+	AutoSync            bool                   `json:"autoSync"`
+	ManagedEnabled      bool                   `json:"managedEnabled"`
+	PingEnabled         bool                   `json:"pingEnabled"`
+	ContainerProtection bool                   `json:"containerProtection"`
+	Zone                string                 `json:"zone,omitempty"`
+	ManualRules         []FirewallManualRule   `json:"manualRules"`
+	ManualLabels        map[string]string      `json:"manualLabels,omitempty"`
+	AdvancedRules       []FirewallAdvancedRule `json:"advancedRules"`
 }
 
 func (s *FirewallService) ExportBackup() (FirewallBackup, error) {
@@ -35,10 +38,29 @@ func exportFirewallBackupLocked() (FirewallBackup, error) {
 	if err != nil {
 		return FirewallBackup{}, err
 	}
-	if !configured {
+	// UFW/firewalld can be enabled or disabled outside the panel. A backup
+	// is used for rollback, so saving the old preference instead of live
+	// state can unexpectedly disable an active host firewall on recovery.
+	probe, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if backend, detectErr := detectManagedFirewallBackend(probe); detectErr == nil &&
+		(backend.name == "ufw" || backend.name == "firewalld") {
+		enabled, err = backend.enabled(probe)
+		if err != nil {
+			return FirewallBackup{}, fmt.Errorf("read live %s state for backup: %w", backend.name, err)
+		}
+	} else if !configured {
 		enabled = false
 	}
 	ping, err := (&FirewallService{}).ManagedPingEnabled()
+	if err != nil {
+		return FirewallBackup{}, err
+	}
+	containerProtection, err := containerProtectionEnabled()
+	if err != nil {
+		return FirewallBackup{}, err
+	}
+	zone, err := configuredFirewalldZone()
 	if err != nil {
 		return FirewallBackup{}, err
 	}
@@ -54,15 +76,22 @@ func exportFirewallBackupLocked() (FirewallBackup, error) {
 	if err != nil {
 		return FirewallBackup{}, err
 	}
+	interval, err := (&FirewallService{}).SyncIntervalSeconds()
+	if err != nil {
+		return FirewallBackup{}, err
+	}
 	return FirewallBackup{
-		Version:        1,
-		CreatedAt:      time.Now().UTC(),
-		AutoSync:       auto,
-		ManagedEnabled: enabled,
-		PingEnabled:    ping,
-		ManualRules:    append([]FirewallManualRule(nil), manual...),
-		ManualLabels:   cloneStringMap(labels),
-		AdvancedRules:  append([]FirewallAdvancedRule(nil), advanced...),
+		SyncIntervalSeconds: &interval,
+		Version:             1,
+		CreatedAt:           time.Now().UTC(),
+		AutoSync:            auto,
+		ManagedEnabled:      enabled,
+		PingEnabled:         ping,
+		ContainerProtection: containerProtection,
+		Zone:                zone,
+		ManualRules:         append([]FirewallManualRule(nil), manual...),
+		ManualLabels:        cloneStringMap(labels),
+		AdvancedRules:       append([]FirewallAdvancedRule(nil), advanced...),
 	}, nil
 }
 
@@ -74,6 +103,14 @@ func ValidateFirewallBackup(backup FirewallBackup) error {
 func validatedFirewallBackup(backup FirewallBackup) (FirewallBackup, error) {
 	if backup.Version != 1 {
 		return FirewallBackup{}, fmt.Errorf("unsupported firewall backup version %d", backup.Version)
+	}
+	if backup.SyncIntervalSeconds != nil {
+		if err := ValidateFirewallSyncInterval(*backup.SyncIntervalSeconds); err != nil {
+			return FirewallBackup{}, err
+		}
+	}
+	if backup.Zone != "" && !interfacePattern.MatchString(backup.Zone) {
+		return FirewallBackup{}, fmt.Errorf("invalid firewalld zone %q", backup.Zone)
 	}
 	// Validate a private copy before touching either saved state or live rules.
 	backup.ManualRules = append([]FirewallManualRule(nil), backup.ManualRules...)
@@ -111,6 +148,10 @@ func (s *FirewallService) RestoreBackup(ctx context.Context, backup FirewallBack
 		return err
 	}
 	backend, backendErr := detectManagedFirewallBackend(ctx)
+	oldZone, err := configuredFirewalldZone()
+	if err != nil {
+		return err
+	}
 	if backendErr != nil && backup.ManagedEnabled {
 		return backendErr
 	}
@@ -120,6 +161,9 @@ func (s *FirewallService) RestoreBackup(ctx context.Context, backup FirewallBack
 		if err != nil {
 			return err
 		}
+	}
+	if backendErr == nil && backend.name == "firewalld" && on && backup.Zone != oldZone {
+		return fmt.Errorf("%w: stop firewalld before restoring a different zone", ErrInvalidFirewallChange)
 	}
 	if on && (backend.name == "ufw" || backend.name == "firewalld") {
 		for _, rule := range currentAdvanced {
@@ -134,6 +178,12 @@ func (s *FirewallService) RestoreBackup(ctx context.Context, backup FirewallBack
 		firewallAutoSyncKey:       strconv.FormatBool(backup.AutoSync),
 		firewallManagedEnabledKey: strconv.FormatBool(backup.ManagedEnabled),
 		firewallPingEnabledKey:    strconv.FormatBool(backup.PingEnabled),
+		containerProtectionKey:    strconv.FormatBool(backup.ContainerProtection),
+		firewalldZoneKey:          backup.Zone,
+	}
+	// Old backups omit the interval and preserve the current preference.
+	if backup.SyncIntervalSeconds != nil {
+		changes[firewallSyncIntervalKey] = strconv.Itoa(*backup.SyncIntervalSeconds)
 	}
 	for key, value := range map[string]any{
 		firewallManualRulesKey:   backup.ManualRules,
@@ -151,13 +201,37 @@ func (s *FirewallService) RestoreBackup(ctx context.Context, backup FirewallBack
 	}
 
 	if backendErr != nil {
-		return nil
+		return s.syncContainerProtectionLocked(ctx)
+	}
+	// Select the restored zone before recreating its owned rules.
+	backend, backendErr = detectManagedFirewallBackend(ctx)
+	if backendErr != nil {
+		return backendErr
 	}
 	if !backup.ManagedEnabled {
-		if err := disableManagedBackendSafe(ctx, backend); err != nil {
+		// The main switch now represents the host firewall itself. A backup
+		// with the switch off must not leave UFW/firewalld running while only
+		// removing Firewall-UI's rules (and must preserve administrator rules).
+		if backend.name == "ufw" || backend.name == "firewalld" {
+			if on {
+				if err := setFirewallBackendEnabled(ctx, backend, false); err != nil {
+					return err
+				}
+			}
+			active, err := backend.enabled(ctx)
+			if err != nil {
+				return err
+			}
+			if active {
+				return fmt.Errorf("%s remains active after restoring disabled firewall", backend.name)
+			}
+		} else if err := disableManagedBackendSafe(ctx, backend); err != nil {
 			return err
 		}
-		return s.reconcileManagedPingStateLocked(false)
+		if err := s.reconcileManagedPingStateLocked(false); err != nil {
+			return err
+		}
+		return s.syncContainerProtectionLocked(ctx)
 	}
 	if (backend.name == "ufw" || backend.name == "firewalld") && !on {
 		if err := setFirewallBackendEnabled(ctx, backend, true); err != nil {
@@ -167,14 +241,23 @@ func (s *FirewallService) RestoreBackup(ctx context.Context, backup FirewallBack
 	if err := s.syncManagedSafeLocked(ctx, backend, safetyPort); err != nil {
 		return err
 	}
-	if backend.name == "ufw" || backend.name == "firewalld" {
+	if backend.name == "ufw" {
+		// Reconcile rather than blindly adding duplicates every time an
+		// existing backup is restored.
+		if err := syncUFWAdvancedRulesLocked(ctx, backend); err != nil {
+			return err
+		}
+	} else if backend.name == "firewalld" {
 		for _, rule := range backup.AdvancedRules {
 			if err := applySystemAdvancedRule(ctx, backend, rule, true); err != nil {
 				return err
 			}
 		}
 	}
-	return s.reconcileManagedPingStateLocked(true)
+	if err := s.reconcileManagedPingStateLocked(true); err != nil {
+		return err
+	}
+	return s.syncContainerProtectionLocked(ctx)
 }
 
 func cloneStringMap(in map[string]string) map[string]string {

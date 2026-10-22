@@ -24,6 +24,13 @@ services:
         target: /var/lib/firewall-ui
         bind:
           create_host_path: false
+      # Read Docker published-port metadata through the host API.
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        read_only: true
+        bind:
+          create_host_path: false
       - type: bind
         source: /etc/ssh
         target: /etc/ssh

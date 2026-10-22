@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.4.0
+
+A single consolidated release after **1.3.7**. All intervening implementation,
+review, documentation and version-bump commits are combined into one commit.
+
+- Verify TCP/UDP closures against live nftables INPUT and DNAT/FORWARD hooks and leading UFW DENY rules; never infer successful closure from saved settings alone. Repair drift and prevent managed ALLOW rules from reopening explicitly closed ports.
+- Protect published Docker/Podman ports in a dedicated nftables table, preserve administrator-owned policies, support firewalld zones and provide local access diagnostics, conflict analysis and traffic counters.
+- Make the main switch reflect and control the real UFW/firewalld service. Preserve existing system rules when disabling it.
+- Show saved closures and live external ALLOW rules in the firewall overview. Combine unknown rules into the same table with exact-rule deletion where safe, protecting SSH and panel access.
+- Add a configurable 30/60/120/300/600-second reconciliation interval (60 seconds by default), remove manual synchronization and batch status verification to reduce host subprocesses.
+- Complete Russian labels for port access, socket states, rules, diagnostics, settings and network errors. Preserve navigation and theme on refresh; keep manual and advanced rule editing separate.
+- Roll back unsuccessful manual-rule and auto-sync changes. Export actual system firewall state and restore the host-wide enabled/disabled state consistently.
+- Include the synchronization interval in backups while preserving compatibility with older backups. Reject zone restoration while firewalld is live, even if the saved preference is stale.
+- Refuse ambiguous source-port/forward-port rich-rule deletion; do not confuse source ports with destination ports or outgoing UFW rules with inbound permissions.
+- Remove redundant UFW reconciliation branches and share verification snapshots across closed ports; refresh snapshots after mutations.
+- Build Linux amd64/arm64 native binaries and Docker archives from the same verified commit. Retire intermediate 1.3.8–1.3.18 release tags only after the verified 1.4.0 stable release is published.
+
 ## 1.3.7
 
 - Restore the password prompt with Enter-to-generate behavior for native and Docker installations.

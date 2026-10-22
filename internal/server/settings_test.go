@@ -10,9 +10,11 @@ import (
 	"testing/fstest"
 
 	"github.com/SawaMEN/Firewall-UI/internal/appconfig"
+	"github.com/SawaMEN/Firewall-UI/internal/service"
 )
 
 func TestRuntimeSettingsPersistence(t *testing.T) {
+	service.Configure(filepath.Join(t.TempDir(), "state.json"), 8088, 0)
 	s := New("admin", "long-test-password", 8088, fstest.MapFS{})
 	s.ConfigPath = filepath.Join(t.TempDir(), "config.json")
 
@@ -36,7 +38,7 @@ func TestRuntimeSettingsPersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	body := `{"listenHost":"0.0.0.0","listenPort":8088,"externalPort":443,"secureCookies":true,"updateChannel":"dev"}`
+	body := `{"listenHost":"0.0.0.0","listenPort":8088,"externalPort":443,"secureCookies":true,"updateChannel":"dev","syncIntervalSeconds":300}`
 	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewBufferString(body))
 	req.RemoteAddr = "127.0.0.1:12345"
 	req.AddCookie(cookies[0])
@@ -54,6 +56,10 @@ func TestRuntimeSettingsPersistence(t *testing.T) {
 	if cfg.ListenHost != "0.0.0.0" || cfg.ListenPort != 8088 || cfg.ExternalPort != 443 || !cfg.SecureCookies || cfg.UpdateChannel != "dev" {
 		t.Fatalf("unexpected saved config: %#v", cfg)
 	}
+	interval, err := s.Firewall.SyncIntervalSeconds()
+	if err != nil || interval != 300 {
+		t.Fatalf("expected persisted 5-minute interval, got %d: %v", interval, err)
+	}
 
 	getReq := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
 	getReq.RemoteAddr = "127.0.0.1:12345"
@@ -62,5 +68,16 @@ func TestRuntimeSettingsPersistence(t *testing.T) {
 	s.ServeHTTP(getResult, getReq)
 	if getResult.Code != http.StatusOK {
 		t.Fatalf("get settings failed: %s", getResult.Body.String())
+	}
+	var saved struct {
+		Obj struct {
+			SyncIntervalSeconds int `json:"syncIntervalSeconds"`
+		} `json:"obj"`
+	}
+	if err := json.Unmarshal(getResult.Body.Bytes(), &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.Obj.SyncIntervalSeconds != 300 {
+		t.Fatalf("settings GET lost the interval: %+v", saved)
 	}
 }

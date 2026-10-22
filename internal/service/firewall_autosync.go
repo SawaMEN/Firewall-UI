@@ -106,10 +106,10 @@ func (s *FirewallService) StartAutoSync() {
 					configured = true
 				}
 
-				// Once the panel toggle has an explicit value, a disabled managed
-				// firewall must stay disabled even if UFW/firewalld themselves are
-				// still running for administrator-owned rules.
-				if configured && !desiredEnabled {
+				// UFW/firewalld are now controlled directly. A legacy "rules
+				// disabled" preference must not suppress synchronization when
+				// the administrator has actually enabled the host firewall.
+				if isManagedNativeFirewall(backend.name) && configured && !desiredEnabled {
 					if err := s.reconcileManagedPingStateLocked(false); err != nil {
 						log.Print("firewall ping reconcile failed:", err)
 					}
@@ -126,8 +126,17 @@ func (s *FirewallService) StartAutoSync() {
 				if err := s.reconcileManagedPingStateLocked(on); err != nil {
 					log.Print("firewall ping reconcile failed:", err)
 				}
+				if err := s.syncContainerProtectionLocked(ctx); err != nil {
+					log.Print("container forward reconcile failed: ", err)
+				}
 				if !on {
 					return
+				}
+				// Saved explicit DENY/advanced rules can drift independently
+				// from automatic listening-port allows. Restore them on every
+				// reconciliation, even when auto-open is disabled.
+				if err := syncUFWAdvancedRulesLocked(ctx, backend); err != nil {
+					log.Print("UFW advanced rule reconcile failed: ", err)
 				}
 				auto, err := firewallAutoSync()
 				if err != nil || !auto {
@@ -139,11 +148,17 @@ func (s *FirewallService) StartAutoSync() {
 			}
 
 			syncNow()
+			lastSync := time.Now()
+			// A cheap scheduling check permits changing the interval without
+			// restarting, while host firewall commands run only when due.
 			ticker := time.NewTicker(5 * time.Second)
 			defer ticker.Stop()
-			for {
-				<-ticker.C
+			for range ticker.C {
+				if time.Since(lastSync) < s.syncInterval() {
+					continue
+				}
 				syncNow()
+				lastSync = time.Now()
 			}
 		}()
 	})

@@ -20,6 +20,7 @@ import {
   type Port,
 } from '@/pages/firewall/portGroups';
 import { AddressLabel } from '@/pages/firewall/PortLabels';
+import FirewallDiagnostics from '@/pages/firewall/FirewallDiagnostics';
 
 type ContainerPort = {
   runtime: string;
@@ -143,7 +144,7 @@ export default function DashboardPage() {
         ))}
         <Col xs={12} md={8} xl={4}>
           <Card className="panel-card dashboard-stat">
-            <Statistic title="Backend" value={data.backend || '—'} />
+            <Statistic title={ru ? 'Системный файрволл' : 'Backend'} value={data.backend || '—'} />
           </Card>
         </Col>
       </Row>
@@ -229,7 +230,7 @@ export default function DashboardPage() {
               title: ru ? 'Контейнер' : 'Container',
               dataIndex: 'containerName',
             },
-            { title: 'Image', dataIndex: 'image', ellipsis: true },
+            { title: ru ? 'Образ' : 'Image', dataIndex: 'image', ellipsis: true },
             {
               title: ru ? 'Публикация' : 'Published',
               render: (_, p) => (
@@ -257,6 +258,7 @@ export default function DashboardPage() {
           ]}
         />
       </Card>
+      <FirewallDiagnostics mode="overview" ru={ru} />
     </Space>
   );
 }

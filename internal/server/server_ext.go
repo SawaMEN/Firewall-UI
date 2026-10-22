@@ -81,8 +81,20 @@ func (s *Server) handleExtendedAPI(w http.ResponseWriter, r *http.Request) bool 
 		s.restoreBackup(w, r)
 	case "/api/firewall/advanced":
 		s.advancedRules(w, r)
+	case "/api/firewall/zones":
+		s.firewallZones(w, r)
+	case "/api/firewall/containers":
+		s.firewallContainers(w, r)
+	case "/api/firewall/analyze":
+		s.firewallAnalysis(w, r)
+	case "/api/firewall/inspect":
+		s.firewallInspect(w, r)
+	case "/api/firewall/traffic":
+		s.firewallTraffic(w, r)
 	case "/api/firewall/advanced/delete":
 		s.deleteAdvancedRule(w, r)
+	case "/api/firewall/unknown/delete":
+		s.deleteUnknownFirewallRule(w, r)
 	case "/api/firewall/rollback/confirm":
 		s.confirmRollback(w, r)
 	case "/api/system/restart":
@@ -467,7 +479,9 @@ func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) advancedRules(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		rules, err := s.Firewall.AdvancedRules()
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		rules, err := s.Firewall.AdvancedRulesLive(ctx)
 		reply(w, http.StatusOK, rules, err)
 		return
 	}
@@ -546,6 +560,38 @@ func (s *Server) deleteAdvancedRule(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r, "advanced.delete", true, "", map[string]any{"ruleId": req.ID})
 	reply(w, http.StatusOK, map[string]any{"rules": rules, "rollback": pending}, nil)
+}
+
+// External host rules are not part of Firewall-UI backup/rollback state.
+// The service therefore deletes only an exact, freshly observed, safe rule,
+// and verifies its disappearance. Never run a managed backup restoration after
+// this operation, as that does not restore unrelated administrator entries.
+func (s *Server) deleteUnknownFirewallRule(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		reply(w, http.StatusMethodNotAllowed, nil, fmt.Errorf("method not allowed"))
+		return
+	}
+	var req struct {
+		Raw string `json:"raw"`
+	}
+	if err := decode(w, r, &req); err != nil {
+		reply(w, http.StatusBadRequest, nil, err)
+		return
+	}
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	if !s.requireNoPendingRollback(w) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	if err := s.Firewall.DeleteUnknownRuleSafe(ctx, req.Raw, s.Port); err != nil {
+		s.audit(r, "firewall.unknown.delete", false, err.Error(), nil)
+		reply(w, http.StatusOK, nil, err)
+		return
+	}
+	s.audit(r, "firewall.unknown.delete", true, "", map[string]any{"rule": req.Raw})
+	reply(w, http.StatusOK, map[string]bool{"deleted": true}, nil)
 }
 
 func (s *Server) restartService(w http.ResponseWriter, r *http.Request) {

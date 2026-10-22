@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Button,
   Card,
+  Collapse,
   Divider,
   Input,
   InputNumber,
+  App,
   Popconfirm,
   Select,
   Space,
@@ -14,11 +16,14 @@ import {
   Tag,
   Typography,
 } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
-import { HttpUtil } from '@/utils';
-import { formatProtocols, groupFirewallRules } from './portGroups';
+import { HttpUtil, request } from '@/utils';
+import { usePageVisibility } from '@/hooks/usePageVisibility';
+import { firewallOverviewRules, formatProtocols, groupFirewallRules, isManagedPortClose } from './portGroups';
 import { ProtocolRulesTable } from './ProtocolRulesTable';
+import FirewallDiagnostics from './FirewallDiagnostics';
+import { accessStateLabel, firewallActionLabel, firewallSourceLabel } from './uiLabels';
 import type { ColumnsType } from 'antd/es/table';
 
 type FirewallRule = {
@@ -32,16 +37,31 @@ type FirewallRule = {
   members?: FirewallRule[];
   sparse?: boolean;
   groupId?: string;
+  unknownRaw?: string;
+  unknownIndex?: number;
+  canDelete?: boolean;
 };
 type FirewallManualRule = { port: number; protocol: string; label?: string };
+type UnknownFirewallRule = {
+  raw: string;
+  port?: number;
+  protocol?: string;
+  canClose: boolean;
+  canDelete: boolean;
+  reason: string;
+};
 type FirewallStatus = {
   supported: boolean;
   backend: string;
   enabled: boolean;
+  systemActive?: boolean;
+  incomingPolicy?: string;
   autoSync: boolean;
+  syncIntervalSeconds: number;
   pingEnabled: boolean;
   canInstallUfw?: boolean;
   rules: FirewallRule[];
+  unknownRules?: UnknownFirewallRule[];
   manualRules: FirewallManualRule[];
   message?: string;
 };
@@ -56,6 +76,8 @@ type AdvancedRule = {
   ipVersion?: 'any' | 'ipv4' | 'ipv6';
   label?: string;
   priority: number;
+  enforced?: boolean;
+  enforcementError?: string;
 };
 type AdvancedResponse = { rules: AdvancedRule[] };
 
@@ -71,12 +93,19 @@ function portLabel(rule: FirewallRule) {
 }
 
 export function FirewallManager() {
+  const { modal } = App.useApp();
+  const visible = usePageVisibility();
   const { i18n } = useTranslation();
   const ru = i18n.language.startsWith('ru');
   const [status, setStatus] = useState<FirewallStatus | null>(null);
   const [advanced, setAdvanced] = useState<AdvancedRule[]>([]);
   const [loading, setLoading] = useState(true);
+  const [lastRefreshed, setLastRefreshed] = useState('');
+  const [refreshError, setRefreshError] = useState('');
+  const refreshVersion = useRef(0);
+  const activeAction = useRef('');
   const [action, setAction] = useState('');
+  activeAction.current = action;
   const [basicPort, setBasicPort] = useState<number | null>(null);
   const [basicProtocol, setBasicProtocol] = useState('both');
   const [basicLabel, setBasicLabel] = useState('');
@@ -88,13 +117,21 @@ export function FirewallManager() {
   });
 
   const closedIds = useMemo(
-    () => new Set(advanced.map((item) => item.id)),
+    () => new Set(advanced.filter((item) => isManagedPortClose(item) && item.enforced === true).map((item) => item.id)),
+    [advanced],
+  );
+  const savedClosedIds = useMemo(
+    () => new Set(advanced.filter(isManagedPortClose).map((item) => item.id)),
+    [advanced],
+  );
+  const advancedCustomRules = useMemo(
+    () => advanced.filter((item) => !isManagedPortClose(item)),
     [advanced],
   );
   const ruleGroups = useMemo(
     () =>
       groupFirewallRules(
-        status?.rules || [],
+        firewallOverviewRules(status?.rules || [], advanced),
         closedIds,
       ).map((group) => ({
         ...group.rules[0],
@@ -103,8 +140,23 @@ export function FirewallManager() {
         members: group.rules,
         sparse: group.sparse,
       })),
-    [status, closedIds],
+    [status, advanced, closedIds],
   );
+
+  const overviewRows = useMemo<FirewallRule[]>(() => [
+    ...ruleGroups,
+    ...(status?.unknownRules || []).map((item, index) => ({
+      port: item.port,
+      protocol: item.protocol || 'any',
+      source: 'unknown',
+      label: item.raw,
+      owned: false,
+      exists: false,
+      unknownRaw: item.raw,
+      unknownIndex: index,
+      canDelete: item.canDelete,
+    })),
+  ], [ruleGroups, status?.unknownRules]);
 
   const text = useMemo(
     () =>
@@ -117,15 +169,21 @@ export function FirewallManager() {
             enabled: 'Файрволл включён',
             disabled: 'Файрволл выключен',
             auto: 'Автоматически открывать порты слушающих сервисов',
-            ping: 'Разрешить ping',
-            sync: 'Синхронизировать',
-            safety:
-              'Порт панели и SSH защищаются автоматически. Опасные изменения откатываются, если UI не подтвердит доступность.',
+            ping: 'Разрешить пинг',
+             safety:
+              'Правила применяются автоматически. Выключение UFW/firewalld отключает системную защиту всего сервера. Порт панели и SSH сохраняются при включении.',
             activeRules: 'Активные и ожидаемые правила',
-            manual: 'Простые ручные правила',
+            unknown: 'НЕИЗВЕСТНО',
+            deleteUnknown: 'Удалить правило',
+            deleteUnknownConfirm: 'Удалить именно это внешнее правило из системного файрволла? Действие нельзя отменить восстановлением правил Firewall-UI.',
+            unsupportedUnknown: 'Только просмотр',
+            refresh: 'Обновить',
+            liveStatus: 'Автоматическая сверка файрволла',
+            refreshFailed: 'Не удалось обновить состояние файрволла. Показаны последние полученные данные.',
+            manual: 'Ручные правила',
             advanced: 'Расширенные правила',
             advancedHint:
-              'CIDR, allow/deny, диапазоны портов, IPv4/IPv6, интерфейс и приоритет. Firewalld не поддерживает поле интерфейса в этом режиме.',
+              'CIDR, правила разрешения и запрета, диапазоны портов, IPv4/IPv6, интерфейс и приоритет. Firewalld не поддерживает поле интерфейса в этом режиме.',
             add: 'Добавить',
             remove: 'Удалить',
             port: 'Порт',
@@ -133,7 +191,7 @@ export function FirewallManager() {
             label: 'Описание',
             source: 'Источник',
             state: 'Состояние',
-            sourceCidr: 'Source CIDR / IP',
+            sourceCidr: 'IP или подсеть источника (CIDR)',
             iface: 'Интерфейс',
             action: 'Действие',
             range: 'Диапазон',
@@ -151,11 +209,17 @@ export function FirewallManager() {
             disabled: 'Firewall disabled',
             auto: 'Automatically open listening service ports',
             ping: 'Allow ping',
-            sync: 'Sync now',
-            safety:
-              'Panel and SSH ports are protected automatically. Risky changes roll back if the UI cannot confirm connectivity.',
+             safety:
+              'Rules are applied automatically. Turning off UFW/firewalld disables host-wide firewall protection. Panel and SSH access is preserved when enabling.',
             activeRules: 'Active and expected rules',
-            manual: 'Simple manual rules',
+            unknown: 'UNKNOWN',
+            deleteUnknown: 'Delete rule',
+            deleteUnknownConfirm: 'Delete this exact external rule from the host firewall? Firewall-UI backups cannot undo this action.',
+            unsupportedUnknown: 'Read-only',
+            refresh: 'Refresh',
+            liveStatus: 'Automatic firewall refresh',
+            refreshFailed: 'Could not refresh firewall state. Showing the last received data.',
+            manual: 'Manual rules',
             advanced: 'Advanced rules',
             advancedHint:
               'CIDR, allow/deny, port ranges, IPv4/IPv6, interface and priority. Firewalld does not support the interface field in this mode.',
@@ -179,29 +243,77 @@ export function FirewallManager() {
   );
 
   async function load() {
+    const version = ++refreshVersion.current;
     setLoading(true);
     try {
       const [statusResult, advancedResult] = await Promise.all([
         HttpUtil.get<FirewallStatus>('/api/firewall/status'),
         HttpUtil.get<AdvancedRule[]>('/api/firewall/advanced'),
       ]);
-      if (statusResult.success && statusResult.obj) setStatus(statusResult.obj);
-      if (advancedResult.success && advancedResult.obj)
+      if (version !== refreshVersion.current) return;
+      if (statusResult.success && statusResult.obj && advancedResult.success && advancedResult.obj) {
+        setStatus(statusResult.obj);
         setAdvanced(advancedResult.obj);
+        setRefreshError('');
+        setLastRefreshed(new Date().toLocaleTimeString());
+      } else {
+        setRefreshError(statusResult.msg || advancedResult.msg || (ru ? 'Не удалось обновить состояние' : 'Refresh failed'));
+      }
     } finally {
-      setLoading(false);
+      if (version === refreshVersion.current) setLoading(false);
     }
   }
 
   useEffect(() => {
     void load();
+    return () => { refreshVersion.current++; };
   }, []);
+
+  // Poll read-only host state while this tab is visible. Serial refreshes and
+  // version checks prevent stale results from overwriting user actions.
+  useEffect(() => {
+    if (!visible) return;
+    let disposed = false;
+    let inFlight = false;
+    const refresh = async () => {
+      if (inFlight || activeAction.current || loading) return;
+      inFlight = true;
+      const version = ++refreshVersion.current;
+      try {
+        const [statusResult, advancedResult] = await Promise.all([
+          request<FirewallStatus>('/api/firewall/status', undefined, { silent: true }),
+          request<AdvancedRule[]>('/api/firewall/advanced', undefined, { silent: true }),
+        ]);
+        if (disposed || version !== refreshVersion.current || activeAction.current) return;
+        if (statusResult.success && statusResult.obj && advancedResult.success && advancedResult.obj) {
+          setStatus(statusResult.obj);
+          setAdvanced(advancedResult.obj);
+          setRefreshError('');
+          setLastRefreshed(new Date().toLocaleTimeString());
+        } else {
+          setRefreshError(statusResult.msg || advancedResult.msg || (ru ? 'Не удалось обновить состояние' : 'Refresh failed'));
+        }
+      } catch {
+        if (!disposed && version === refreshVersion.current) {
+          setRefreshError(ru ? 'Ошибка сети' : 'Network error');
+        }
+      } finally {
+        inFlight = false;
+      }
+    };
+    const ticker = window.setInterval(() => { void refresh(); }, Math.max(30, status?.syncIntervalSeconds || 60) * 1000);
+    return () => {
+      disposed = true;
+      window.clearInterval(ticker);
+    };
+  }, [visible, loading, status?.syncIntervalSeconds, ru]);
 
   async function mutate(
     path: string,
     data: Record<string, unknown>,
     key: string,
   ) {
+    ++refreshVersion.current;
     setAction(key);
     try {
       const result = await HttpUtil.post<FirewallStatus>(path, data);
@@ -217,6 +329,7 @@ export function FirewallManager() {
     protocol: string,
     closed: boolean,
   ) {
+    ++refreshVersion.current;
     setAction(`port-${port}-${protocol}`);
     try {
       const result = await HttpUtil.post('/api/firewall/port', {
@@ -231,6 +344,7 @@ export function FirewallManager() {
   }
 
   async function addAdvanced() {
+    ++refreshVersion.current;
     setAction('advanced-add');
     try {
       const result = await HttpUtil.post<AdvancedResponse>(
@@ -255,20 +369,39 @@ export function FirewallManager() {
           ipVersion: 'any',
           priority: 100,
         });
+        await load();
       }
     } finally {
       setAction('');
     }
   }
 
+  async function deleteUnknownRule(raw: string, index: number) {
+    ++refreshVersion.current;
+    setAction(`unknown-${index}`);
+    try {
+      const result = await HttpUtil.post<{ deleted: boolean }>(
+        '/api/firewall/unknown/delete',
+        { raw },
+      );
+      if (result.success && result.obj?.deleted) await load();
+    } finally {
+      setAction('');
+    }
+  }
+
   async function deleteAdvanced(id: string) {
+    ++refreshVersion.current;
     setAction(`advanced-${id}`);
     try {
       const result = await HttpUtil.post<AdvancedResponse>(
         '/api/firewall/advanced/delete',
         { id },
       );
-      if (result.success && result.obj) setAdvanced(result.obj.rules);
+      if (result.success && result.obj) {
+        setAdvanced(result.obj.rules);
+        await load();
+      }
     } finally {
       setAction('');
     }
@@ -316,7 +449,9 @@ export function FirewallManager() {
       title: text.range,
       render: (_, rule) => (
         <div>
-          <strong className="port-range">{portLabel(rule)}</strong>
+          {rule.unknownRaw !== undefined
+            ? <Typography.Text code copyable style={{ whiteSpace: 'normal', wordBreak: 'break-word' }}>{rule.unknownRaw}</Typography.Text>
+            : <strong className="port-range">{portLabel(rule)}</strong>}
           {rule.members && rule.members.length > 1 ? (
             <div>
               <Typography.Text type="secondary">
@@ -333,9 +468,13 @@ export function FirewallManager() {
       title: text.protocol,
       dataIndex: 'protocol',
       width: 100,
-      render: (_, rule) => <Tag>{formatProtocols((rule.members || [rule]).map((member) => member.protocol), ' / ')}</Tag>,
+      render: (_, rule) => <Tag>{rule.unknownRaw !== undefined && rule.protocol === 'any'
+          ? (ru ? 'Неизвестен' : 'Unknown')
+          : formatProtocols((rule.members || [rule]).map((member) => member.protocol), ' / ')}</Tag>,
     },
-    { title: text.source, render: (_, rule) => rule.label || rule.source },
+    { title: text.source, render: (_, rule) => rule.unknownRaw !== undefined
+      ? (ru ? 'Внешнее системное правило' : 'External host rule')
+      : firewallSourceLabel(rule.source, rule.label, ru) },
     {
       title: text.state,
       width: 180,
@@ -343,28 +482,34 @@ export function FirewallManager() {
         <Space>
           <Tag
             color={
-              advanced.some(
-                (item) =>
-                  item.id === `close-port-${rule.port}-${rule.protocol}`,
-              )
-                ? 'error'
-                : rule.exists
+              rule.unknownRaw !== undefined
+                ? 'warning'
+                : closedIds.has(`close-port-${rule.port}-${rule.protocol}`)
+                  ? 'error'
+                : savedClosedIds.has(`close-port-${rule.port}-${rule.protocol}`)
+                  ? 'warning'
+                  : rule.exists
                   ? 'success'
                   : 'warning'
             }
           >
-            {advanced.some(
-              (item) => item.id === `close-port-${rule.port}-${rule.protocol}`,
-            )
-              ? ru
-                ? 'ЗАПРЕЩЁН'
-                : 'DENIED'
-              : rule.exists
-                ? 'OPEN'
-                : 'MISSING'}
+            {rule.unknownRaw !== undefined
+              ? text.unknown
+              : status.enabled
+                ? accessStateLabel(
+                  closedIds.has(`close-port-${rule.port}-${rule.protocol}`)
+                    ? 'closed'
+                    : savedClosedIds.has(`close-port-${rule.port}-${rule.protocol}`)
+                      ? 'pending-close'
+                      : rule.exists
+                        ? 'open'
+                        : 'unknown',
+                  ru,
+                )
+              : ru ? 'ФАЙРВОЛЛ ВЫКЛЮЧЕН' : 'FIREWALL OFF'}
           </Tag>
-          {rule.exists ? (
-            <Tag>{rule.owned ? 'Firewall-UI' : 'External'}</Tag>
+          {rule.unknownRaw === undefined && rule.exists ? (
+            <Tag>{rule.owned ? 'Firewall-UI' : (ru ? 'Внешнее' : 'External')}</Tag>
           ) : null}
         </Space>
       ),
@@ -373,6 +518,16 @@ export function FirewallManager() {
       title: '',
       width: 150,
       render: (_, rule) => {
+        if (rule.unknownRaw !== undefined) {
+          if (!rule.canDelete) return <Tag>{text.unsupportedUnknown}</Tag>;
+          return (
+            <Popconfirm title={text.deleteUnknownConfirm}
+              onConfirm={() => void deleteUnknownRule(rule.unknownRaw!, rule.unknownIndex!)}>
+              <Button danger size="small" disabled={!!action}
+                loading={action === `unknown-${rule.unknownIndex}`}>{text.deleteUnknown}</Button>
+            </Popconfirm>
+          );
+        }
         if (rule.members && rule.members.length > 1)
           return (
             <Typography.Text type="secondary">
@@ -381,9 +536,8 @@ export function FirewallManager() {
           );
         if (!rule.port || ['panel', 'session', 'ssh'].includes(rule.source))
           return <Tag>{ru ? 'Защищён' : 'Protected'}</Tag>;
-        const closed = advanced.some(
-          (item) => item.id === `close-port-${rule.port}-${rule.protocol}`,
-        );
+        const savedClosed = savedClosedIds.has(`close-port-${rule.port}-${rule.protocol}`);
+        const closed = closedIds.has(`close-port-${rule.port}-${rule.protocol}`);
         return (
           <Popconfirm
             title={
@@ -391,12 +545,16 @@ export function FirewallManager() {
                 ? ru
                   ? 'Открыть порт?'
                   : 'Open port?'
-                : ru
-                  ? 'Закрыть доступ к порту?'
-                  : 'Close access to the port?'
+                : savedClosed
+                  ? ru
+                    ? 'Повторить закрытие? Правило не подтверждено.'
+                    : 'Retry close? The live rule is not verified.'
+                  : ru
+                    ? 'Закрыть доступ к порту?'
+                    : 'Close access to the port?'
             }
             onConfirm={() =>
-              void setPortAccess(rule.port!, rule.protocol, !closed)
+              void setPortAccess(rule.port!, rule.protocol, savedClosed ? !closed : true)
             }
           >
             <Button
@@ -409,9 +567,13 @@ export function FirewallManager() {
                 ? ru
                   ? 'Открыть'
                   : 'Open'
-                : ru
-                  ? 'Закрыть порт'
-                  : 'Close port'}
+                : savedClosed
+                  ? ru
+                    ? 'Повторить закрытие'
+                    : 'Retry close'
+                  : ru
+                    ? 'Закрыть порт'
+                    : 'Close port'}
             </Button>
           </Popconfirm>
         );
@@ -427,27 +589,37 @@ export function FirewallManager() {
             <Switch
               checked={status.enabled}
               loading={action === 'enabled'}
-              onChange={(enabled) =>
-                void mutate(
-                  '/api/firewall/enabled',
-                  { enabled },
-                  'enabled',
-                )
-              }
+              onChange={(enabled) => {
+                const apply = () =>
+                  mutate('/api/firewall/enabled', { enabled }, 'enabled');
+                if (!enabled && (status.backend === 'ufw' || status.backend === 'firewalld')) {
+                  modal.confirm({
+                    title: ru ? 'Выключить системный файрволл?' : 'Disable the system firewall?',
+                    content: ru
+                      ? 'Все входящие подключения, ранее блокируемые UFW/firewalld, могут стать доступными. Правила сохранятся для повторного включения.'
+                      : 'Incoming connections previously blocked by UFW/firewalld may become reachable. Existing rules will be kept for re-enabling.',
+                    okText: ru ? 'Выключить' : 'Disable',
+                    okButtonProps: { danger: true },
+                    cancelText: ru ? 'Отмена' : 'Cancel',
+                    onOk: async () => { await apply(); },
+                  });
+                } else {
+                  void apply();
+                }
+              }}
             />
             <Typography.Text strong>
               {status.enabled ? text.enabled : text.disabled}
             </Typography.Text>
           </Space>
           <Tag>{status.backend}</Tag>
-          <Button
-            loading={action === 'sync'}
-            onClick={() =>
-              void mutate('/api/firewall/sync', {}, 'sync')
-            }
-          >
-            {text.sync}
+          <Button icon={<ReloadOutlined />} loading={loading} onClick={() => { void load(); }}>
+            {text.refresh}
           </Button>
+          <Typography.Text type="secondary">
+            {text.liveStatus} · {status.syncIntervalSeconds || 60} {ru ? 'сек.' : 'sec'}{lastRefreshed ? ` · ${lastRefreshed}` : ''}
+          </Typography.Text>
+
         </Space>
         <Alert
           type="info"
@@ -455,6 +627,30 @@ export function FirewallManager() {
           title={text.safety}
           style={{ marginTop: 16 }}
         />
+        {status.backend === 'ufw' && status.systemActive && status.incomingPolicy === 'allow' && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginTop: 12 }}
+            title={ru
+              ? 'UFW пропускает входящие соединения по умолчанию'
+              : 'UFW allows incoming connections by default'}
+            description={ru
+              ? 'Правила ALLOW не закрывают остальные порты. После проверки правил доступа к SSH и панели администратор может установить: sudo ufw default deny incoming. Смена политики влияет на весь сервер.'
+              : 'ALLOW rules do not block other ports. After checking SSH and panel access, an administrator can run: sudo ufw default deny incoming. This changes the host-wide policy.'}
+          />
+        )}
+        {refreshError && (
+          <Alert type="warning" showIcon title={text.refreshFailed} description={refreshError} style={{ marginTop: 12 }} />
+        )}
+        {status.message && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginTop: 12 }}
+            title={status.message}
+          />
+        )}
         <div className="firewall-toggle-grid">
           <Space align="start">
             <Switch
@@ -492,9 +688,11 @@ export function FirewallManager() {
         <Table<FirewallRule>
           size="small"
           rowKey={(rule) =>
-            rule.groupId || `${portLabel(rule)}-${rule.protocol}-${rule.source}`
+            rule.unknownIndex !== undefined
+              ? `unknown-${rule.unknownIndex}`
+              : rule.groupId || `${portLabel(rule)}-${rule.protocol}-${rule.source}`
           }
-          dataSource={ruleGroups}
+          dataSource={overviewRows}
           pagination={{ pageSize: 20, hideOnSinglePage: true }}
           scroll={{ x: 700 }}
           columns={activeColumns}
@@ -513,6 +711,7 @@ export function FirewallManager() {
           }}
         />
       </Card>
+
 
       <Card className="panel-card" title={text.manual}>
         <Space wrap style={{ marginBottom: 14 }}>
@@ -602,9 +801,13 @@ export function FirewallManager() {
             },
           ]}
         />
-      </Card>
-
-      <Card className="panel-card" title={text.advanced}>
+        <Divider />
+        <Collapse
+          items={[{
+            key: 'advanced',
+            label: text.advanced,
+            children: (
+              <>
         <Alert
           type="info"
           showIcon
@@ -628,7 +831,7 @@ export function FirewallManager() {
             options={[
               { value: 'tcp', label: 'TCP' },
               { value: 'udp', label: 'UDP' },
-              { value: 'any', label: 'ANY' },
+              { value: 'any', label: ru ? 'ЛЮБОЙ' : 'ANY' },
             ]}
           />
           <InputNumber
@@ -705,7 +908,7 @@ export function FirewallManager() {
           ru={ru}
           identity={advancedIdentity}
           rowKey={(rule) => rule.id}
-          rules={advanced}
+          rules={advancedCustomRules}
           scroll={{ x: 1000 }}
           columns={[
             {
@@ -714,7 +917,7 @@ export function FirewallManager() {
               width: 100,
               render: (value: string) => (
                 <Tag color={value === 'deny' ? 'error' : 'success'}>
-                  {value.toUpperCase()}
+                  {firewallActionLabel(value, ru)}
                 </Tag>
               ),
             },
@@ -722,7 +925,7 @@ export function FirewallManager() {
               title: text.protocol,
               dataIndex: 'protocol',
               width: 100,
-              render: (value: string) => <Tag>{formatProtocols([value], ' / ')}</Tag>,
+              render: (value: string) => <Tag>{value === 'any' ? (ru ? 'ЛЮБОЙ' : 'ANY') : formatProtocols([value], ' / ')}</Tag>,
             },
             {
               title: text.range,
@@ -731,21 +934,21 @@ export function FirewallManager() {
                   ? rule.portEnd && rule.portEnd !== rule.portStart
                     ? `${rule.portStart}-${rule.portEnd}`
                     : rule.portStart
-                  : 'ANY',
+                  : (ru ? 'ЛЮБОЙ' : 'ANY'),
               width: 120,
             },
             {
               title: text.sourceCidr,
               dataIndex: 'sourceCidr',
-              render: (value?: string) => value || 'ANY',
+              render: (value?: string) => value || (ru ? 'ЛЮБОЙ' : 'ANY'),
             },
             {
               title: text.iface,
               dataIndex: 'interface',
-              render: (value?: string) => value || 'ANY',
+              render: (value?: string) => value || (ru ? 'ЛЮБОЙ' : 'ANY'),
               width: 120,
             },
-            { title: text.family, dataIndex: 'ipVersion', width: 100 },
+            { title: text.family, dataIndex: 'ipVersion', width: 100, render: (value?: string) => value === 'any' ? (ru ? 'Любая' : 'Any') : (value || '—').toUpperCase() },
             { title: text.priority, dataIndex: 'priority', width: 90 },
             { title: text.label, dataIndex: 'label', ellipsis: true },
             {
@@ -773,7 +976,12 @@ export function FirewallManager() {
             },
           ]}
         />
+              </>
+            ),
+          }]}
+        />
       </Card>
+      <FirewallDiagnostics backend={status.backend} enabled={status.enabled} ru={ru} onReload={() => { void load(); }} />
     </Space>
   );
 }

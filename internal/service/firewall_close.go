@@ -35,10 +35,12 @@ func (s *FirewallService) SetPortClosedSafe(ctx context.Context, port int, proto
 	if !enabled {
 		return nil, fmt.Errorf("%w: Включите файрволл перед изменением доступа к порту", ErrInvalidFirewallChange)
 	}
-	if desired, configured, err := firewallManagedEnabledPreference(); err != nil {
-		return nil, err
-	} else if configured && !desired {
-		return nil, fmt.Errorf("%w: Включите управление файрволлом в панели", ErrInvalidFirewallChange)
+	if isManagedNativeFirewall(backend.name) {
+		if desired, configured, err := firewallManagedEnabledPreference(); err != nil {
+			return nil, err
+		} else if configured && !desired {
+			return nil, fmt.Errorf("%w: Включите файрволл в панели", ErrInvalidFirewallChange)
+		}
 	}
 	if closed {
 		desired, err := s.managedDesiredRules(false, safetyPort)
@@ -65,6 +67,33 @@ func (s *FirewallService) SetPortClosedSafe(ctx context.Context, port int, proto
 				return nil, fmt.Errorf("%w: reserved port rule ID is already used", ErrInvalidFirewallChange)
 			}
 			if closed {
+				// A saved close is not proof that the live rule still exists.
+				// Repeated close requests must repair a missing/stale UFW rule
+				// and install the DNAT hook after an upgrade or restart.
+				if err := s.syncContainerProtectionLocked(ctx); err != nil {
+					return nil, err
+				}
+				// Validate both hooks even if UFW has a leading DENY: that
+				// DENY cannot protect forwarded Docker traffic.
+				if err := verifyNFTPortClose(ctx, rule); err != nil {
+					containerPolicyHash = [32]byte{}
+					if err := s.syncContainerProtectionLocked(ctx); err != nil {
+						return nil, err
+					}
+					if err := verifyNFTPortClose(ctx, rule); err != nil {
+						return nil, err
+					}
+				}
+				// A repeat close is also an explicit request to repair
+				// UFW's numbered rule ordering, not merely nftables state.
+				if backend.name == "ufw" {
+					if _, err := verifyUFWClosedPort(ctx, backend.binary, rule); err != nil {
+						if err := applySystemAdvancedRule(ctx, backend, rule, true); err != nil {
+							return nil, err
+						}
+					}
+				}
+
 				return rules, nil
 			}
 			rule = r

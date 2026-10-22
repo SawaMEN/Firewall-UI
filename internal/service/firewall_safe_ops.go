@@ -2,9 +2,12 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -48,7 +51,13 @@ func appendFrozenInboundRules(desired, managed []FirewallRule) []FirewallRule {
 	return out
 }
 
-func (s *FirewallService) syncManagedSafeLocked(ctx context.Context, backend firewallBackend, safetyPort int) error {
+func (s *FirewallService) syncManagedSafeLocked(ctx context.Context, backend firewallBackend, safetyPort int) (err error) {
+	// Keep the DNAT/FORWARD container policy synchronized with managed ports.
+	defer func() {
+		if err == nil {
+			err = s.syncContainerProtectionLocked(ctx)
+		}
+	}()
 	if backend.name != "nftables" && backend.name != "iptables" {
 		return s.syncManagedLocked(ctx, backend, safetyPort)
 	}
@@ -120,16 +129,8 @@ func (s *FirewallService) managedStatusSafeLocked(ctx context.Context, safetyPor
 		return FirewallManagedStatus{}, err
 	}
 	status = decorateFrozenNativeStatus(status, managed)
-	// For UFW/firewalld, Enabled represents the Firewall-UI management feature, not
-	// whether the host firewall daemon itself is running. This prevents the UI
-	// toggle from requiring a destructive global firewall shutdown.
-	if status.Backend == "ufw" || status.Backend == "firewalld" {
-		if enabled, configured, prefErr := firewallManagedEnabledPreference(); prefErr != nil {
-			return FirewallManagedStatus{}, prefErr
-		} else if configured {
-			status.Enabled = enabled && status.Enabled
-		}
-	}
+	// Enabled always mirrors the live host firewall, not the saved UI preference.
+	// UFW/firewalld can be toggled outside Firewall-UI, so reflect that state.
 	return status, nil
 }
 
@@ -163,8 +164,21 @@ func (s *FirewallService) SetManagedEnabledSafe(ctx context.Context, enabled boo
 			if err := s.syncManagedSafeLocked(ctx, backend, safetyPort); err != nil {
 				return FirewallManagedStatus{}, err
 			}
+			// In particular, do not claim UFW was enabled merely because
+			// the enable command exited with code zero.
+			active, activeErr := backend.enabled(ctx)
+			if activeErr != nil {
+				return FirewallManagedStatus{}, activeErr
+			}
+			if !active {
+				return FirewallManagedStatus{}, fmt.Errorf("%s remains inactive after enabling", backend.name)
+			}
 		}
-		if backend.name == "ufw" || backend.name == "firewalld" {
+		if backend.name == "ufw" {
+			if err := syncUFWAdvancedRulesLocked(ctx, backend); err != nil {
+				return FirewallManagedStatus{}, err
+			}
+		} else if backend.name == "firewalld" {
 			advanced, err := loadAdvancedFirewallRules()
 			if err != nil {
 				return FirewallManagedStatus{}, err
@@ -179,15 +193,37 @@ func (s *FirewallService) SetManagedEnabledSafe(ctx context.Context, enabled boo
 			return FirewallManagedStatus{}, err
 		}
 	} else {
-		// Persist the disabled intent first. Native rules are runtime-owned and
-		// system backends remove only Firewall-UI-owned rules while leaving the host
-		// firewall service and administrator policy untouched.
+		if backend.name == "ufw" || backend.name == "firewalld" {
+			// This switch intentionally controls the host firewall itself.
+			// Never delete its existing rules or the administrator's policy.
+			on, stateErr := backend.enabled(ctx)
+			if stateErr != nil {
+				return FirewallManagedStatus{}, stateErr
+			}
+			if on {
+				if err := setFirewallBackendEnabled(ctx, backend, false); err != nil {
+					return FirewallManagedStatus{}, err
+				}
+			}
+			stillOn, stateErr := backend.enabled(ctx)
+			if stateErr != nil {
+				return FirewallManagedStatus{}, stateErr
+			}
+			if stillOn {
+				return FirewallManagedStatus{}, fmt.Errorf("%s remains active after disabling", backend.name)
+			}
+		} else {
+			// Native nftables/iptables are Firewall-UI-owned chains only.
+			if err := disableManagedBackendSafe(ctx, backend); err != nil {
+				return FirewallManagedStatus{}, err
+			}
+		}
 		if err := setFirewallManagedEnabledPreference(false); err != nil {
 			return FirewallManagedStatus{}, err
 		}
-		if err := disableManagedBackendSafe(ctx, backend); err != nil {
-			return FirewallManagedStatus{}, err
-		}
+	}
+	if err := s.syncContainerProtectionLocked(ctx); err != nil {
+		return FirewallManagedStatus{}, err
 	}
 	if err := s.reconcileManagedPingStateLocked(enabled); err != nil {
 		return FirewallManagedStatus{}, err
@@ -198,11 +234,17 @@ func (s *FirewallService) SetManagedEnabledSafe(ctx context.Context, enabled boo
 func (s *FirewallService) SetManagedAutoSyncPreferenceSafe(ctx context.Context, enabled bool, safetyPort int) (FirewallManagedStatus, error) {
 	firewallMu.Lock()
 	defer firewallMu.Unlock()
-	if err := (&SettingService{}).setBool(firewallAutoSyncKey, enabled); err != nil {
+
+	before, err := firewallAutoSync()
+	if err != nil {
 		return FirewallManagedStatus{}, err
 	}
+	var backend firewallBackend
+	shouldSync := false
 	if enabled {
-		backend, err := detectManagedFirewallBackend(ctx)
+		// Validate the backend before persisting the requested switch, so a
+		// failed lookup cannot leave a misleading auto-sync preference.
+		backend, err = detectManagedFirewallBackend(ctx)
 		if err != nil {
 			return FirewallManagedStatus{}, err
 		}
@@ -214,10 +256,20 @@ func (s *FirewallService) SetManagedAutoSyncPreferenceSafe(ctx context.Context, 
 		if err != nil {
 			return FirewallManagedStatus{}, err
 		}
-		if on && (!configured || desiredEnabled) {
-			if err := s.syncManagedSafeLocked(ctx, backend, safetyPort); err != nil {
-				return FirewallManagedStatus{}, err
+		shouldSync = on && (!isManagedNativeFirewall(backend.name) || !configured || desiredEnabled)
+	}
+	if err := (&SettingService{}).setBool(firewallAutoSyncKey, enabled); err != nil {
+		return FirewallManagedStatus{}, err
+	}
+	if shouldSync {
+		if err := s.syncManagedSafeLocked(ctx, backend, safetyPort); err != nil {
+			restoreErr := (&SettingService{}).setBool(firewallAutoSyncKey, before)
+			if restoreErr == nil {
+				recovery, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				restoreErr = s.syncManagedSafeLocked(recovery, backend, safetyPort)
 			}
+			return FirewallManagedStatus{}, errors.Join(err, restoreErr)
 		}
 	}
 	return s.managedStatusSafeLocked(ctx, safetyPort)
@@ -234,7 +286,7 @@ func (s *FirewallService) SyncManagedSafe(ctx context.Context, safetyPort int) (
 	if err != nil {
 		return FirewallManagedStatus{}, err
 	}
-	if configured && !desiredEnabled {
+	if isManagedNativeFirewall(backend.name) && configured && !desiredEnabled {
 		return s.managedStatusSafeLocked(ctx, safetyPort)
 	}
 	if err := s.syncManagedSafeLocked(ctx, backend, safetyPort); err != nil {
@@ -269,6 +321,7 @@ func (s *FirewallService) changeManagedManualRuleSafe(ctx context.Context, port 
 	if err != nil {
 		return FirewallManagedStatus{}, err
 	}
+	beforeLabels := cloneStringMap(labels)
 	set := make(map[string]FirewallManualRule, len(manual)+2)
 	for _, rule := range manual {
 		set[firewallRuleKey(rule.Port, rule.Protocol)] = rule
@@ -288,19 +341,16 @@ func (s *FirewallService) changeManagedManualRuleSafe(ctx context.Context, port 
 			delete(labels, key)
 		}
 	}
-	manual = manual[:0]
+	// Keep a durable copy: manual[:0] would overwrite the original
+	// backing array, preventing rollback after a failed host operation.
+	beforeManual := append([]FirewallManualRule(nil), manual...)
+	next := make([]FirewallManualRule, 0, len(set))
 	for _, rule := range set {
-		manual = append(manual, rule)
+		next = append(next, rule)
 	}
-	sort.Slice(manual, func(i, j int) bool {
-		return manual[i].Port < manual[j].Port || (manual[i].Port == manual[j].Port && manual[i].Protocol < manual[j].Protocol)
+	sort.Slice(next, func(i, j int) bool {
+		return next[i].Port < next[j].Port || (next[i].Port == next[j].Port && next[i].Protocol < next[j].Protocol)
 	})
-	if err := saveFirewallJSON(firewallManualRulesKey, manual); err != nil {
-		return FirewallManagedStatus{}, err
-	}
-	if err := saveFirewallManualLabels(labels); err != nil {
-		return FirewallManagedStatus{}, err
-	}
 	backend, err := detectManagedFirewallBackend(ctx)
 	if err != nil {
 		return FirewallManagedStatus{}, err
@@ -313,9 +363,43 @@ func (s *FirewallService) changeManagedManualRuleSafe(ctx context.Context, port 
 	if err != nil {
 		return FirewallManagedStatus{}, err
 	}
-	if on && (!configured || desiredEnabled) {
+	encode := func(rules []FirewallManualRule, labels map[string]string) (map[string]string, error) {
+		rulesJSON, err := json.Marshal(rules)
+		if err != nil {
+			return nil, err
+		}
+		labelsJSON, err := json.Marshal(labels)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{
+			firewallManualRulesKey:  string(rulesJSON),
+			firewallManualLabelsKey: string(labelsJSON),
+		}, nil
+	}
+	changes, err := encode(next, labels)
+	if err != nil {
+		return FirewallManagedStatus{}, err
+	}
+	// Save rules and labels together. Previously a failure in the second
+	// write left inconsistent state; a sync failure also left rules saved
+	// that were never successfully applied to the host.
+	if err := (&SettingService{}).setStrings(changes); err != nil {
+		return FirewallManagedStatus{}, err
+	}
+	if on && (!isManagedNativeFirewall(backend.name) || !configured || desiredEnabled) {
 		if err := s.syncManagedSafeLocked(ctx, backend, safetyPort); err != nil {
-			return FirewallManagedStatus{}, err
+			previous, encodeErr := encode(beforeManual, beforeLabels)
+			if encodeErr != nil {
+				return FirewallManagedStatus{}, errors.Join(err, encodeErr)
+			}
+			restoreErr := (&SettingService{}).setStrings(previous)
+			if restoreErr == nil {
+				recovery, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				restoreErr = s.syncManagedSafeLocked(recovery, backend, safetyPort)
+			}
+			return FirewallManagedStatus{}, errors.Join(err, restoreErr)
 		}
 	}
 	return s.managedStatusSafeLocked(ctx, safetyPort)

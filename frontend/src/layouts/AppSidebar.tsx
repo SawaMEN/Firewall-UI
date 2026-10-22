@@ -26,12 +26,13 @@ export default function AppSidebar({ page, onPageChange }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { mode, setThemeMode } = useTheme();
+  const siderTheme = mode === 'light' ? 'light' : 'dark';
   const { i18n } = useTranslation();
   const ru = i18n.language.startsWith('ru');
 
   const items = [
-    { key: 'overview', icon: <DashboardOutlined />, label: ru ? 'Обзор' : 'Overview' },
     { key: 'firewall', icon: <SafetyOutlined />, label: ru ? 'Файрволл' : 'Firewall' },
+    { key: 'overview', icon: <DashboardOutlined />, label: ru ? 'Обзор' : 'Overview' },
     { key: 'ports', icon: <DatabaseOutlined />, label: ru ? 'Порты и процессы' : 'Ports & processes' },
     { key: 'settings', icon: <SettingOutlined />, label: ru ? 'Настройки' : 'Settings' },
   ];
@@ -50,7 +51,7 @@ export default function AppSidebar({ page, onPageChange }: Props) {
   const controls = (
     <Space orientation="vertical" size="small" style={{ width: '100%' }}>
       <Select
-        aria-label="Theme"
+        aria-label={ru ? "Тема оформления" : "Theme"}
         value={mode}
         onChange={(value) => setThemeMode(value as ThemeMode)}
         style={{ width: '100%' }}
@@ -61,7 +62,7 @@ export default function AppSidebar({ page, onPageChange }: Props) {
         ]}
       />
       <Select
-        aria-label="Language"
+        aria-label={ru ? "Язык интерфейса" : "Language"}
         value={ru ? 'ru' : 'en'}
         onChange={(value) => {
           saveLanguage(value);
@@ -94,7 +95,7 @@ export default function AppSidebar({ page, onPageChange }: Props) {
           collapsible
           onCollapse={setCollapsed}
           breakpoint="lg"
-          theme="light"
+          theme={siderTheme}
         >
           <div className="sider-brand">
             <div className="sider-brand-content">
@@ -105,6 +106,7 @@ export default function AppSidebar({ page, onPageChange }: Props) {
             </div>
           </div>
           <Menu
+            theme={siderTheme}
             className="sider-nav"
             selectedKeys={[page]}
             mode="inline"
@@ -131,6 +133,7 @@ export default function AppSidebar({ page, onPageChange }: Props) {
         styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column' } }}
       >
         <Menu
+          theme={siderTheme}
           className="drawer-menu"
           selectedKeys={[page]}
           mode="inline"

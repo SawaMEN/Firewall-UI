@@ -17,7 +17,7 @@ jobs:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.event != 'pull_request' &&
+      github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
@@ -29,6 +29,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           BUILD_COMMIT: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_WORKFLOW: ${{ github.event.workflow_run.name }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
           set -euo pipefail
           CURRENT_HEAD="$(gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq '.commit.sha')"
@@ -36,11 +38,39 @@ jobs:
             echo 'A newer main commit exists; skip outdated publication.'
             exit 0
           fi
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$BUILD_COMMIT&per_page=100" > /tmp/firewall-ui-runs.json
-          BINARY_RUN="$(jq -r '[.workflow_runs[] | select(.name == "Build and test" and .conclusion == "success" and .head_branch == "main" and .event != "pull_request")] | first | .id // empty' /tmp/firewall-ui-runs.json)"
-          DOCKER_RUN="$(jq -r '[.workflow_runs[] | select(.name == "Docker build" and .conclusion == "success" and .head_branch == "main" and .event != "pull_request")] | first | .id // empty' /tmp/firewall-ui-runs.json)"
+          # The workflow_run event itself is authoritative: GitHub's Actions
+          # list endpoint may lag behind a successful completed run.
+          BINARY_RUN=''
+          DOCKER_RUN=''
+          if [[ "$SOURCE_WORKFLOW" == 'Build and test' ]]; then
+            BINARY_RUN="$SOURCE_RUN_ID"
+          elif [[ "$SOURCE_WORKFLOW" == 'Docker build' ]]; then
+            DOCKER_RUN="$SOURCE_RUN_ID"
+          else
+            echo "::error::Unexpected completed workflow: $SOURCE_WORKFLOW"
+            exit 1
+          fi
+          # Discover the other verified build, retrying through GitHub API
+          # eventual consistency. Do not turn a successful binary build into
+          # a green no-op just because it was missing from the first response.
+          for attempt in {1..15}; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$BUILD_COMMIT&per_page=100" > /tmp/firewall-ui-runs.json
+            if [[ -z "$BINARY_RUN" ]]; then
+              BINARY_RUN="$(jq -r '[.workflow_runs[] | select(.name == "Build and test" and .conclusion == "success" and .head_branch == "main" and .event == "push")] | first | .id // empty' /tmp/firewall-ui-runs.json)"
+            fi
+            if [[ -z "$DOCKER_RUN" ]]; then
+              DOCKER_RUN="$(jq -r '[.workflow_runs[] | select(.name == "Docker build" and .conclusion == "success" and .head_branch == "main" and .event == "push")] | first | .id // empty' /tmp/firewall-ui-runs.json)"
+            fi
+            if [[ -n "$BINARY_RUN" && -n "$DOCKER_RUN" ]]; then
+              break
+            fi
+            if [[ "$attempt" -lt 15 ]]; then
+              echo "Build status not fully indexed yet ($attempt/15): binaries=${BINARY_RUN:-pending}, docker=${DOCKER_RUN:-pending}"
+              sleep 8
+            fi
+          done
           if [[ -z "$BINARY_RUN" ]]; then
-            echo 'Verified binaries are not ready. The binary workflow will trigger publication when it succeeds.'
+            echo "::notice::Verified binary build not finished. Docker completion cannot publish stable until binaries pass."
             exit 0
           fi
           echo "binary_run=$BINARY_RUN" >> "$GITHUB_OUTPUT"
@@ -48,8 +78,9 @@ jobs:
           if [[ -n "$DOCKER_RUN" ]]; then
             echo "docker_run=$DOCKER_RUN" >> "$GITHUB_OUTPUT"
             echo 'docker_ready=true' >> "$GITHUB_OUTPUT"
+            echo "Verified both builds: binaries=$BINARY_RUN docker=$DOCKER_RUN"
           else
-            echo 'Docker build has not passed; dev can publish, stable must wait.'
+            echo "::notice::Docker build has not passed; dev can publish, stable will be triggered by Docker completion."
           fi
       - name: Download verified binaries
         if: steps.builds.outputs.binary_ready == 'true'
@@ -135,7 +166,13 @@ jobs:
           test -s release-images/stable/firewall-ui-docker-linux-arm64.tar.gz
           export BUILD_TIME="$(cat dist-dev/build-time.txt)"
           python3 scripts/release-manifest.py stable "$STABLE_VERSION" "$TAG"
-          gh release create "$TAG" --target "$BUILD_COMMIT" --title "Firewall-UI $STABLE_VERSION" --generate-notes \
+          python3 - "$STABLE_VERSION" <<'PYNOTES' > /tmp/firewall-ui-release-notes.md
+          import pathlib, sys
+          text = pathlib.Path('docs/CHANGELOG.md').read_text()
+          section = text.split('## ' + sys.argv[1] + '\n', 1)[1].split('\n## ', 1)[0]
+          print(section.strip())
+          PYNOTES
+          gh release create "$TAG" --target "$BUILD_COMMIT" --title "Firewall-UI $STABLE_VERSION" --notes-file /tmp/firewall-ui-release-notes.md \
             dist-stable/firewall-ui-linux-amd64 dist-stable/firewall-ui-linux-arm64 dist-stable/update.json release-images/stable/*.tar.gz
           echo 'released=true' >> "$GITHUB_OUTPUT"
       - name: Verify published stable Docker image
@@ -144,3 +181,21 @@ jobs:
           source deploy/firewall-ui-docker
           docker_download_image
           test "$(docker run --rm --entrypoint /usr/local/bin/firewall-ui firewall-ui:stable -version)" = "$(tr -d '[:space:]' < VERSION)"
+      - name: Retire superseded intermediate releases after verified 1.4.0 publication
+        if: steps.stable.outputs.released == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$(tr -d '[:space:]' < VERSION)" == '1.4.0' ]] || exit 0
+          # The stable binaries and both Docker archives are already published
+          # and verified above. Keep v1.3.7 as the previous stable release.
+          gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v1.3." > /tmp/firewall-ui-old-tags.json
+          for patch in {8..18}; do
+            tag="v1.3.$patch"
+            if gh release view "$tag" >/dev/null 2>&1; then
+              gh release delete "$tag" --cleanup-tag -y
+            elif jq -e --arg ref "refs/tags/$tag" 'any(.[]; .ref == $ref)' /tmp/firewall-ui-old-tags.json >/dev/null; then
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag"
+            fi
+          done

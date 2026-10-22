@@ -32,7 +32,7 @@ import {
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 
-import { HttpUtil } from '@/utils';
+import { HttpUtil, request } from '@/utils';
 import { usePageVisibility } from '@/hooks/usePageVisibility';
 
 import type { ColumnsType } from 'antd/es/table';
@@ -45,6 +45,8 @@ import {
   type ProcessGroup,
 } from './portGroups';
 import { AddressLabel } from './PortLabels';
+import FirewallDiagnostics from './FirewallDiagnostics';
+import { accessStateLabel, socketStateLabel } from './uiLabels';
 
 type ContainerPort = {
   runtime: string;
@@ -72,6 +74,8 @@ type FirewallRule = {
 type AdvancedRule = {
   id: string;
   action: string;
+  enforced?: boolean;
+  enforcementError?: string;
   portStart?: number;
   portEnd?: number;
   protocol: string;
@@ -80,6 +84,7 @@ type ManualRule = { port: number; protocol: string; label?: string };
 type FirewallStatus = {
   enabled: boolean;
   autoSync: boolean;
+  syncIntervalSeconds?: number;
   rules: FirewallRule[];
   manualRules: ManualRule[];
 };
@@ -191,6 +196,39 @@ export function PortsTable() {
     return () => source.close();
   }, [live, visible, diagnostics]);
 
+  // Port sockets arrive over SSE, but firewall permissions can change via
+  // ufw/firewalld without any socket event. Refresh host firewall state too.
+  useEffect(() => {
+    if (!live || !visible) return;
+    let disposed = false;
+    let inFlight = false;
+    const refresh = async () => {
+      if (inFlight || acting) return;
+      inFlight = true;
+      const version = loadId.current;
+      try {
+        const [firewallResult, advancedResult] = await Promise.all([
+          request<FirewallStatus>('/api/firewall/status', undefined, { silent: true }),
+          request<AdvancedRule[]>('/api/firewall/advanced', undefined, { silent: true }),
+        ]);
+        if (disposed || version !== loadId.current) return;
+        if (firewallResult.success && firewallResult.obj && advancedResult.success && advancedResult.obj) {
+          setFirewall(firewallResult.obj);
+          setAdvanced(advancedResult.obj);
+        }
+      } catch {
+        // Preserve the previous known state while temporary reads fail.
+      } finally {
+        inFlight = false;
+      }
+    };
+    const timer = window.setInterval(() => { void refresh(); }, Math.max(30, firewall?.syncIntervalSeconds || 60) * 1000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [live, visible, acting, firewall?.syncIntervalSeconds]);
+
   const ruleMap = useMemo(() => {
     const map = new Map<string, FirewallRule>();
     for (const rule of firewall?.rules || []) {
@@ -225,17 +263,20 @@ export function PortsTable() {
     }
   }
 
+  // Persisted intent and verified live kernel/UFW enforcement are different.
+  // A previously saved close must NEVER be rendered as CLOSED on its own.
+  const configuredCloseSet = useMemo(
+    () => new Set(advanced.filter((rule) =>
+      rule.id === `close-port-${rule.portStart}-${rule.protocol}` &&
+      rule.action === 'deny',
+    ).map((rule) => key(rule.portStart || 0, rule.protocol))),
+    [advanced],
+  );
   const closedSet = useMemo(
-    () =>
-      new Set(
-        advanced
-          .filter(
-            (rule) =>
-              rule.id === `close-port-${rule.portStart}-${rule.protocol}` &&
-              rule.action === 'deny',
-          )
-          .map((rule) => key(rule.portStart || 0, rule.protocol)),
-      ),
+    () => new Set(advanced.filter((rule) =>
+      rule.id === `close-port-${rule.portStart}-${rule.protocol}` &&
+      rule.action === 'deny' && rule.enforced === true,
+    ).map((rule) => key(rule.portStart || 0, rule.protocol))),
     [advanced],
   );
   const grouped = useMemo(() => {
@@ -309,6 +350,8 @@ export function PortsTable() {
     const k = key(port.port, port.protocol);
     const rule = ruleMap.get(k);
     const closed = closedSet.has(k);
+    const configuredClosed = configuredCloseSet.has(k);
+    const closeError = advanced.find((item) => item.id === `close-port-${port.port}-${port.protocol}`)?.enforcementError;
     const protectedPort = ['panel', 'session', 'ssh'].includes(
       rule?.source || '',
     );
@@ -320,27 +363,34 @@ export function PortsTable() {
               ? 'warning'
               : closed
                 ? 'error'
-                : rule?.exists
+                : configuredClosed
+                  ? 'warning'
+                  : rule?.exists
                   ? 'success'
                   : 'default'
           }
         >
-          {!firewall?.enabled
-            ? ru
-              ? 'НЕ ФИЛЬТРУЕТСЯ'
-              : 'UNFILTERED'
-            : closed
-              ? ru
-                ? 'ЗАПРЕЩЁН'
-                : 'DENIED'
-              : rule?.exists
-                ? rule.source === 'service'
-                  ? 'AUTO'
-                  : 'OPEN'
-                : ru
-                  ? 'НЕ ОПРЕДЕЛЕНО'
-                  : 'UNKNOWN'}
+          {accessStateLabel(
+            !firewall?.enabled
+              ? 'unfiltered'
+              : closed
+                ? 'closed'
+                : configuredClosed
+                  ? 'pending-close'
+                  : rule?.exists
+                    ? 'open'
+                    : 'unknown',
+            ru,
+          )}
         </Tag>
+        {firewall?.enabled && rule?.exists && rule.source === 'service' && !closed && !configuredClosed ? (
+          <Tag>{ru ? 'Авто' : 'Auto'}</Tag>
+        ) : null}
+        {configuredClosed && !closed && closeError ? (
+          <Typography.Text type="warning" title={closeError}>
+            {ru ? 'Правило не действует' : 'Rule not enforced'}
+          </Typography.Text>
+        ) : null}
         {protectedPort ? (
           <Tag>{ru ? 'Защищён' : 'Protected'}</Tag>
         ) : (
@@ -350,11 +400,15 @@ export function PortsTable() {
                 ? ru
                   ? 'Открыть порт?'
                   : 'Open port?'
-                : ru
-                  ? 'Закрыть доступ к порту? Процесс продолжит работать.'
-                  : 'Block access to this port? The process will keep running.'
+                : configuredClosed
+                  ? ru
+                    ? 'Повторить закрытие? Текущее правило не подтверждено.'
+                    : 'Retry closing? Current rule is not verified.'
+                  : ru
+                    ? 'Закрыть доступ к порту? Процесс продолжит работать.'
+                    : 'Block access to this port? The process will keep running.'
             }
-            onConfirm={() => void setPortAccess(port, !closed)}
+            onConfirm={() => void setPortAccess(port, configuredClosed ? !closed : true)}
           >
             <Button
               size="small"
@@ -367,9 +421,13 @@ export function PortsTable() {
                 ? ru
                   ? 'Открыть'
                   : 'Open'
-                : ru
-                  ? 'Закрыть порт'
-                  : 'Close port'}
+                : configuredClosed
+                  ? ru
+                    ? 'Повторить закрытие'
+                    : 'Retry close'
+                  : ru
+                    ? 'Закрыть порт'
+                    : 'Close port'}
             </Button>
           </Popconfirm>
         )}
@@ -412,7 +470,7 @@ export function PortsTable() {
       dataIndex: 'state',
       width: 120,
       render: (v: string, p) => (
-        <Tag color={p.listening ? 'success' : undefined}>{v || '—'}</Tag>
+        <Tag color={p.listening ? 'success' : undefined}>{socketStateLabel(v, ru) || '—'}</Tag>
       ),
     },
     {
@@ -424,7 +482,7 @@ export function PortsTable() {
           <Space orientation="vertical" size={2}>
             {port.processes.map((process) => (
               <Typography.Text key={process.pid} title={process.executable}>
-                {process.name || 'process'}{' '}
+                {process.name || (ru ? 'процесс' : 'process')}{' '}
                 <Typography.Text type="secondary">
                   PID {process.pid}
                 </Typography.Text>
@@ -568,7 +626,7 @@ export function PortsTable() {
           {group.processes.length ? (
             group.processes.slice(0, 3).map((owner) => (
               <div key={owner.pid} title={owner.executable}>
-                <strong>{owner.name || 'process'}</strong>
+                <strong>{owner.name || (ru ? 'процесс' : 'process')}</strong>
                 <span>PID {owner.pid}</span>
               </div>
             ))
@@ -651,12 +709,12 @@ export function PortsTable() {
           <div className="port-access-summary">
             {allowed ? (
               <Tag color="success">
-                {ru ? 'Разрешено' : 'Allowed'}: {allowed}
+                {ru ? 'Открыто' : 'Open'}: {allowed}
               </Tag>
             ) : null}
             {denied ? (
               <Tag color="error">
-                {ru ? 'Запрещено' : 'Denied'}: {denied}
+                {ru ? 'Закрыто' : 'Closed'}: {denied}
               </Tag>
             ) : null}
             {ports.length > allowed + denied ? (
@@ -675,6 +733,7 @@ export function PortsTable() {
   ];
 
   return (
+    <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
     <Card className="panel-card ports-panel">
       <div className="ports-heading">
         <div>
@@ -797,7 +856,7 @@ export function PortsTable() {
                         {group.processes.length ? (
                           group.processes.slice(0, 3).map((owner) => (
                             <div key={owner.pid}>
-                              <strong>{owner.name || 'process'}</strong>
+                              <strong>{owner.name || (ru ? 'процесс' : 'process')}</strong>
                               <span>PID {owner.pid}</span>
                             </div>
                           ))
@@ -873,5 +932,7 @@ export function PortsTable() {
         </Typography.Text>
       </div>
     </Card>
+    <FirewallDiagnostics mode="ports" ru={ru} />
+    </Space>
   );
 }

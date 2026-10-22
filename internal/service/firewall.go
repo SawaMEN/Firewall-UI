@@ -358,6 +358,11 @@ func detectFirewallBackend(ctx context.Context) (firewallBackend, error) {
 				b.zone = strings.TrimSpace(out)
 			}
 		}
+		if preferred, zoneErr := configuredFirewalldZone(); zoneErr != nil {
+			return firewallBackend{}, zoneErr
+		} else if preferred != "" {
+			b.zone = preferred
+		}
 		candidates = append(candidates, b)
 	}
 	for _, b := range candidates {
@@ -371,6 +376,65 @@ func detectFirewallBackend(ctx context.Context) (firewallBackend, error) {
 	return firewallBackend{}, errors.New("no supported firewall found (install ufw or firewalld)")
 }
 
+// UFW normalizes simple allow commands into multiple equivalent forms.
+// In particular, "ufw allow to any port 1332 proto tcp" must not be mistaken
+// for a missing port. Ignore source/interface-restricted rules because they
+// cannot satisfy a global managed allow.
+func parseUFWAllowSpec(line string) (string, bool) {
+	fields := strings.Fields(strings.TrimSpace(line))
+	if len(fields) < 3 || fields[0] != "ufw" || fields[1] != "allow" {
+		return "", false
+	}
+	// The short form may still carry "from <CIDR>" or "on <iface>".
+	// Returning early here falsely treats a source-restricted ALLOW as a
+	// global port rule, so scan restrictions before accepting either form.
+	for i := 2; i < len(fields); i++ {
+		if fields[i] == "comment" {
+			fields = fields[:i]
+			break
+		}
+	}
+	// Direction may be the final token in the short form.
+	for _, field := range fields[2:] {
+		if field == "out" {
+			return "", false
+		}
+	}
+	spec, short := canonicalFirewallSpec(fields[2])
+	var port, proto string
+	source := false
+	for i := 2; i+1 < len(fields); i++ {
+		switch fields[i] {
+		case "from":
+			source = true
+			if fields[i+1] != "any" && fields[i+1] != "Anywhere" {
+				return "", false
+			}
+		case "on":
+			return "", false
+		case "to":
+			source = false
+			if fields[i+1] != "any" && fields[i+1] != "Anywhere" {
+				return "", false
+			}
+		case "port":
+			if source {
+				return "", false
+			}
+			port = fields[i+1]
+		case "proto":
+			proto = fields[i+1]
+		}
+	}
+	if short {
+		return spec, true
+	}
+	if port == "" || proto == "" {
+		return "", false
+	}
+	return canonicalFirewallSpec(port + "/" + proto)
+}
+
 func listFirewallRules(ctx context.Context, b firewallBackend) (map[string]bool, error) {
 	out := map[string]bool{}
 	if b.name == "ufw" {
@@ -379,11 +443,8 @@ func listFirewallRules(ctx context.Context, b firewallBackend) (map[string]bool,
 			return nil, err
 		}
 		for line := range strings.SplitSeq(text, "\n") {
-			f := strings.Fields(strings.TrimSpace(line))
-			if len(f) >= 3 && f[0] == "ufw" && f[1] == "allow" {
-				if spec, ok := canonicalFirewallSpec(f[2]); ok {
-					out[spec] = true
-				}
+			if spec, ok := parseUFWAllowSpec(line); ok {
+				out[spec] = true
 			}
 		}
 		return out, nil

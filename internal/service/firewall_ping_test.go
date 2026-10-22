@@ -88,12 +88,33 @@ func TestFirewallPingDisabledIfEitherFamilyIgnoresEcho(t *testing.T) {
 	}
 }
 
-func TestPingPreferenceRespectsDisabledManagementWithActiveUFW(t *testing.T) {
+func TestPingPreferenceFollowsActualUFWStateDespiteOldDisabledPreference(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "ping")
 	writePingTestFile(t, path, "0")
 	useFirewallPingTestPaths(t, path)
-	if err := os.WriteFile(filepath.Join(dir, "ufw"), []byte("#!/bin/sh\ncase \"$*\" in status*) echo 'Status: active';; esac\n"), 0755); err != nil {
+	// Mimic UFW persisting allowed rules: a successful allow command must
+	// be reflected by a subsequent "show added" check.
+	rulesPath := filepath.Join(dir, "ufw-rules")
+	statePath := filepath.Join(dir, "ufw-state")
+	writePingTestFile(t, statePath, "active")
+	t.Setenv("FWUI_TEST_UFW_RULES", rulesPath)
+	t.Setenv("FWUI_TEST_UFW_STATE", statePath)
+	stub := `#!/bin/sh
+case "$*" in
+  status*)
+    if /bin/grep -q '^active' "$FWUI_TEST_UFW_STATE"; then
+      echo 'Status: active'
+    else
+      echo 'Status: inactive'
+    fi;;
+  'show added') [ ! -f "$FWUI_TEST_UFW_RULES" ] || /bin/cat "$FWUI_TEST_UFW_RULES";;
+  allow*) echo "ufw allow $2" >> "$FWUI_TEST_UFW_RULES";;
+  disable) echo inactive > "$FWUI_TEST_UFW_STATE";;
+  '--force enable') echo active > "$FWUI_TEST_UFW_STATE";;
+esac
+`
+	if err := os.WriteFile(filepath.Join(dir, "ufw"), []byte(stub), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
@@ -109,8 +130,8 @@ func TestPingPreferenceRespectsDisabledManagementWithActiveUFW(t *testing.T) {
 	if _, err := s.ReconcileManagedPingState(ctx, 8088); err != nil {
 		t.Fatal(err)
 	}
-	if on, err := readFirewallPingEnabled(); err != nil || !on {
-		t.Fatalf("disabled management applied ping ban: %v, %v", on, err)
+	if on, err := readFirewallPingEnabled(); err != nil || on {
+		t.Fatalf("active UFW did not apply ping setting: %v, %v", on, err)
 	}
 	if _, err := s.SetManagedEnabledSafe(ctx, true, 8088); err != nil {
 		t.Fatal(err)
