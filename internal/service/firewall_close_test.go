@@ -167,3 +167,61 @@ esac
 		t.Fatalf("ineffective close was persisted: %v, %v", rules, err)
 	}
 }
+
+func TestUFWClose1332WithoutNumberedComments(t *testing.T) {
+	root := t.TempDir()
+	activeDeny := filepath.Join(root, "owned-deny")
+	nftRules := filepath.Join(root, "nft-rules")
+	t.Setenv("UFW_CLOSE_STATE", activeDeny)
+	t.Setenv("UFW_CLOSE_NFT", nftRules)
+	ufw := `#!/bin/sh
+case "$*" in
+  status) echo 'Status: active';;
+  'status numbered')
+    echo 'Status: active'
+    echo '[ 1] 22/tcp ALLOW IN Anywhere'
+    if [ -f "$UFW_CLOSE_STATE" ]; then echo '[ 2] 1332/tcp DENY IN Anywhere'; fi;;
+  'show added')
+    echo "ufw allow 22/tcp comment 'administrator'"
+    if [ -f "$UFW_CLOSE_STATE" ]; then
+      echo "ufw deny to any port 1332 proto tcp comment 'Firewall-UI advanced close-port-1332-tcp'"
+    fi;;
+  'insert 1 deny'*) : > "$UFW_CLOSE_STATE";;
+  '--force delete deny to any port 1332 proto tcp comment Firewall-UI advanced close-port-1332-tcp')
+    /bin/rm -f "$UFW_CLOSE_STATE";;
+esac
+`
+	if err := os.WriteFile(filepath.Join(root, "ufw"), []byte(ufw), 0755); err != nil {
+		t.Fatal(err)
+	}
+	nft := `#!/bin/sh
+case "$*" in
+ 'list tables')
+   if [ -f "$UFW_CLOSE_NFT" ]; then echo 'table inet firewall_ui_containers'; fi;;
+ '-f -') /bin/cat > "$UFW_CLOSE_NFT";;
+ 'delete table inet firewall_ui_containers') /bin/rm -f "$UFW_CLOSE_NFT";;
+esac
+`
+	if err := os.WriteFile(filepath.Join(root, "nft"), []byte(nft), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root)
+	Configure(filepath.Join(root, "state.json"), 8088, 443)
+	svc := &FirewallService{}
+	ctx := context.Background()
+	rules, err := svc.SetPortClosedSafe(ctx, 1332, "tcp", true, 8088)
+	if err != nil || len(rules) != 1 {
+		t.Fatalf("commentless UFW numbered output must not reject DENY: %v %#v", err, rules)
+	}
+	rules, err = svc.SetPortClosedSafe(ctx, 1332, "tcp", true, 8088)
+	if err != nil || len(rules) != 1 {
+		t.Fatalf("reconciliation duplicated or rejected saved close: %v %#v", err, rules)
+	}
+	rules, err = svc.SetPortClosedSafe(ctx, 1332, "tcp", false, 8088)
+	if err != nil || len(rules) != 0 {
+		t.Fatalf("reopen with hidden comments failed: %v %#v", err, rules)
+	}
+	if _, err := os.Stat(activeDeny); !os.IsNotExist(err) {
+		t.Fatalf("UFW deny persisted after reopening: %v", err)
+	}
+}
