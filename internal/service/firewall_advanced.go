@@ -456,6 +456,15 @@ func applySystemAdvancedRule(ctx context.Context, backend firewallBackend, rule 
 		}
 		args := []string{rule.Action}
 		if isClosePortRule(rule) {
+			// Closing a port overrides managed automatic/manual ALLOW
+			// decisions. Remove only Firewall-UI-owned permission for this
+			// exact port/protocol. Otherwise UFW may keep reporting the old
+			// ALLOW while silently skipping duplicate DENY insertions.
+			// Never delete administrator-owned UFW rules or broader ranges.
+			spec := ufwFirewallSpec(firewallRuleKey(rule.PortStart, rule.Protocol))
+			if err := deleteUFWManagedRules(ctx, backend.binary, "Firewall-UI managed", spec); err != nil {
+				return fmt.Errorf("remove Firewall-UI-managed ALLOW for %d/%s before closing: %w", rule.PortStart, rule.Protocol, err)
+			}
 			// A previous DENY can be shadowed by an existing ALLOW.
 			// UFW skips insertion of duplicate rules, even if the existing
 			// DENY is below that ALLOW. Remove only our own prior DENY,
