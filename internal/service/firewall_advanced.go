@@ -525,7 +525,6 @@ func applySystemAdvancedRule(ctx context.Context, backend firewallBackend, rule 
 			}
 			return fmt.Errorf("UFW DENY for %d/%s is not the leading effective rule after prepend and insert: %w (prepend: %v; insert: %v); kernel nftables DROP exists but cannot make UFW status correct", rule.PortStart, rule.Protocol, err, applyErr, insertErr)
 		}
-		return nil
 	}
 	if backend.name != "firewalld" {
 		return errors.New("advanced rules are not supported by this firewall backend")
