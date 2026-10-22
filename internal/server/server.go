@@ -331,6 +331,7 @@ type runtimeSettingsResponse struct {
 	AllowedCIDRs     []string `json:"allowedCidrs"`
 	RollbackSeconds  int      `json:"rollbackSeconds"`
 	PortScanInterval int      `json:"portScanInterval"`
+	SyncIntervalSeconds int `json:"syncIntervalSeconds"`
 	Restarting       bool     `json:"restarting,omitempty"`
 }
 
@@ -357,7 +358,14 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		cfg := s.RuntimeConfig
 		s.mu.Unlock()
-		reply(w, http.StatusOK, runtimeSettingsView(cfg, false), nil)
+		view := runtimeSettingsView(cfg, false)
+		var intervalErr error
+		view.SyncIntervalSeconds, intervalErr = s.Firewall.SyncIntervalSeconds()
+		if intervalErr != nil {
+			reply(w, http.StatusOK, nil, intervalErr)
+			return
+		}
+		reply(w, http.StatusOK, view, nil)
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -377,6 +385,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		AllowedCIDRs     []string `json:"allowedCidrs"`
 		RollbackSeconds  int      `json:"rollbackSeconds"`
 		PortScanInterval int      `json:"portScanInterval"`
+		SyncIntervalSeconds *int `json:"syncIntervalSeconds"`
 	}
 	if err := decode(w, r, &req); err != nil {
 		reply(w, http.StatusBadRequest, nil, err)
@@ -424,6 +433,12 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusBadRequest, nil, err)
 		return
 	}
+	if req.SyncIntervalSeconds != nil {
+		if err := service.ValidateFirewallSyncInterval(*req.SyncIntervalSeconds); err != nil {
+			reply(w, http.StatusBadRequest, nil, err)
+			return
+		}
+	}
 	cfg.AllowedCIDRs = security.NormalizeCIDRs(cfg.AllowedCIDRs)
 
 	if len(cfg.AllowedCIDRs) > 0 && !security.IPAllowed(r.RemoteAddr, cfg.AllowedCIDRs) {
@@ -452,6 +467,12 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.SyncIntervalSeconds != nil {
+		if err := s.Firewall.SetSyncIntervalSeconds(*req.SyncIntervalSeconds); err != nil {
+			reply(w, http.StatusOK, nil, err)
+			return
+		}
+	}
 	s.mu.Lock()
 	s.RuntimeConfig = cfg
 	s.mu.Unlock()
@@ -461,7 +482,9 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 	if channelChanged && !restarting && s.Updater != nil {
 		s.Updater.Trigger()
 	}
-	reply(w, http.StatusOK, runtimeSettingsView(cfg, restarting), nil)
+	view := runtimeSettingsView(cfg, restarting)
+	view.SyncIntervalSeconds, _ = s.Firewall.SyncIntervalSeconds()
+	reply(w, http.StatusOK, view, nil)
 
 	if restarting {
 		s.restartUntil = time.Now().Add(2 * time.Second)
