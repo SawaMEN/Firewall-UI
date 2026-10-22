@@ -23,6 +23,7 @@ import { usePageVisibility } from '@/hooks/usePageVisibility';
 import { firewallOverviewRules, formatProtocols, groupFirewallRules, isManagedPortClose } from './portGroups';
 import { ProtocolRulesTable } from './ProtocolRulesTable';
 import FirewallDiagnostics from './FirewallDiagnostics';
+import { accessStateLabel, firewallActionLabel, firewallSourceLabel } from './uiLabels';
 import type { ColumnsType } from 'antd/es/table';
 
 type FirewallRule = {
@@ -149,7 +150,7 @@ export function FirewallManager() {
             enabled: 'Файрволл включён',
             disabled: 'Файрволл выключен',
             auto: 'Автоматически открывать порты слушающих сервисов',
-            ping: 'Разрешить ping',
+            ping: 'Разрешить пинг',
              safety:
               'Правила применяются автоматически. Выключение UFW/firewalld отключает системную защиту всего сервера. Порт панели и SSH сохраняются при включении.',
             activeRules: 'Активные и ожидаемые правила',
@@ -165,7 +166,7 @@ export function FirewallManager() {
             manual: 'Ручные правила',
             advanced: 'Расширенные правила',
             advancedHint:
-              'CIDR, allow/deny, диапазоны портов, IPv4/IPv6, интерфейс и приоритет. Firewalld не поддерживает поле интерфейса в этом режиме.',
+              'CIDR, правила разрешения и запрета, диапазоны портов, IPv4/IPv6, интерфейс и приоритет. Firewalld не поддерживает поле интерфейса в этом режиме.',
             add: 'Добавить',
             remove: 'Удалить',
             port: 'Порт',
@@ -173,7 +174,7 @@ export function FirewallManager() {
             label: 'Описание',
             source: 'Источник',
             state: 'Состояние',
-            sourceCidr: 'Source CIDR / IP',
+            sourceCidr: 'IP или подсеть источника (CIDR)',
             iface: 'Интерфейс',
             action: 'Действие',
             range: 'Диапазон',
@@ -438,11 +439,7 @@ export function FirewallManager() {
       width: 100,
       render: (_, rule) => <Tag>{formatProtocols((rule.members || [rule]).map((member) => member.protocol), ' / ')}</Tag>,
     },
-    { title: text.source, render: (_, rule) => rule.source === 'closed'
-      ? (ru ? 'Закрыт вручную' : 'Closed manually')
-      : rule.source === 'external'
-        ? (ru ? 'Внешнее правило файрволла' : 'External firewall rule')
-        : rule.label || rule.source },
+    { title: text.source, render: (_, rule) => firewallSourceLabel(rule.source, rule.label, ru) },
     {
       title: text.state,
       width: 180,
@@ -459,20 +456,21 @@ export function FirewallManager() {
                   : 'warning'
             }
           >
-            {closedIds.has(`close-port-${rule.port}-${rule.protocol}`)
-              ? ru
-                ? 'ЗАКРЫТ'
-                : 'CLOSED'
-              : savedClosedIds.has(`close-port-${rule.port}-${rule.protocol}`)
-                ? ru
-                  ? 'НЕ ЗАКРЫТ'
-                  : 'NOT CLOSED'
-              : rule.exists
-                ? 'ALLOW'
-                : status.enabled ? (ru ? 'НЕТ ALLOW' : 'NO ALLOW') : (ru ? 'ВЫКЛ.' : 'OFF')}
+            {status.enabled
+              ? accessStateLabel(
+                  closedIds.has(`close-port-${rule.port}-${rule.protocol}`)
+                    ? 'closed'
+                    : savedClosedIds.has(`close-port-${rule.port}-${rule.protocol}`)
+                      ? 'pending-close'
+                      : rule.exists
+                        ? 'open'
+                        : 'unknown',
+                  ru,
+                )
+              : ru ? 'ФАЙРВОЛЛ ВЫКЛЮЧЕН' : 'FIREWALL OFF'}
           </Tag>
           {rule.exists ? (
-            <Tag>{rule.owned ? 'Firewall-UI' : 'External'}</Tag>
+            <Tag>{rule.owned ? 'Firewall-UI' : (ru ? 'Внешнее' : 'External')}</Tag>
           ) : null}
         </Space>
       ),
@@ -901,7 +899,7 @@ export function FirewallManager() {
               width: 100,
               render: (value: string) => (
                 <Tag color={value === 'deny' ? 'error' : 'success'}>
-                  {value.toUpperCase()}
+                  {firewallActionLabel(value, ru)}
                 </Tag>
               ),
             },
@@ -918,21 +916,21 @@ export function FirewallManager() {
                   ? rule.portEnd && rule.portEnd !== rule.portStart
                     ? `${rule.portStart}-${rule.portEnd}`
                     : rule.portStart
-                  : 'ANY',
+                  : (ru ? 'ЛЮБОЙ' : 'ANY'),
               width: 120,
             },
             {
               title: text.sourceCidr,
               dataIndex: 'sourceCidr',
-              render: (value?: string) => value || 'ANY',
+              render: (value?: string) => value || (ru ? 'ЛЮБОЙ' : 'ANY'),
             },
             {
               title: text.iface,
               dataIndex: 'interface',
-              render: (value?: string) => value || 'ANY',
+              render: (value?: string) => value || (ru ? 'ЛЮБОЙ' : 'ANY'),
               width: 120,
             },
-            { title: text.family, dataIndex: 'ipVersion', width: 100 },
+            { title: text.family, dataIndex: 'ipVersion', width: 100, render: (value?: string) => value === 'any' ? (ru ? 'Любая' : 'Any') : (value || '—').toUpperCase() },
             { title: text.priority, dataIndex: 'priority', width: 90 },
             { title: text.label, dataIndex: 'label', ellipsis: true },
             {
