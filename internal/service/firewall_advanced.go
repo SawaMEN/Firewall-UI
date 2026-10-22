@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/SawaMEN/Firewall-UI/internal/hostexec"
 )
 
 const firewallAdvancedRulesKey = "firewallAdvancedRules"
@@ -51,13 +53,40 @@ func (s *FirewallService) AdvancedRulesLive(ctx context.Context) ([]FirewallAdva
 	if err != nil {
 		return nil, err
 	}
-	if len(rules) == 0 {
+	hasClose := false
+	for _, rule := range rules {
+		if isClosePortRule(rule) {
+			hasClose = true
+			break
+		}
+	}
+	if !hasClose {
 		return rules, nil
 	}
 	backend, detectErr := detectManagedFirewallBackend(ctx)
 	enabled := false
 	if detectErr == nil {
 		enabled, detectErr = backend.enabled(ctx)
+	}
+
+	// One kernel ruleset read and (for UFW) one numbered+saved rules snapshot
+	// per refresh, not one subprocess pair for every blocked port.
+	var nftRaw string
+	var nftErr error
+	var numbered, added string
+	var ufwErr error
+	if detectErr == nil && enabled && (backend.name == "ufw" || backend.name == "firewalld") {
+		if nft, err := hostexec.LookPath("nft"); err != nil {
+			nftErr = fmt.Errorf("nftables unavailable: %w", err)
+		} else {
+			nftRaw, nftErr = runFirewallCommand(ctx, nft, "-j", "list", "table", "inet", containerNFTTable)
+		}
+		if backend.name == "ufw" && nftErr == nil {
+			numbered, ufwErr = runFirewallCommand(ctx, backend.binary, "status", "numbered")
+			if ufwErr == nil {
+				added, ufwErr = runFirewallCommand(ctx, backend.binary, "show", "added")
+			}
+		}
 	}
 	for i := range rules {
 		rule := &rules[i]
@@ -78,12 +107,20 @@ func (s *FirewallService) AdvancedRulesLive(ctx context.Context) ([]FirewallAdva
 			rule.EnforcementError = "Live closed-port verification is unavailable for " + backend.name
 			continue
 		}
-		if err := verifyNFTPortClose(ctx, *rule); err != nil {
+		if nftErr != nil {
+			rule.EnforcementError = "Cannot inspect nftables close: " + nftErr.Error()
+			continue
+		}
+		if err := verifyNFTClosedPortJSON([]byte(nftRaw), *rule); err != nil {
 			rule.EnforcementError = err.Error()
 			continue
 		}
 		if backend.name == "ufw" {
-			if _, err := verifyUFWClosedPort(ctx, backend.binary, *rule); err != nil {
+			if ufwErr != nil {
+				rule.EnforcementError = "Cannot inspect UFW close: " + ufwErr.Error()
+				continue
+			}
+			if _, err := verifyUFWClosedPortSnapshot(numbered, added, *rule); err != nil {
 				rule.EnforcementError = "UFW DENY not effective: " + err.Error()
 				continue
 			}
