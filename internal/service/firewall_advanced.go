@@ -433,23 +433,33 @@ func applySystemAdvancedRule(ctx context.Context, backend firewallBackend, rule 
 		if add {
 			args = append(args, "comment", "Firewall-UI advanced "+rule.ID)
 		}
-		if _, err := runFirewallCommand(ctx, backend.binary, args...); err != nil {
-			// The kernel drop is authoritative if UFW itself refuses a
-			// duplicate or cannot change the existing ordered rule list.
-			// This must never mask an ineffective nftables drop.
-			if !isClosePortRule(rule) || verifyNFTPortClose(ctx, rule) != nil {
-				return err
-			}
+		_, applyErr := runFirewallCommand(ctx, backend.binary, args...)
+		if !isClosePortRule(rule) {
+			return applyErr
 		}
-		if isClosePortRule(rule) {
-			// An earlier UFW ALLOW does not make a port reachable when
-			// our higher-priority nftables INPUT drop exists in the kernel.
-			// Accept either a verified UFW DENY or a verified nftables
-			// INPUT drop, never an unverified success from ufw itself.
-			if _, err := verifyUFWClosedPort(ctx, backend.binary, rule); err != nil {
-				if nftErr := verifyNFTPortClose(ctx, rule); nftErr != nil {
-					return fmt.Errorf("verify UFW closed port %d/%s: %w; nftables fallback: %v", rule.PortStart, rule.Protocol, err, nftErr)
-				}
+		if _, err := verifyUFWClosedPort(ctx, backend.binary, rule); err == nil {
+			return nil
+		}
+		// UFW can accept "prepend" while leaving an earlier ALLOW in its
+		// displayed list. In that case, repair the UFW *list* too instead
+		// of silently relying on nftables alone. Drop only our own DENY
+		// (if it persisted); keep third-party ALLOW rules intact.
+		comment := "Firewall-UI advanced " + rule.ID
+		if err := deleteUFWManagedRules(ctx, backend.binary, comment, ""); err != nil {
+			return fmt.Errorf("prepare priority UFW DENY for %d/%s: %w", rule.PortStart, rule.Protocol, err)
+		}
+		// "insert 1" is explicitly documented to place a rule at the head
+		// of UFW's numbered list. It preserves IPv4/IPv6 UFW rule semantics.
+		insertArgs := append([]string{"insert", "1"}, args[1:]...)
+		_, insertErr := runFirewallCommand(ctx, backend.binary, insertArgs...)
+		if _, err := verifyUFWClosedPort(ctx, backend.binary, rule); err == nil {
+			return nil
+		} else {
+			// Preserve the independent INPUT/FORWARD kernel protection on
+			// hosts where UFW refuses to reorder rules. Never pretend the
+			// UFW rule itself was successfully updated.
+			if nftErr := verifyNFTPortClose(ctx, rule); nftErr != nil {
+				return fmt.Errorf("UFW DENY for %d/%s did not precede ALLOW: %w (prepend: %v; insert: %v; nftables: %v)", rule.PortStart, rule.Protocol, err, applyErr, insertErr, nftErr)
 			}
 		}
 		return nil

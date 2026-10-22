@@ -84,6 +84,15 @@ func (s *FirewallService) SetPortClosedSafe(ctx context.Context, port int, proto
 						return nil, err
 					}
 				}
+				// A repeat close is also an explicit request to repair
+				// UFW's numbered rule ordering, not merely nftables state.
+				if backend.name == "ufw" {
+					if _, err := verifyUFWClosedPort(ctx, backend.binary, rule); err != nil {
+						if err := applySystemAdvancedRule(ctx, backend, rule, true); err != nil {
+							return nil, err
+						}
+					}
+				}
 
 				return rules, nil
 			}

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // parseUFWIncomingPolicy reads the policy from "ufw status verbose" in
@@ -190,6 +192,25 @@ func verifyUFWClosedPort(ctx context.Context, binary string, rule FirewallAdvanc
 	return position, nil
 }
 
+// Rate-limit repairs on machines where UFW cannot reorder a rule (for example,
+// an externally managed ruleset). The kernel DROP is still enforced there, but
+// continuously deleting/recreating UFW entries every five seconds is unsafe.
+var ufwCloseRepair = struct {
+	sync.Mutex
+	last map[string]time.Time
+}{last: make(map[string]time.Time)}
+
+func shouldRetryUFWClose(id string) bool {
+	ufwCloseRepair.Lock()
+	defer ufwCloseRepair.Unlock()
+	now := time.Now()
+	if now.Sub(ufwCloseRepair.last[id]) < 5*time.Minute {
+		return false
+	}
+	ufwCloseRepair.last[id] = now
+	return true
+}
+
 // Sync saved advanced policy with UFW even after a restart or when the
 // automatic listening-port switch is off. Explicit closes can be enforced
 // by verified nftables hooks; other rules must persist in UFW configuration.
@@ -210,9 +231,19 @@ func syncUFWAdvancedRulesLocked(ctx context.Context, backend firewallBackend) er
 		return err
 	}
 	for _, rule := range rules {
-		// A saved close is restored through the independent nft table before
-		// this reconciliation. Avoid repeating ineffective UFW writes forever.
-		if isClosePortRule(rule) && verifyNFTPortClose(ctx, rule) == nil {
+		if isClosePortRule(rule) {
+			// Kernel enforcement does not imply a visible UFW DENY. Repair
+			// the numbered UFW rules even when nftables already blocks
+			// the port, but avoid hammering unsupported configurations.
+			if _, err := verifyUFWClosedPort(ctx, backend.binary, rule); err == nil {
+				continue
+			}
+			if !shouldRetryUFWClose(rule.ID) {
+				continue
+			}
+			if err := applySystemAdvancedRule(ctx, backend, rule, true); err != nil {
+				return fmt.Errorf("synchronize UFW closed port %d/%s: %w", rule.PortStart, rule.Protocol, err)
+			}
 			continue
 		}
 		comment := "Firewall-UI advanced " + rule.ID

@@ -364,8 +364,8 @@ export function FirewallManager() {
               (item) => item.id === `close-port-${rule.port}-${rule.protocol}`,
             )
               ? ru
-                ? 'ЗАПРЕЩЁН'
-                : 'DENIED'
+                ? 'ЗАКРЫТ'
+                : 'CLOSED'
               : rule.exists
                 ? 'OPEN'
                 : 'MISSING'}
