@@ -11,16 +11,37 @@ import (
 func TestClosePortOverridesAutoAndProtectsAccess(t *testing.T) {
 	root := t.TempDir()
 	logPath := filepath.Join(root, "commands")
+	ufwRule := filepath.Join(root, "deny-installed")
+	nftRules := filepath.Join(root, "nft-rules")
 	t.Setenv("FW_TEST_LOG", logPath)
+	t.Setenv("FW_TEST_UFW_RULE", ufwRule)
+	t.Setenv("FW_TEST_NFT_RULES", nftRules)
 	ufw := `#!/bin/sh
 printf '%s\n' "$*" >> "$FW_TEST_LOG"
 case "$*" in
  status) echo 'Status: active';;
- 'status numbered') echo 'Status: active';;
+ 'status numbered')
+   echo 'Status: active'
+   if [ -f "$FW_TEST_UFW_RULE" ]; then
+     echo '[ 1] 9000/tcp DENY IN Anywhere # Firewall-UI advanced close-port-9000-tcp'
+   fi;;
  'show added') echo 'ufw allow 9000/tcp';;
+ 'insert 1 deny'*) : > "$FW_TEST_UFW_RULE";;
+ '--force delete 1') /bin/rm -f "$FW_TEST_UFW_RULE";;
 esac
 `
 	if err := os.WriteFile(filepath.Join(root, "ufw"), []byte(ufw), 0755); err != nil {
+		t.Fatal(err)
+	}
+	nft := `#!/bin/sh
+case "$*" in
+ 'list tables')
+   if [ -f "$FW_TEST_NFT_RULES" ]; then echo 'table inet firewall_ui_containers'; fi;;
+ '-f -') /bin/cat > "$FW_TEST_NFT_RULES";;
+ 'delete table inet firewall_ui_containers') /bin/rm -f "$FW_TEST_NFT_RULES";;
+esac
+`
+	if err := os.WriteFile(filepath.Join(root, "nft"), []byte(nft), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", root)
@@ -40,6 +61,16 @@ esac
 	if !strings.Contains(string(raw), "insert 1 deny to any port 9000 proto tcp comment Firewall-UI advanced close-port-9000-tcp") {
 		t.Fatalf("deny not inserted before allow: %s", raw)
 	}
+	forward, err := os.ReadFile(nftRules)
+	if err != nil {
+		t.Fatalf("explicit close never installed FORWARD hook: %v", err)
+	}
+	if !strings.Contains(string(forward), "meta l4proto tcp ct status dnat ct original proto-dst 9000 counter drop") {
+		t.Fatalf("DNAT port is not blocked: %s", forward)
+	}
+	if strings.Contains(string(forward), "fwui-container-block:") {
+		t.Fatalf("closed port unexpectedly enabled broad container protection: %s", forward)
+	}
 	rich := firewalldRichRule(rules[0])
 	if !strings.Contains(rich, `priority="-1000"`) || !strings.HasSuffix(rich, "drop") {
 		t.Fatalf("firewalld close lacks priority: %s", rich)
@@ -51,6 +82,9 @@ esac
 	opened, err := s.SetPortClosedSafe(ctx, 9000, "tcp", false, 8088)
 	if err != nil || len(opened) != 0 {
 		t.Fatal("reopen did not remove explicit denial")
+	}
+	if _, err := os.Stat(nftRules); !os.IsNotExist(err) {
+		t.Fatalf("reopen left the independent FORWARD hook installed: %v", err)
 	}
 }
 
