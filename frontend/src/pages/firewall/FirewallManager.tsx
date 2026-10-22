@@ -60,6 +60,8 @@ type AdvancedRule = {
   ipVersion?: 'any' | 'ipv4' | 'ipv6';
   label?: string;
   priority: number;
+  enforced?: boolean;
+  enforcementError?: string;
 };
 type AdvancedResponse = { rules: AdvancedRule[] };
 
@@ -93,7 +95,7 @@ export function FirewallManager() {
   });
 
   const closedIds = useMemo(
-    () => new Set(advanced.map((item) => item.id)),
+    () => new Set(advanced.filter((item) => item.enforced === true).map((item) => item.id)),
     [advanced],
   );
   const ruleGroups = useMemo(
@@ -350,22 +352,23 @@ export function FirewallManager() {
         <Space>
           <Tag
             color={
-              advanced.some(
-                (item) =>
-                  item.id === `close-port-${rule.port}-${rule.protocol}`,
-              )
+              closedIds.has(`close-port-${rule.port}-${rule.protocol}`)
                 ? 'error'
-                : rule.exists
+                : advanced.some((item) => item.id === `close-port-${rule.port}-${rule.protocol}`)
+                  ? 'warning'
+                  : rule.exists
                   ? 'success'
                   : 'warning'
             }
           >
-            {advanced.some(
-              (item) => item.id === `close-port-${rule.port}-${rule.protocol}`,
-            )
+            {closedIds.has(`close-port-${rule.port}-${rule.protocol}`)
               ? ru
                 ? 'ЗАКРЫТ'
                 : 'CLOSED'
+              : advanced.some((item) => item.id === `close-port-${rule.port}-${rule.protocol}`)
+                ? ru
+                  ? 'НЕ ЗАКРЫТ'
+                  : 'NOT CLOSED'
               : rule.exists
                 ? 'OPEN'
                 : 'MISSING'}
@@ -388,9 +391,10 @@ export function FirewallManager() {
           );
         if (!rule.port || ['panel', 'session', 'ssh'].includes(rule.source))
           return <Tag>{ru ? 'Защищён' : 'Protected'}</Tag>;
-        const closed = advanced.some(
+        const savedClosed = advanced.some(
           (item) => item.id === `close-port-${rule.port}-${rule.protocol}`,
         );
+        const closed = closedIds.has(`close-port-${rule.port}-${rule.protocol}`);
         return (
           <Popconfirm
             title={
@@ -398,12 +402,16 @@ export function FirewallManager() {
                 ? ru
                   ? 'Открыть порт?'
                   : 'Open port?'
-                : ru
-                  ? 'Закрыть доступ к порту?'
-                  : 'Close access to the port?'
+                : savedClosed
+                  ? ru
+                    ? 'Повторить закрытие? Правило не подтверждено.'
+                    : 'Retry close? The live rule is not verified.'
+                  : ru
+                    ? 'Закрыть доступ к порту?'
+                    : 'Close access to the port?'
             }
             onConfirm={() =>
-              void setPortAccess(rule.port!, rule.protocol, !closed)
+              void setPortAccess(rule.port!, rule.protocol, savedClosed ? !closed : true)
             }
           >
             <Button
@@ -416,9 +424,13 @@ export function FirewallManager() {
                 ? ru
                   ? 'Открыть'
                   : 'Open'
-                : ru
-                  ? 'Закрыть порт'
-                  : 'Close port'}
+                : savedClosed
+                  ? ru
+                    ? 'Повторить закрытие'
+                    : 'Retry close'
+                  : ru
+                    ? 'Закрыть порт'
+                    : 'Close port'}
             </Button>
           </Popconfirm>
         );
