@@ -37,6 +37,7 @@ type FirewallManagedStatus struct {
 	AutoSync       bool                     `json:"autoSync"`
 	SyncIntervalSeconds int              `json:"syncIntervalSeconds"`
 	Rules          []FirewallRule           `json:"rules"`
+	UnknownRules   []FirewallUnknownRule    `json:"unknownRules"`
 	ManualRules    []FirewallManualRuleView `json:"manualRules"`
 	Message        string                   `json:"message,omitempty"`
 }
@@ -315,10 +316,11 @@ func (s *FirewallService) managedStatusLocked(ctx context.Context, safetyPort in
 		return status, nil
 	}
 
-	existing, err := listFirewallRules(ctx, backend)
+	existing, unknown, err := observedHostRules(ctx, backend)
 	if err != nil {
 		return FirewallManagedStatus{}, err
 	}
+	status.UnknownRules = unknown
 	seen := make(map[string]bool, len(desired))
 	for i := range desired {
 		key := firewallRuleSpec(desired[i])
