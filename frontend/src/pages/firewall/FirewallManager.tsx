@@ -16,7 +16,7 @@ import {
   Tag,
   Typography,
 } from 'antd';
-import { PlusOutlined, ReloadOutlined, SyncOutlined } from '@ant-design/icons';
+import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { HttpUtil, request } from '@/utils';
 import { usePageVisibility } from '@/hooks/usePageVisibility';
@@ -38,6 +38,13 @@ type FirewallRule = {
   groupId?: string;
 };
 type FirewallManualRule = { port: number; protocol: string; label?: string };
+type UnknownFirewallRule = {
+  raw: string;
+  port?: number;
+  protocol?: string;
+  canClose: boolean;
+  reason: string;
+};
 type FirewallStatus = {
   supported: boolean;
   backend: string;
@@ -45,9 +52,11 @@ type FirewallStatus = {
   systemActive?: boolean;
   incomingPolicy?: string;
   autoSync: boolean;
+  syncIntervalSeconds: number;
   pingEnabled: boolean;
   canInstallUfw?: boolean;
   rules: FirewallRule[];
+  unknownRules?: UnknownFirewallRule[];
   manualRules: FirewallManualRule[];
   message?: string;
 };
@@ -144,9 +153,14 @@ export function FirewallManager() {
              safety:
               'Правила применяются автоматически. Выключение UFW/firewalld отключает системную защиту всего сервера. Порт панели и SSH сохраняются при включении.',
             activeRules: 'Активные и ожидаемые правила',
-            sync: 'Синхронизировать правила',
+            unknownRules: 'Нераспознанные правила файрволла',
+            unknownHint: 'Неоднозначные или сторонние правила отображаются как есть. Блокировка конкретного порта не удаляет исходное правило. Неизвестные диапазоны и сложные условия изменяйте непосредственно в системном файрволле.',
+            unknown: 'НЕПОНЯТНО',
+            closeUnknown: 'Заблокировать порт',
+            unsupportedUnknown: 'Только просмотр',
+            alreadyBlocked: 'Блокировка создана',
             refresh: 'Обновить',
-            liveStatus: 'Сверка с файрволлом каждые 10 секунд',
+            liveStatus: 'Автоматическая сверка файрволла',
             refreshFailed: 'Не удалось обновить состояние файрволла. Показаны последние полученные данные.',
             manual: 'Ручные правила',
             advanced: 'Расширенные правила',
@@ -180,9 +194,14 @@ export function FirewallManager() {
              safety:
               'Rules are applied automatically. Turning off UFW/firewalld disables host-wide firewall protection. Panel and SSH access is preserved when enabling.',
             activeRules: 'Active and expected rules',
-            sync: 'Sync managed rules',
+            unknownRules: 'Unrecognized host firewall rules',
+            unknownHint: 'Ambiguous or third-party rules are shown verbatim. Blocking an exact port does not delete the original rule. Edit complex ranges and conditions in the host firewall.',
+            unknown: 'UNKNOWN',
+            closeUnknown: 'Block port',
+            unsupportedUnknown: 'Read-only',
+            alreadyBlocked: 'Close rule saved',
             refresh: 'Refresh',
-            liveStatus: 'Live firewall state checked every 10 seconds',
+            liveStatus: 'Automatic firewall refresh',
             refreshFailed: 'Could not refresh firewall state. Showing the last received data.',
             manual: 'Manual rules',
             advanced: 'Advanced rules',
@@ -266,12 +285,12 @@ export function FirewallManager() {
         inFlight = false;
       }
     };
-    const ticker = window.setInterval(() => { void refresh(); }, 10000);
+    const ticker = window.setInterval(() => { void refresh(); }, Math.max(30, status?.syncIntervalSeconds || 60) * 1000);
     return () => {
       disposed = true;
       window.clearInterval(ticker);
     };
-  }, [visible, loading]);
+  }, [visible, loading, status?.syncIntervalSeconds]);
 
   async function mutate(
     path: string,
@@ -550,16 +569,8 @@ export function FirewallManager() {
           <Button icon={<ReloadOutlined />} loading={loading} onClick={() => { void load(); }}>
             {text.refresh}
           </Button>
-          <Button
-            icon={<SyncOutlined />}
-            loading={action === 'sync'}
-            disabled={!status.enabled || !!action}
-            onClick={() => { void mutate('/api/firewall/sync', {}, 'sync').then((ok) => { if (ok) void load(); }); }}
-          >
-            {text.sync}
-          </Button>
           <Typography.Text type="secondary">
-            {text.liveStatus}{lastRefreshed ? ` · ${lastRefreshed}` : ''}
+            {text.liveStatus} · {status.syncIntervalSeconds || 60} {ru ? 'сек.' : 'sec'}{lastRefreshed ? ` · ${lastRefreshed}` : ''}
           </Typography.Text>
 
         </Space>
@@ -651,6 +662,40 @@ export function FirewallManager() {
           }}
         />
       </Card>
+
+      {(status.unknownRules?.length || 0) > 0 && (
+        <Card className="panel-card" title={text.unknownRules}>
+          <Alert type="warning" showIcon title={text.unknownHint} style={{ marginBottom: 12 }} />
+          <Table<UnknownFirewallRule>
+            size="small"
+            rowKey={(rule, index) => `${index}-${rule.raw}`}
+            dataSource={status.unknownRules || []}
+            pagination={{ pageSize: 10, hideOnSinglePage: true }}
+            scroll={{ x: 760 }}
+            columns={[
+              { title: text.state, width: 135, render: () => <Tag color="warning">{text.unknown}</Tag> },
+              { title: ru ? 'Системное правило (без изменений)' : 'Raw host rule', render: (_, rule) => <Typography.Text code copyable>{rule.raw}</Typography.Text> },
+              { title: '', width: 200, render: (_, rule) => {
+                if (!rule.canClose || !rule.port || !rule.protocol)
+                  return <Tag>{text.unsupportedUnknown}</Tag>;
+                const id = `close-port-${rule.port}-${rule.protocol}`;
+                if (savedClosedIds.has(id)) return <Tag>{text.alreadyBlocked}</Tag>;
+                return (
+                  <Popconfirm
+                    title={ru
+                      ? `Заблокировать весь порт ${rule.port}/${rule.protocol}? Это затронет все источники, исходное внешнее правило останется.`
+                      : `Block the entire port ${rule.port}/${rule.protocol}? This affects all sources; the external rule remains.`}
+                    onConfirm={() => void setPortAccess(rule.port!, rule.protocol!, true)}
+                  >
+                    <Button danger size="small" disabled={!status.enabled || !!action}
+                      loading={action === `port-${rule.port}-${rule.protocol}`}>{text.closeUnknown}</Button>
+                  </Popconfirm>
+                );
+              } },
+            ]}
+          />
+        </Card>
+      )}
 
       <Card className="panel-card" title={text.manual}>
         <Space wrap style={{ marginBottom: 14 }}>

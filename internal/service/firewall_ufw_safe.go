@@ -166,12 +166,21 @@ func verifyUFWClosedPort(ctx context.Context, binary string, rule FirewallAdvanc
 	if err != nil {
 		return 0, err
 	}
+	added, err := runFirewallCommand(ctx, binary, "show", "added")
+	if err != nil {
+		return 0, err
+	}
+	return verifyUFWClosedPortSnapshot(status, added, rule)
+}
+
+// Use the same numbered/live and saved policy snapshots for all closed ports.
+// This avoids two host subprocesses for every single rule during UI refresh.
+func verifyUFWClosedPortSnapshot(status, added string, rule FirewallAdvancedRule) (int, error) {
 	spec := strconv.Itoa(rule.PortStart) + "/" + rule.Protocol
 	position, action := findUFWPortDecisionFamily(status, spec, false)
 	if action != "DENY" {
 		return position, fmt.Errorf("UFW has no effective leading DENY for %d/%s (first matching rule: %s at position %d)", rule.PortStart, rule.Protocol, action, position)
 	}
-	// If the host has IPv6 UFW rules, a v4-only DENY does not close IPv6.
 	if strings.Contains(status, "(v6)") {
 		ipv6Position, ipv6Action := findUFWPortDecisionFamily(status, spec, true)
 		if ipv6Action != "DENY" {
@@ -181,10 +190,6 @@ func verifyUFWClosedPort(ctx context.Context, binary string, rule FirewallAdvanc
 	comment := "Firewall-UI advanced " + rule.ID
 	if findUFWManagedRuleNumber(status, comment, "") != 0 {
 		return position, nil
-	}
-	added, err := runFirewallCommand(ctx, binary, "show", "added")
-	if err != nil {
-		return position, err
 	}
 	if !hasUFWAdvancedRule(added, comment) {
 		return position, fmt.Errorf("UFW DENY for %d/%s exists but Firewall-UI-owned rule %q is missing from 'ufw show added'", rule.PortStart, rule.Protocol, comment)

@@ -29,15 +29,17 @@ type FirewallManualRuleView struct {
 }
 
 type FirewallManagedStatus struct {
-	Supported      bool                     `json:"supported"`
-	Backend        string                   `json:"backend"`
-	Enabled        bool                     `json:"enabled"`
-	SystemActive   bool                     `json:"systemActive"`
-	IncomingPolicy string                   `json:"incomingPolicy,omitempty"`
-	AutoSync       bool                     `json:"autoSync"`
-	Rules          []FirewallRule           `json:"rules"`
-	ManualRules    []FirewallManualRuleView `json:"manualRules"`
-	Message        string                   `json:"message,omitempty"`
+	Supported           bool                     `json:"supported"`
+	Backend             string                   `json:"backend"`
+	Enabled             bool                     `json:"enabled"`
+	SystemActive        bool                     `json:"systemActive"`
+	IncomingPolicy      string                   `json:"incomingPolicy,omitempty"`
+	AutoSync            bool                     `json:"autoSync"`
+	SyncIntervalSeconds int                      `json:"syncIntervalSeconds"`
+	Rules               []FirewallRule           `json:"rules"`
+	UnknownRules        []FirewallUnknownRule    `json:"unknownRules"`
+	ManualRules         []FirewallManualRuleView `json:"manualRules"`
+	Message             string                   `json:"message,omitempty"`
 }
 
 func loadFirewallManualLabels() (map[string]string, error) {
@@ -263,7 +265,11 @@ func (s *FirewallService) managedStatusLocked(ctx context.Context, safetyPort in
 	if err != nil {
 		return FirewallManagedStatus{}, err
 	}
-	status := FirewallManagedStatus{AutoSync: auto, ManualRules: manualRuleViews(manual, labels)}
+	interval, err := s.SyncIntervalSeconds()
+	if err != nil {
+		return FirewallManagedStatus{}, err
+	}
+	status := FirewallManagedStatus{AutoSync: auto, SyncIntervalSeconds: interval, ManualRules: manualRuleViews(manual, labels)}
 	backend, err := detectManagedFirewallBackend(ctx)
 	if err != nil {
 		status.Message = err.Error()
@@ -310,10 +316,11 @@ func (s *FirewallService) managedStatusLocked(ctx context.Context, safetyPort in
 		return status, nil
 	}
 
-	existing, err := listFirewallRules(ctx, backend)
+	existing, unknown, err := observedHostRules(ctx, backend)
 	if err != nil {
 		return FirewallManagedStatus{}, err
 	}
+	status.UnknownRules = unknown
 	seen := make(map[string]bool, len(desired))
 	for i := range desired {
 		key := firewallRuleSpec(desired[i])
@@ -369,6 +376,7 @@ func (s *FirewallService) syncManagedLocked(ctx context.Context, backend firewal
 		}
 	}
 	want := map[string]bool{}
+	changed := false
 	next := make([]FirewallRule, 0, len(desired)+len(managed))
 	for _, rule := range desired {
 		key := firewallRuleSpec(rule)
@@ -381,6 +389,7 @@ func (s *FirewallService) syncManagedLocked(ctx context.Context, backend firewal
 			if err := addFirewallRule(ctx, backend, rule); err != nil {
 				return err
 			}
+			changed = true
 			rule.Owned = true
 			// Persist ownership after each successful add. A later failed command
 			// must not leave an untracked allow rule that recovery cannot remove.
@@ -416,12 +425,13 @@ func (s *FirewallService) syncManagedLocked(ctx context.Context, backend firewal
 		if err := deleteFirewallRule(ctx, backend, rule); err != nil {
 			return err
 		}
+		changed = true
 	}
 	// A successful UFW command is not proof that the rule appeared in the
 	// host configuration. Re-read it before reporting a successful sync.
 	// The ownership ledger was saved after every add, so rollback can still
 	// remove any rules created before this verification failed.
-	if backend.name == "ufw" {
+	if backend.name == "ufw" && changed {
 		applied, err := listFirewallRules(ctx, backend)
 		if err != nil {
 			return fmt.Errorf("verify UFW rules: %w", err)

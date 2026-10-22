@@ -83,6 +83,7 @@ type ManualRule = { port: number; protocol: string; label?: string };
 type FirewallStatus = {
   enabled: boolean;
   autoSync: boolean;
+  syncIntervalSeconds?: number;
   rules: FirewallRule[];
   manualRules: ManualRule[];
 };
@@ -220,12 +221,12 @@ export function PortsTable() {
         inFlight = false;
       }
     };
-    const timer = window.setInterval(() => { void refresh(); }, 10000);
+    const timer = window.setInterval(() => { void refresh(); }, Math.max(30, firewall?.syncIntervalSeconds || 60) * 1000);
     return () => {
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [live, visible, acting]);
+  }, [live, visible, acting, firewall?.syncIntervalSeconds]);
 
   const ruleMap = useMemo(() => {
     const map = new Map<string, FirewallRule>();
