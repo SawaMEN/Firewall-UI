@@ -247,6 +247,18 @@ func (s *FirewallService) applyAdvancedChangeLocked(ctx context.Context, rule Fi
 	if backend.name == "nftables" || backend.name == "iptables" {
 		return s.syncManagedSafeLocked(ctx, backend, safetyPort)
 	}
+	if add && isClosePortRule(rule) {
+		// The UFW command cannot reliably override pre-existing ALLOW
+		// entries or detect all UFW-specific duplicate/no-op cases.
+		// Install kernel INPUT/FORWARD drops first; the caller already
+		// saved the requested close and will roll it back on failure.
+		if err := s.syncContainerProtectionLocked(ctx); err != nil {
+			return err
+		}
+		if err := verifyNftInputClose(ctx, rule); err != nil {
+			return fmt.Errorf("cannot enforce close for %d/%s: %w", rule.PortStart, rule.Protocol, err)
+		}
+	}
 	if err := applySystemAdvancedRule(ctx, backend, rule, add); err != nil {
 		return err
 	}
@@ -399,11 +411,14 @@ func applySystemAdvancedRule(ctx context.Context, backend firewallBackend, rule 
 			return err
 		}
 		if isClosePortRule(rule) {
-			// "status numbered" may hide # comments, and unrelated rules
-			// may precede this port. Verify the first matching inbound rule
-			// rather than requiring the comment to be visible at index 1.
+			// An earlier UFW ALLOW does not make a port reachable when
+			// our higher-priority nftables INPUT drop exists in the kernel.
+			// Accept either a verified UFW DENY or a verified nftables
+			// INPUT drop, never an unverified success from ufw itself.
 			if _, err := verifyUFWClosedPort(ctx, backend.binary, rule); err != nil {
-				return fmt.Errorf("verify UFW closed port %d/%s: %w", rule.PortStart, rule.Protocol, err)
+				if nftErr := verifyNftInputClose(ctx, rule); nftErr != nil {
+					return fmt.Errorf("verify UFW closed port %d/%s: %w; nftables fallback: %v", rule.PortStart, rule.Protocol, err, nftErr)
+				}
 			}
 		}
 		return nil
