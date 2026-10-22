@@ -37,6 +37,7 @@ esac
 case "$*" in
  'list tables')
    if [ -f "$FW_TEST_NFT_RULES" ]; then echo 'table inet firewall_ui_containers'; fi;;
+ 'list chain inet firewall_ui_containers input') /bin/cat "$FW_TEST_NFT_RULES";;
  '-f -') /bin/cat > "$FW_TEST_NFT_RULES";;
  'delete table inet firewall_ui_containers') /bin/rm -f "$FW_TEST_NFT_RULES";;
 esac
@@ -67,6 +68,10 @@ esac
 	}
 	if !strings.Contains(string(forward), "meta l4proto tcp ct status dnat ct original proto-dst 9000 counter drop") {
 		t.Fatalf("DNAT port is not blocked: %s", forward)
+	}
+	if !strings.Contains(string(forward), "chain input { type filter hook input priority -50; policy accept;") ||
+		!strings.Contains(string(forward), "meta l4proto tcp th dport 9000 counter drop") {
+		t.Fatalf("ordinary host INPUT access is not blocked by kernel: %s", forward)
 	}
 	if strings.Contains(string(forward), "fwui-container-block:") {
 		t.Fatalf("closed port unexpectedly enabled broad container protection: %s", forward)
@@ -159,7 +164,7 @@ esac
 	t.Setenv("PATH", root)
 	Configure(filepath.Join(root, "state.json"), 8088, 443)
 	_, err := (&FirewallService{}).SetPortClosedSafe(context.Background(), 9000, "tcp", true, 8088)
-	if err == nil || !strings.Contains(err.Error(), "no effective leading DENY") {
+	if err == nil || !strings.Contains(err.Error(), "nftables") {
 		t.Fatalf("successful UFW no-op incorrectly treated as a closed port: %v", err)
 	}
 	rules, err := loadAdvancedFirewallRules()
@@ -198,6 +203,7 @@ esac
 case "$*" in
  'list tables')
    if [ -f "$UFW_CLOSE_NFT" ]; then echo 'table inet firewall_ui_containers'; fi;;
+ 'list chain inet firewall_ui_containers input') /bin/cat "$UFW_CLOSE_NFT";;
  '-f -') /bin/cat > "$UFW_CLOSE_NFT";;
  'delete table inet firewall_ui_containers') /bin/rm -f "$UFW_CLOSE_NFT";;
 esac
@@ -266,6 +272,7 @@ esac
 case "$*" in
  'list tables')
     if [ -f "$FW_TEST_NFT" ]; then echo 'table inet firewall_ui_containers'; fi;;
+ 'list chain inet firewall_ui_containers input') /bin/cat "$FW_TEST_NFT";;
  '-f -') /bin/cat > "$FW_TEST_NFT";;
 esac
 `
@@ -294,5 +301,72 @@ esac
 	}
 	if strings.Contains(string(log), "delete allow 1332/udp") {
 		t.Fatalf("administrator ALLOW was modified: %s", log)
+	}
+}
+
+func TestUFWClose1332UDPWhenEarlierAllowCannotBeReordered(t *testing.T) {
+	root := t.TempDir()
+	nftRules := filepath.Join(root, "nft-kernel")
+	t.Setenv("FWUI_KERNEL_RULES", nftRules)
+	t.Setenv("PATH", root)
+	// Reproduces the reported failure: UFW repeatedly claims success but
+	// retains its administrator-owned ALLOW for 1332/udp at position 5.
+	ufw := `#!/bin/sh
+case "$*" in
+  status) echo 'Status: active';;
+  'status numbered')
+    echo 'Status: active'
+    echo '[ 1] 22/tcp ALLOW IN Anywhere'
+    echo '[ 5] 1332/udp ALLOW IN Anywhere'
+    echo '[ 6] 1332/udp (v6) ALLOW IN Anywhere (v6)';;
+  'show added') echo "ufw allow 1332/udp comment 'administrator'";;
+  'prepend deny'*) exit 0;;
+esac
+`
+	nft := `#!/bin/sh
+case "$*" in
+  'list tables')
+    if [ -f "$FWUI_KERNEL_RULES" ]; then echo 'table inet firewall_ui_containers'; fi;;
+  'list chain inet firewall_ui_containers input')
+    /bin/cat "$FWUI_KERNEL_RULES";;
+  '-f -') /bin/cat > "$FWUI_KERNEL_RULES";;
+  'delete table inet firewall_ui_containers')
+    /bin/rm -f "$FWUI_KERNEL_RULES";;
+esac
+`
+	for name, script := range map[string]string{"ufw": ufw, "nft": nft} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(script), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	Configure(filepath.Join(root, "state.json"), 8088, 443)
+	svc := &FirewallService{}
+	ctx := context.Background()
+	rules, err := svc.SetPortClosedSafe(ctx, 1332, "udp", true, 8088)
+	if err != nil || len(rules) != 1 {
+		t.Fatalf("kernel-enforced UFW closed port rejected: %v, rules=%+v", err, rules)
+	}
+	script, err := os.ReadFile(nftRules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, clause := range []string{
+		"chain input { type filter hook input priority -50; policy accept;",
+		"meta l4proto udp th dport 1332 counter drop",
+		"meta l4proto udp ct status dnat ct original proto-dst 1332 counter drop",
+	} {
+		if !strings.Contains(string(script), clause) {
+			t.Fatalf("kernel did not block 1332/udp: missing %q in %s", clause, script)
+		}
+	}
+	// Auto-sync/idempotent closes must not start a loop of UFW repairs.
+	if _, err := svc.SetPortClosedSafe(ctx, 1332, "udp", true, 8088); err != nil {
+		t.Fatalf("repeated close failed despite active nftables INPUT drop: %v", err)
+	}
+	if _, err := svc.SetPortClosedSafe(ctx, 1332, "udp", false, 8088); err != nil {
+		t.Fatalf("failed to reopen kernel-blocked UDP port: %v", err)
+	}
+	if _, err := os.Stat(nftRules); !os.IsNotExist(err) {
+		t.Fatalf("kernel drop remains after reopening: %v", err)
 	}
 }
