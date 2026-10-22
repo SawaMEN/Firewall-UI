@@ -90,7 +90,11 @@ esac
 			if _, err := svc.SetPortClosedSafe(ctx, 1332, proto, true, 8088); err != nil {
 				t.Fatalf("repeat close: %v", err)
 			}
-			if err := syncUFWAdvancedRulesLocked(ctx, firewallBackend{name: "ufw", binary: filepath.Join(root, "ufw")}); err != nil {
+			backend, err := detectManagedFirewallBackend(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := syncUFWAdvancedRulesLocked(ctx, backend); err != nil {
 				t.Fatalf("background reconciliation: %v", err)
 			}
 			if _, err := svc.SetPortClosedSafe(ctx, 1332, proto, false, 8088); err != nil {
