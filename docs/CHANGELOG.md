@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.10
+
+- Make the main firewall switch control the real UFW/firewalld service, rather than toggling just Firewall-UI-owned rules; confirm host-wide shutdown and preserve existing UFW rules.
+- Remove the manual Sync button and reconcile saved advanced/closed-port rules automatically.
+- Recognize normalized `ufw show added` allow-rule formats, including `to any port ... proto ...`.
+- Verify a closed UFW port through its first applicable inbound rule and an ownership marker even when numbered status omits comments.
+- Reliably remove and repair UFW rules whose comments are not displayed by `ufw status numbered`.
+- Add regression coverage for real UFW switching, UFW output variants, and the 1332/tcp close/reopen case.
+
 ## 1.3.9
 
 - Make explicit Close Port actions enforce a DNAT/FORWARD drop for Docker/Podman published ports even when broad container protection is disabled.
