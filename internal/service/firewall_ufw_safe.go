@@ -139,6 +139,55 @@ func verifyUFWClosedPort(ctx context.Context, binary string, rule FirewallAdvanc
 	return position, nil
 }
 
+// Sync saved advanced policy with UFW even after a restart or when the
+// automatic listening-port switch is off. A rule must be present in UFW's
+// persistent configuration; for closed ports it must also be the first
+// applicable inbound action for that port.
+func syncUFWAdvancedRulesLocked(ctx context.Context, backend firewallBackend) error {
+	if backend.name != "ufw" {
+		return nil
+	}
+	on, err := backend.enabled(ctx)
+	if err != nil || !on {
+		return err
+	}
+	rules, err := loadAdvancedFirewallRules()
+	if err != nil || len(rules) == 0 {
+		return err
+	}
+	added, err := runFirewallCommand(ctx, backend.binary, "show", "added")
+	if err != nil {
+		return err
+	}
+	for _, rule := range rules {
+		comment := "Firewall-UI advanced " + rule.ID
+		exists := hasUFWAdvancedRule(added, comment)
+		if exists && isClosePortRule(rule) {
+			if _, err := verifyUFWClosedPort(ctx, backend.binary, rule); err != nil {
+				// Only remove and replace a rule identified by its ownership
+				// marker; don't modify administrator-owned entries.
+				if err := deleteUFWManagedRules(ctx, backend.binary, comment, ""); err != nil {
+					return err
+				}
+				exists = false
+			}
+		}
+		if !exists {
+			if err := applySystemAdvancedRule(ctx, backend, rule, true); err != nil {
+				return fmt.Errorf("synchronize advanced UFW rule %s: %w", rule.ID, err)
+			}
+			added, err = runFirewallCommand(ctx, backend.binary, "show", "added")
+			if err != nil {
+				return err
+			}
+			if !hasUFWAdvancedRule(added, comment) {
+				return fmt.Errorf("advanced UFW rule %s did not persist", rule.ID)
+			}
+		}
+	}
+	return nil
+}
+
 func deleteUFWManagedRules(ctx context.Context, binary, comment, spec string) error {
 	for attempts := 0; attempts < 128; attempts++ {
 		status, err := runFirewallCommand(ctx, binary, "status", "numbered")
