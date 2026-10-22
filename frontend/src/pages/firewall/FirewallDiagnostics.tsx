@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Alert, Button, Card, Divider, Input, InputNumber, Select, Space, Switch, Table, Tag, Typography } from 'antd';
 import { HttpUtil } from '@/utils';
+import { diagnosticText, diagnosisVerdictLabel } from './uiLabels';
 
 type Zone = { name: string; interfaces: string[]; active: boolean };
 type Zones = { supported: boolean; selected: string; default: string; zones: Zone[] };
@@ -110,7 +111,7 @@ export default function FirewallDiagnostics({ backend, enabled, ru, onReload, mo
           <Space wrap>
             <Select value={zone} onChange={setZone} style={{ minWidth: 180 }}
               disabled={enabled} options={zones.zones.map((item) => ({
-                value: item.name, label: `${item.name}${item.active ? ' (active)' : ''}`,
+                value: item.name, label: `${item.name}${item.active ? (ru ? ' (активна)' : ' (active)') : ''}`,
               }))} />
             <Button loading={busy === 'zone'} disabled={enabled || zone === zones.selected}
               onClick={() => void selectZone()}>{ru ? 'Выбрать зону' : 'Select zone'}</Button>
@@ -134,7 +135,7 @@ export default function FirewallDiagnostics({ backend, enabled, ru, onReload, mo
           <Tag>{containers?.active ? (ru ? 'Активно' : 'Active') : (ru ? 'Неактивно' : 'Inactive')}</Tag>
         </Space>
         <Typography.Paragraph type="secondary" style={{ marginTop: 10 }}>
-          {containers?.message || (ru
+          {diagnosticText(containers?.message, ru) || (ru
             ? 'По умолчанию опубликованные порты блокируются; разрешения задаются ручными или расширенными правилами. Применяется отдельная nftables-таблица, цепочки Docker не меняются.'
             : 'Published ports default to blocked; exceptions follow manual/advanced rules. A separate nftables table is used; Docker chains are not modified.')}
         </Typography.Paragraph>
@@ -145,14 +146,14 @@ export default function FirewallDiagnostics({ backend, enabled, ru, onReload, mo
       {mode === 'overview' && (
       <Card className="panel-card" title={ru ? 'Анализ конфликтующих правил' : 'Rule conflict analysis'}
         extra={<Button size="small" onClick={() => void refresh()}>{ru ? 'Обновить' : 'Refresh'}</Button>}>
-        {analysis?.notes.map((note) => <Alert key={note} type="info" title={note} style={{ marginBottom: 8 }} />)}
+        {analysis?.notes.map((note) => <Alert key={note} type="info" title={diagnosticText(note, ru)} style={{ marginBottom: 8 }} />)}
         {!analysis ? <Typography.Text type="secondary">{ru ? 'Загрузка анализа…' : 'Loading analysis…'}</Typography.Text> : analysis.conflicts.length === 0 ? <Typography.Text type="secondary">{ru ? 'Очевидных пересечений не обнаружено' : 'No obvious overlaps detected'}</Typography.Text> : (
           <Table<Conflict> size="small" rowKey={(x) => `${x.first}/${x.second}`}
             dataSource={analysis?.conflicts || []} pagination={{ pageSize: 8 }}
             columns={[
               { title: ru ? 'Правило 1' : 'Rule 1', dataIndex: 'first' },
               { title: ru ? 'Правило 2' : 'Rule 2', dataIndex: 'second' },
-              { title: ru ? 'Проблема' : 'Issue', render: (_, row) => <Tag color={row.severity === 'danger' ? 'error' : 'warning'}>{row.message}</Tag> },
+              { title: ru ? 'Проблема' : 'Issue', render: (_, row) => <Tag color={row.severity === 'danger' ? 'error' : 'warning'}>{diagnosticText(row.message, ru)}</Tag> },
             ]}
           />
         )}
@@ -172,25 +173,25 @@ export default function FirewallDiagnostics({ backend, enabled, ru, onReload, mo
         {diagnosis && <>
           <Divider />
           <Space wrap>
-            <Tag color={diagnosis.verdict === 'predicted-deny' ? 'error' : diagnosis.verdict === 'predicted-allow' ? 'success' : 'warning'}>{diagnosis.verdict}</Tag>
-            <Typography.Text>{diagnosis.reason}</Typography.Text>
+            <Tag color={diagnosis.verdict === 'predicted-deny' ? 'error' : diagnosis.verdict === 'predicted-allow' ? 'success' : 'warning'}>{diagnosisVerdictLabel(diagnosis.verdict, ru)}</Tag>
+            <Typography.Text>{diagnosticText(diagnosis.reason, ru)}</Typography.Text>
           </Space>
           <Typography.Paragraph style={{ marginTop: 8 }}>
             {ru ? 'Локальный слушающий сокет' : 'Local listening socket'}: {diagnosis.listener ? (ru ? 'есть' : 'yes') : (ru ? 'не найден' : 'not detected')}.
             {' '}{ru ? 'Процессы' : 'Processes'}: {diagnosis.processes.map((p) => `${p.name} (${p.pid})`).join(', ') || '—'}.
             {' '}{ru ? 'Контейнеры' : 'Containers'}: {diagnosis.containers.map((p) => p.containerName).join(', ') || '—'}.
           </Typography.Paragraph>
-          {diagnosis.notes.map((note) => <Typography.Paragraph type="secondary" key={note}>{note}</Typography.Paragraph>)}
+          {diagnosis.notes.map((note) => <Typography.Paragraph type="secondary" key={note}>{diagnosticText(note, ru)}</Typography.Paragraph>)}
         </>}
       </Card>
       )}
 
       {mode === 'ports' && (
       <Card className="panel-card" title={ru ? 'Счётчики сетевого трафика' : 'Traffic counters'}>
-        <Typography.Paragraph type="secondary">{traffic?.note}</Typography.Paragraph>
+        <Typography.Paragraph type="secondary">{diagnosticText(traffic?.note, ru)}</Typography.Paragraph>
         {traffic?.supported && <>
           <Typography.Text type="secondary">{ru ? 'Динамика суммарных пакетов (последние опросы)' : 'Sampled total packet counts'}</Typography.Text>
-          <svg viewBox="0 0 100 40" width="100%" height="95" preserveAspectRatio="none" role="img" aria-label="Packet counter history">
+          <svg viewBox="0 0 100 40" width="100%" height="95" preserveAspectRatio="none" role="img" aria-label={ru ? 'История счётчиков пакетов' : 'Packet counter history'}>
             <polyline points={points} fill="none" stroke="currentColor" strokeWidth="0.8" />
           </svg>
           <Table<Counter> size="small" rowKey={(row, i) => `${row.table}:${row.rule}:${i}`} dataSource={traffic.counters} pagination={{ pageSize: 10 }}
