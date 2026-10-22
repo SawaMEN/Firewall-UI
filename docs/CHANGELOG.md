@@ -1,6 +1,5 @@
 # Changelog
 
-
 ## Unreleased — verified port closure
 
 - Fix false failures closing TCP/UDP ports when nftables normalizes `meta l4proto ... th dport` into a named transport payload. Verify structured kernel JSON instead of matching human-readable command text.
@@ -8,6 +7,13 @@
 - Repair missing FORWARD protection on repeated closes even when UFW still reports a valid DENY and the desired-policy hash is cached.
 - Stop UFW autosync errors and repeated writes when the saved close is already enforced by verified nftables rules.
 - Add regression coverage for TCP/UDP 1332, normalized/raw JSON, numeric protocols, wrong-port prefix matches, hook drift, UFW no-ops and reopening.
+## 1.3.14
+
+- Fix falsely rejected TCP/UDP closes when nftables normalizes the displayed kernel rule from `meta l4proto tcp th dport 1332` to `tcp dport 1332` (or the UDP equivalent).
+- Verify the exact protocol, destination port, DROP verdict and Firewall-UI rule marker in the hooked kernel INPUT chain, avoiding accidental matches of unrelated ports or rules.
+- Rebuild Firewall-UI-owned nftables INPUT/FORWARD rules when the previously cached rule was removed by another firewall reload.
+- Include a bounded live nftables chain listing in error messages when enforcement really cannot be confirmed.
+- Add regression tests for normalized TCP/UDP rules, missing kernel drops, stale cache recovery, and incorrect-match rejection.
 
 ## 1.3.13
 

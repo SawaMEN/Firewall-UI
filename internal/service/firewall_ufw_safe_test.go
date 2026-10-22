@@ -129,3 +129,22 @@ func TestUFWDecisionDoesNotIgnoreGlobalAllowOrScopedRules(t *testing.T) {
 		})
 	}
 }
+
+// The legacy text-listing regression now exercises the structured kernel API.
+func TestNftInputClosedPortMatchesKernelNormalizedRules(t *testing.T) {
+	for _, proto := range []string{"tcp", "udp"} {
+		rule := FirewallAdvancedRule{ID: closeRuleID(1332, proto), Action: "deny", Protocol: proto, PortStart: 1332, PortEnd: 1332, IPVersion: "any", Priority: -1000}
+		fixture := closedPortNFTFixture(proto, 1332)
+		if err := verifyNFTClosedPortJSON([]byte(fixture), rule); err != nil {
+			t.Fatal(err)
+		}
+		wrongOwner := strings.ReplaceAll(fixture, "fwui-closed-", "foreign-closed-")
+		if err := verifyNFTClosedPortJSON([]byte(wrongOwner), rule); err == nil {
+			t.Fatal("accepted foreign ownership")
+		}
+		commentOnly := strings.Replace(fixture, `"field":"dport"`, `"field":"sport"`, 1)
+		if err := verifyNFTClosedPortJSON([]byte(commentOnly), rule); err == nil {
+			t.Fatal("accepted port mentioned only in comment")
+		}
+	}
+}
