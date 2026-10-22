@@ -128,6 +128,10 @@ const { chromium } = require(path.join(process.env.PLAYWRIGHT_TOOLS, 'node_modul
     return response(route, { rules: advanced });
   });
   await page.getByRole('menuitem', { name: 'Файрволл' }).click();
+  const activeCard = page.locator('.ant-card').filter({ has: page.getByText('Активные и ожидаемые правила', { exact: true }) });
+  // A matching UFW ALLOW must be shown in Russian, not the hard-coded OPEN.
+  await activeCard.getByText('ОТКРЫТ', { exact: true }).first().waitFor();
+  assert.equal(await activeCard.getByText('OPEN', { exact: true }).count(), 0);
   const manualCard = page.locator('.ant-card').filter({ has: page.getByText('Ручные правила', { exact: true }) });
   const manualTable = manualCard.locator(':scope > .ant-card-body > .ant-table-wrapper');
   const advancedSection = manualCard.locator('.ant-collapse-item').filter({ has: page.getByText('Расширенные правила', { exact: true }) });
