@@ -171,7 +171,11 @@ func (s *FirewallService) SetManagedEnabledSafe(ctx context.Context, enabled boo
 				return FirewallManagedStatus{}, fmt.Errorf("%s remains inactive after enabling", backend.name)
 			}
 		}
-		if backend.name == "ufw" || backend.name == "firewalld" {
+		if backend.name == "ufw" {
+			if err := syncUFWAdvancedRulesLocked(ctx, backend); err != nil {
+				return FirewallManagedStatus{}, err
+			}
+		} else if backend.name == "firewalld" {
 			advanced, err := loadAdvancedFirewallRules()
 			if err != nil {
 				return FirewallManagedStatus{}, err
