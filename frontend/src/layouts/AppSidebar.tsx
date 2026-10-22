@@ -51,7 +51,7 @@ export default function AppSidebar({ page, onPageChange }: Props) {
   const controls = (
     <Space orientation="vertical" size="small" style={{ width: '100%' }}>
       <Select
-        aria-label="Theme"
+        aria-label={ru ? "Тема оформления" : "Theme"}
         value={mode}
         onChange={(value) => setThemeMode(value as ThemeMode)}
         style={{ width: '100%' }}
@@ -62,7 +62,7 @@ export default function AppSidebar({ page, onPageChange }: Props) {
         ]}
       />
       <Select
-        aria-label="Language"
+        aria-label={ru ? "Язык интерфейса" : "Language"}
         value={ru ? 'ru' : 'en'}
         onChange={(value) => {
           saveLanguage(value);
