@@ -21,15 +21,15 @@ var interfacePattern = regexp.MustCompile(`^[A-Za-z0-9_.:@-]{1,32}$`)
 var ruleIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 type FirewallAdvancedRule struct {
-	ID         string `json:"id"`
-	Action     string `json:"action"`
-	Protocol   string `json:"protocol"`
-	PortStart  int    `json:"portStart,omitempty"`
-	PortEnd    int    `json:"portEnd,omitempty"`
-	SourceCIDR string `json:"sourceCidr,omitempty"`
-	Interface  string `json:"interface,omitempty"`
-	IPVersion  string `json:"ipVersion,omitempty"`
-	Label      string `json:"label,omitempty"`
+	ID               string `json:"id"`
+	Action           string `json:"action"`
+	Protocol         string `json:"protocol"`
+	PortStart        int    `json:"portStart,omitempty"`
+	PortEnd          int    `json:"portEnd,omitempty"`
+	SourceCIDR       string `json:"sourceCidr,omitempty"`
+	Interface        string `json:"interface,omitempty"`
+	IPVersion        string `json:"ipVersion,omitempty"`
+	Label            string `json:"label,omitempty"`
 	Priority         int    `json:"priority"`
 	Enforced         *bool  `json:"enforced,omitempty"` // Live host firewall verification, never persisted
 	EnforcementError string `json:"enforcementError,omitempty"`
