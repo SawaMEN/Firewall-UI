@@ -32,6 +32,8 @@ type FirewallManagedStatus struct {
 	Supported   bool                     `json:"supported"`
 	Backend     string                   `json:"backend"`
 	Enabled     bool                     `json:"enabled"`
+	SystemActive bool                    `json:"systemActive"`
+	IncomingPolicy string                `json:"incomingPolicy,omitempty"`
 	AutoSync    bool                     `json:"autoSync"`
 	Rules       []FirewallRule           `json:"rules"`
 	ManualRules []FirewallManualRuleView `json:"manualRules"`
@@ -242,7 +244,20 @@ func (s *FirewallService) managedStatusLocked(ctx context.Context, safetyPort in
 	}
 	status.Supported = true
 	status.Backend = backend.name
-	status.Enabled, _ = backend.enabled(ctx)
+	systemActive, stateErr := backend.enabled(ctx)
+	if stateErr != nil {
+		return FirewallManagedStatus{}, fmt.Errorf("read %s state: %w", backend.name, stateErr)
+	}
+	status.SystemActive = systemActive
+	status.Enabled = systemActive
+	if backend.name == "ufw" && systemActive {
+		verbose, statusErr := runFirewallCommand(ctx, backend.binary, "status", "verbose")
+		if statusErr != nil {
+			status.Message = "Could not inspect UFW incoming policy: " + statusErr.Error()
+		} else {
+			status.IncomingPolicy = parseUFWIncomingPolicy(verbose)
+		}
+	}
 	desired, err := s.managedDesiredRules(auto, safetyPort)
 	if err != nil {
 		return FirewallManagedStatus{}, err
@@ -366,6 +381,22 @@ func (s *FirewallService) syncManagedLocked(ctx context.Context, backend firewal
 		}
 		if err := deleteFirewallRule(ctx, backend, rule); err != nil {
 			return err
+		}
+	}
+	// A successful UFW command is not proof that the rule appeared in the
+	// host configuration. Re-read it before reporting a successful sync.
+	// The ownership ledger was saved after every add, so rollback can still
+	// remove any rules created before this verification failed.
+	if backend.name == "ufw" {
+		applied, err := listFirewallRules(ctx, backend)
+		if err != nil {
+			return fmt.Errorf("verify UFW rules: %w", err)
+		}
+		for _, rule := range desired {
+			spec := firewallRuleSpec(rule)
+			if spec != "" && !applied[spec] {
+				return fmt.Errorf("UFW did not persist expected allow rule %s", spec)
+			}
 		}
 	}
 	for i := range next {
