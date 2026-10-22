@@ -382,13 +382,11 @@ func applySystemAdvancedRule(ctx context.Context, backend firewallBackend, rule 
 			return err
 		}
 		if isClosePortRule(rule) {
-			status, err := runFirewallCommand(ctx, backend.binary, "status", "numbered")
-			if err != nil {
+			// "status numbered" may hide # comments, and unrelated rules
+			// may precede this port. Verify the first matching inbound rule
+			// rather than requiring the comment to be visible at index 1.
+			if _, err := verifyUFWClosedPort(ctx, backend.binary, rule); err != nil {
 				return fmt.Errorf("verify UFW closed port %d/%s: %w", rule.PortStart, rule.Protocol, err)
-			}
-			comment := "Firewall-UI advanced " + rule.ID
-			if number := findUFWManagedRuleNumber(status, comment, ""); number != 1 {
-				return fmt.Errorf("UFW did not install the highest-priority DENY for %d/%s (rule position %d)", rule.PortStart, rule.Protocol, number)
 			}
 		}
 		return nil
