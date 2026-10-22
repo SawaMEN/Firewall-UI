@@ -46,6 +46,7 @@ import {
 } from './portGroups';
 import { AddressLabel } from './PortLabels';
 import FirewallDiagnostics from './FirewallDiagnostics';
+import { accessStateLabel, socketStateLabel } from './uiLabels';
 
 type ContainerPort = {
   runtime: string;
@@ -369,26 +370,22 @@ export function PortsTable() {
                   : 'default'
           }
         >
-          {!firewall?.enabled
-            ? ru
-              ? 'НЕ ФИЛЬТРУЕТСЯ'
-              : 'UNFILTERED'
-            : closed
-              ? ru
-                ? 'ЗАКРЫТ'
-                : 'CLOSED'
-              : configuredClosed
-                ? ru
-                  ? 'НЕ ЗАКРЫТ'
-                  : 'NOT CLOSED'
-              : rule?.exists
-                ? rule.source === 'service'
-                  ? 'AUTO'
-                  : 'OPEN'
-                : ru
-                  ? 'НЕ ОПРЕДЕЛЕНО'
-                  : 'UNKNOWN'}
+          {accessStateLabel(
+            !firewall?.enabled
+              ? 'unfiltered'
+              : closed
+                ? 'closed'
+                : configuredClosed
+                  ? 'pending-close'
+                  : rule?.exists
+                    ? 'open'
+                    : 'unknown',
+            ru,
+          )}
         </Tag>
+        {firewall?.enabled && rule?.exists && rule.source === 'service' && !closed && !configuredClosed ? (
+          <Tag>{ru ? 'Авто' : 'Auto'}</Tag>
+        ) : null}
         {configuredClosed && !closed && closeError ? (
           <Typography.Text type="warning" title={closeError}>
             {ru ? 'Правило не действует' : 'Rule not enforced'}
@@ -473,7 +470,7 @@ export function PortsTable() {
       dataIndex: 'state',
       width: 120,
       render: (v: string, p) => (
-        <Tag color={p.listening ? 'success' : undefined}>{v || '—'}</Tag>
+        <Tag color={p.listening ? 'success' : undefined}>{socketStateLabel(v, ru) || '—'}</Tag>
       ),
     },
     {
@@ -485,7 +482,7 @@ export function PortsTable() {
           <Space orientation="vertical" size={2}>
             {port.processes.map((process) => (
               <Typography.Text key={process.pid} title={process.executable}>
-                {process.name || 'process'}{' '}
+                {process.name || (ru ? 'процесс' : 'process')}{' '}
                 <Typography.Text type="secondary">
                   PID {process.pid}
                 </Typography.Text>
@@ -629,7 +626,7 @@ export function PortsTable() {
           {group.processes.length ? (
             group.processes.slice(0, 3).map((owner) => (
               <div key={owner.pid} title={owner.executable}>
-                <strong>{owner.name || 'process'}</strong>
+                <strong>{owner.name || (ru ? 'процесс' : 'process')}</strong>
                 <span>PID {owner.pid}</span>
               </div>
             ))
@@ -712,7 +709,7 @@ export function PortsTable() {
           <div className="port-access-summary">
             {allowed ? (
               <Tag color="success">
-                {ru ? 'Разрешено' : 'Allowed'}: {allowed}
+                {ru ? 'Открыто' : 'Open'}: {allowed}
               </Tag>
             ) : null}
             {denied ? (
@@ -859,7 +856,7 @@ export function PortsTable() {
                         {group.processes.length ? (
                           group.processes.slice(0, 3).map((owner) => (
                             <div key={owner.pid}>
-                              <strong>{owner.name || 'process'}</strong>
+                              <strong>{owner.name || (ru ? 'процесс' : 'process')}</strong>
                               <span>PID {owner.pid}</span>
                             </div>
                           ))
