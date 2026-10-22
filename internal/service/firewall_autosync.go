@@ -132,6 +132,12 @@ func (s *FirewallService) StartAutoSync() {
 				if !on {
 					return
 				}
+				// Saved explicit DENY/advanced rules can drift independently
+				// from automatic listening-port allows. Restore them on every
+				// reconciliation, even when auto-open is disabled.
+				if err := syncUFWAdvancedRulesLocked(ctx, backend); err != nil {
+					log.Print("UFW advanced rule reconcile failed: ", err)
+				}
 				auto, err := firewallAutoSync()
 				if err != nil || !auto {
 					return
