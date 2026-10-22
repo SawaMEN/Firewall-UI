@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Button,
@@ -16,9 +16,10 @@ import {
   Tag,
   Typography,
 } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { PlusOutlined, ReloadOutlined, SyncOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
-import { HttpUtil } from '@/utils';
+import { HttpUtil, request } from '@/utils';
+import { usePageVisibility } from '@/hooks/usePageVisibility';
 import { firewallOverviewRules, formatProtocols, groupFirewallRules, isManagedPortClose } from './portGroups';
 import { ProtocolRulesTable } from './ProtocolRulesTable';
 import FirewallDiagnostics from './FirewallDiagnostics';
@@ -79,12 +80,18 @@ function portLabel(rule: FirewallRule) {
 
 export function FirewallManager() {
   const { modal } = App.useApp();
+  const visible = usePageVisibility();
   const { i18n } = useTranslation();
   const ru = i18n.language.startsWith('ru');
   const [status, setStatus] = useState<FirewallStatus | null>(null);
   const [advanced, setAdvanced] = useState<AdvancedRule[]>([]);
   const [loading, setLoading] = useState(true);
+  const [lastRefreshed, setLastRefreshed] = useState('');
+  const [refreshError, setRefreshError] = useState('');
+  const refreshVersion = useRef(0);
+  const activeAction = useRef('');
   const [action, setAction] = useState('');
+  activeAction.current = action;
   const [basicPort, setBasicPort] = useState<number | null>(null);
   const [basicProtocol, setBasicProtocol] = useState('both');
   const [basicLabel, setBasicLabel] = useState('');
@@ -137,6 +144,10 @@ export function FirewallManager() {
              safety:
               'Правила применяются автоматически. Выключение UFW/firewalld отключает системную защиту всего сервера. Порт панели и SSH сохраняются при включении.',
             activeRules: 'Активные и ожидаемые правила',
+            sync: 'Синхронизировать правила',
+            refresh: 'Обновить',
+            liveStatus: 'Сверка с файрволлом каждые 10 секунд',
+            refreshFailed: 'Не удалось обновить состояние файрволла. Показаны последние полученные данные.',
             manual: 'Ручные правила',
             advanced: 'Расширенные правила',
             advancedHint:
@@ -169,6 +180,10 @@ export function FirewallManager() {
              safety:
               'Rules are applied automatically. Turning off UFW/firewalld disables host-wide firewall protection. Panel and SSH access is preserved when enabling.',
             activeRules: 'Active and expected rules',
+            sync: 'Sync managed rules',
+            refresh: 'Refresh',
+            liveStatus: 'Live firewall state checked every 10 seconds',
+            refreshFailed: 'Could not refresh firewall state. Showing the last received data.',
             manual: 'Manual rules',
             advanced: 'Advanced rules',
             advancedHint:
@@ -193,29 +208,77 @@ export function FirewallManager() {
   );
 
   async function load() {
+    const version = ++refreshVersion.current;
     setLoading(true);
     try {
       const [statusResult, advancedResult] = await Promise.all([
         HttpUtil.get<FirewallStatus>('/api/firewall/status'),
         HttpUtil.get<AdvancedRule[]>('/api/firewall/advanced'),
       ]);
-      if (statusResult.success && statusResult.obj) setStatus(statusResult.obj);
-      if (advancedResult.success && advancedResult.obj)
+      if (version !== refreshVersion.current) return;
+      if (statusResult.success && statusResult.obj && advancedResult.success && advancedResult.obj) {
+        setStatus(statusResult.obj);
         setAdvanced(advancedResult.obj);
+        setRefreshError('');
+        setLastRefreshed(new Date().toLocaleTimeString());
+      } else {
+        setRefreshError(statusResult.msg || advancedResult.msg || 'Refresh failed');
+      }
     } finally {
-      setLoading(false);
+      if (version === refreshVersion.current) setLoading(false);
     }
   }
 
   useEffect(() => {
     void load();
+    return () => { refreshVersion.current++; };
   }, []);
+
+  // Poll read-only host state while this tab is visible. Serial refreshes and
+  // version checks prevent stale results from overwriting user actions.
+  useEffect(() => {
+    if (!visible) return;
+    let disposed = false;
+    let inFlight = false;
+    const refresh = async () => {
+      if (inFlight || activeAction.current || loading) return;
+      inFlight = true;
+      const version = ++refreshVersion.current;
+      try {
+        const [statusResult, advancedResult] = await Promise.all([
+          request<FirewallStatus>('/api/firewall/status', undefined, { silent: true }),
+          request<AdvancedRule[]>('/api/firewall/advanced', undefined, { silent: true }),
+        ]);
+        if (disposed || version !== refreshVersion.current || activeAction.current) return;
+        if (statusResult.success && statusResult.obj && advancedResult.success && advancedResult.obj) {
+          setStatus(statusResult.obj);
+          setAdvanced(advancedResult.obj);
+          setRefreshError('');
+          setLastRefreshed(new Date().toLocaleTimeString());
+        } else {
+          setRefreshError(statusResult.msg || advancedResult.msg || 'Refresh failed');
+        }
+      } catch {
+        if (!disposed && version === refreshVersion.current) {
+          setRefreshError('Network error');
+        }
+      } finally {
+        inFlight = false;
+      }
+    };
+    const ticker = window.setInterval(() => { void refresh(); }, 10000);
+    return () => {
+      disposed = true;
+      window.clearInterval(ticker);
+    };
+  }, [visible, loading]);
 
   async function mutate(
     path: string,
     data: Record<string, unknown>,
     key: string,
   ) {
+    ++refreshVersion.current;
     setAction(key);
     try {
       const result = await HttpUtil.post<FirewallStatus>(path, data);
@@ -231,6 +294,7 @@ export function FirewallManager() {
     protocol: string,
     closed: boolean,
   ) {
+    ++refreshVersion.current;
     setAction(`port-${port}-${protocol}`);
     try {
       const result = await HttpUtil.post('/api/firewall/port', {
@@ -245,6 +309,7 @@ export function FirewallManager() {
   }
 
   async function addAdvanced() {
+    ++refreshVersion.current;
     setAction('advanced-add');
     try {
       const result = await HttpUtil.post<AdvancedResponse>(
@@ -277,6 +342,7 @@ export function FirewallManager() {
   }
 
   async function deleteAdvanced(id: string) {
+    ++refreshVersion.current;
     setAction(`advanced-${id}`);
     try {
       const result = await HttpUtil.post<AdvancedResponse>(
@@ -353,7 +419,11 @@ export function FirewallManager() {
       width: 100,
       render: (_, rule) => <Tag>{formatProtocols((rule.members || [rule]).map((member) => member.protocol), ' / ')}</Tag>,
     },
-    { title: text.source, render: (_, rule) => rule.source === 'closed' ? (ru ? 'Закрыт вручную' : 'Closed manually') : rule.label || rule.source },
+    { title: text.source, render: (_, rule) => rule.source === 'closed'
+      ? (ru ? 'Закрыт вручную' : 'Closed manually')
+      : rule.source === 'external'
+        ? (ru ? 'Внешнее правило файрволла' : 'External firewall rule')
+        : rule.label || rule.source },
     {
       title: text.state,
       width: 180,
@@ -379,8 +449,8 @@ export function FirewallManager() {
                   ? 'НЕ ЗАКРЫТ'
                   : 'NOT CLOSED'
               : rule.exists
-                ? 'OPEN'
-                : 'MISSING'}
+                ? 'ALLOW'
+                : status.enabled ? (ru ? 'НЕТ ALLOW' : 'NO ALLOW') : (ru ? 'ВЫКЛ.' : 'OFF')}
           </Tag>
           {rule.exists ? (
             <Tag>{rule.owned ? 'Firewall-UI' : 'External'}</Tag>
@@ -477,6 +547,20 @@ export function FirewallManager() {
             </Typography.Text>
           </Space>
           <Tag>{status.backend}</Tag>
+          <Button icon={<ReloadOutlined />} loading={loading} onClick={() => { void load(); }}>
+            {text.refresh}
+          </Button>
+          <Button
+            icon={<SyncOutlined />}
+            loading={action === 'sync'}
+            disabled={!status.enabled || !!action}
+            onClick={() => { void mutate('/api/firewall/sync', {}, 'sync').then((ok) => { if (ok) void load(); }); }}
+          >
+            {text.sync}
+          </Button>
+          <Typography.Text type="secondary">
+            {text.liveStatus}{lastRefreshed ? ` · ${lastRefreshed}` : ''}
+          </Typography.Text>
 
         </Space>
         <Alert
@@ -497,6 +581,9 @@ export function FirewallManager() {
               ? 'Правила ALLOW не закрывают остальные порты. После проверки правил доступа к SSH и панели администратор может установить: sudo ufw default deny incoming. Смена политики влияет на весь сервер.'
               : 'ALLOW rules do not block other ports. After checking SSH and panel access, an administrator can run: sudo ufw default deny incoming. This changes the host-wide policy.'}
           />
+        )}
+        {refreshError && (
+          <Alert type="warning" showIcon title={text.refreshFailed} description={refreshError} style={{ marginTop: 12 }} />
         )}
         {status.message && (
           <Alert
