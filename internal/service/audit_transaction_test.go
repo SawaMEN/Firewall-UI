@@ -86,3 +86,50 @@ esac
 		t.Fatalf("restore failed to disable host UFW safely: %s", commands)
 	}
 }
+
+func TestBackupRecordsActualUFWStateInsteadOfStalePreference(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, "ufw-state")
+	if err := os.WriteFile(state, []byte("active\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AUDIT_UFW_STATE", state)
+	ufw := `#!/bin/sh
+case "$*" in
+ status)
+   if /bin/grep -q active "$AUDIT_UFW_STATE"; then echo 'Status: active'; else echo 'Status: inactive'; fi;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(root, "ufw"), []byte(ufw), 0755); err != nil {
+		t.Fatal(err)
+	}
+	pingFile := filepath.Join(root, "ping")
+	if err := os.WriteFile(pingFile, []byte("0\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	previousPaths := firewallPingSysctlPaths
+	firewallPingSysctlPaths = []string{pingFile}
+	t.Cleanup(func() { firewallPingSysctlPaths = previousPaths })
+	t.Setenv("PATH", root)
+	Configure(filepath.Join(root, "state.json"), 8088, 0)
+	if err := setFirewallManagedEnabledPreference(false); err != nil {
+		t.Fatal(err)
+	}
+	backup, err := (&FirewallService{}).ExportBackup()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !backup.ManagedEnabled {
+		t.Fatal("UFW active but backup captured disabled legacy preference")
+	}
+	if err := os.WriteFile(state, []byte("inactive\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	backup, err = (&FirewallService{}).ExportBackup()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if backup.ManagedEnabled {
+		t.Fatal("UFW inactive but backup captured enabled")
+	}
+}
