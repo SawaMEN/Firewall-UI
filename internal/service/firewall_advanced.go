@@ -188,6 +188,10 @@ func loadAdvancedFirewallRules() ([]FirewallAdvancedRule, error) {
 }
 
 func validateAdvancedRule(rule *FirewallAdvancedRule) error {
+	// Enforcement evidence is computed from the live host on GET.
+	// It must never be accepted from clients or persisted as configuration.
+	rule.Enforced = nil
+	rule.EnforcementError = ""
 	if rule.ID != "" && !ruleIDPattern.MatchString(rule.ID) {
 		return errors.New("invalid advanced rule ID")
 	}
