@@ -1,5 +1,13 @@
 import { message } from 'antd';
-import { savedLanguage } from './preferences.ts';
+// Match the stored interface language even before i18n is initialized.
+function isRussianInterface(): boolean {
+  try {
+    return localStorage.getItem('firewall-language') !== 'en';
+  } catch {
+    return true;
+  }
+}
+
 
 export type Response<T> = { success: boolean; obj?: T; msg: string };
 type RollbackEnvelope = { rollback?: { token?: string } };
@@ -101,7 +109,7 @@ export const HttpUtil = {
       return await request<T>(path, data || {});
     } catch {
       void message.error('Не удалось связаться с сервером');
-      return { success: false, msg: savedLanguage().startsWith('ru') ? 'Ошибка сети' : 'Network error' };
+      return { success: false, msg: isRussianInterface() ? 'Ошибка сети' : 'Network error' };
     }
   },
 };
