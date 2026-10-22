@@ -70,3 +70,24 @@ esac
 		t.Fatal("the ownership ledger was lost on failed verification")
 	}
 }
+
+func TestParseUFWAllowSpecNormalization(t *testing.T) {
+	cases := []struct {
+		line string
+		want string
+	}{
+		{"ufw allow 1332/tcp", "1332/tcp"},
+		{"ufw allow to any port 1332 proto tcp comment 'Firewall-UI managed'", "1332/tcp"},
+		{"ufw allow proto tcp to any port 1332", "1332/tcp"},
+		{"ufw allow to any port 1000:2000 proto udp", "1000-2000/udp"},
+		{"ufw deny to any port 1332 proto tcp", ""},
+		{"ufw allow from 192.0.2.0/24 to any port 1332 proto tcp", ""},
+		{"ufw allow in on eth0 to any port 1332 proto tcp", ""},
+	}
+	for _, tc := range cases {
+		got, _ := parseUFWAllowSpec(tc.line)
+		if got != tc.want {
+			t.Errorf("parseUFWAllowSpec(%q) = %q, want %q", tc.line, got, tc.want)
+		}
+	}
+}
