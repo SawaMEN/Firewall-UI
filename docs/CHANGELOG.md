@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased — verified port closure
+## 1.3.15
+
+- Show explicitly closed ports as **ЗАКРЫТ / CLOSED** (rather than ЗАПРЕЩЁН / DENIED) in both firewall and process/port screens.
+- Repair UFW's visible rule precedence when an existing ALLOW shadows a closed TCP/UDP port: verify the leading DENY and, if prepend did not work, insert a Firewall-UI-owned DENY at the beginning using `ufw insert 1` without deleting administrator-owned ALLOW rules.
+- Reconcile UFW on repeated close actions even when kernel nftables INPUT/FORWARD drops are already active; periodically retry recovery without a five-second rewrite loop.
+- Add TCP and UDP regression coverage for UFW silently ignoring prepend, leading DENY priority, preserved external ALLOW, repeated closes, background reconciliation and reopening.
+- Preserve verified nftables INPUT/FORWARD protection for Docker/Podman and hosts where UFW cannot reorder its own rules.
 
 - Fix false failures closing TCP/UDP ports when nftables normalizes `meta l4proto ... th dport` into a named transport payload. Verify structured kernel JSON instead of matching human-readable command text.
 - Verify both INPUT and DNAT/FORWARD hooks, their attachment and priority, exact destination port, protocol and DROP verdict. Reject restricted, detached or shadowed rules.
