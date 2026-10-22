@@ -408,7 +408,12 @@ func applySystemAdvancedRule(ctx context.Context, backend firewallBackend, rule 
 			args = append(args, "comment", "Firewall-UI advanced "+rule.ID)
 		}
 		if _, err := runFirewallCommand(ctx, backend.binary, args...); err != nil {
-			return err
+			// The kernel drop is authoritative if UFW itself refuses a
+			// duplicate or cannot change the existing ordered rule list.
+			// This must never mask an ineffective nftables drop.
+			if !isClosePortRule(rule) || verifyNftInputClose(ctx, rule) != nil {
+				return err
+			}
 		}
 		if isClosePortRule(rule) {
 			// An earlier UFW ALLOW does not make a port reachable when
