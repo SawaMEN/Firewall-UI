@@ -36,8 +36,8 @@ esac
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.Backend != "ufw" || !status.SystemActive || status.Enabled || status.IncomingPolicy != "allow" {
-		t.Fatalf("UFW status wrongly equates host and panel policy: %+v", status)
+	if status.Backend != "ufw" || !status.SystemActive || !status.Enabled || status.IncomingPolicy != "allow" {
+		t.Fatalf("UFW status does not show the actual host state: %+v", status)
 	}
 }
 
