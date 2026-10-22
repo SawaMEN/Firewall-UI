@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { Layout, Space, Typography } from 'antd';
 import {
   DashboardOutlined,
@@ -11,6 +11,7 @@ import { useTranslation } from 'react-i18next';
 import { UpdateNotice } from '@/hooks/useUpdates';
 import FullScreenLoader from '@/components/FullScreenLoader';
 import AppSidebar, { type PageKey } from '@/layouts/AppSidebar';
+import { getPageFromHash } from './navigation';
 const DashboardPage = lazy(() => import('@/pages/dashboard/DashboardPage'));
 const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage'));
 const FirewallManager = lazy(() =>
@@ -24,7 +25,20 @@ const PortsTable = lazy(() =>
 
 export default function FirewallPage() {
   const { i18n } = useTranslation();
-  const [page, setPage] = useState<PageKey>('overview');
+  const [page, setPage] = useState<PageKey>(() => getPageFromHash(window.location.hash));
+
+  useEffect(() => {
+    const restorePage = () => setPage(getPageFromHash(window.location.hash));
+    window.addEventListener('hashchange', restorePage);
+    return () => window.removeEventListener('hashchange', restorePage);
+  }, []);
+
+  const choosePage = (next: PageKey) => {
+    if (window.location.hash !== '#' + next) {
+      window.location.hash = next;
+    }
+    setPage(next);
+  };
   const ru = (i18n.resolvedLanguage || i18n.language || '')
     .toLowerCase()
     .startsWith('ru');
@@ -67,7 +81,7 @@ export default function FirewallPage() {
 
   return (
     <Layout className="page-layout">
-      <AppSidebar page={page} onPageChange={setPage} />
+      <AppSidebar page={page} onPageChange={choosePage} />
       <Layout className="content-shell">
         <Layout.Content id="content-layout" className="content-area">
           <div className="page-content">
