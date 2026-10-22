@@ -10,9 +10,11 @@ import (
 	"testing/fstest"
 
 	"github.com/SawaMEN/Firewall-UI/internal/appconfig"
+	"github.com/SawaMEN/Firewall-UI/internal/service"
 )
 
 func TestRuntimeSettingsPersistence(t *testing.T) {
+	service.Configure(filepath.Join(t.TempDir(), "state.json"), 8088, 0)
 	s := New("admin", "long-test-password", 8088, fstest.MapFS{})
 	s.ConfigPath = filepath.Join(t.TempDir(), "config.json")
 
