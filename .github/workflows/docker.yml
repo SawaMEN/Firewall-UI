@@ -61,6 +61,7 @@ jobs:
           docker stop --timeout 15 firewall-ui-smoke
           test "$(docker inspect -f '{{.State.ExitCode}}' firewall-ui-smoke)" = 0
       - name: Verify installer Docker install, update, reset and full removal
+        timeout-minutes: 15
         env:
           FIREWALL_UI_NONINTERACTIVE: '1'
           FIREWALL_UI_DOCKER_AUTO_UPDATE: '0'
@@ -72,14 +73,27 @@ jobs:
           FIREWALL_UI_DOCKER_PROJECT: firewall-ui-installer-ci
           FIREWALL_UI_PASSWORD: ci-compose-smoke
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ufw
+          set -Eeuo pipefail
+          ci_run() {
+            local label="$1"
+            shift
+            echo "::group::CI installer: $label"
+            timeout --signal=TERM --kill-after=15s 240s "$@"
+            echo "::endgroup::"
+          }
+          echo "::group::CI installer: prepare UFW"
+          if ! command -v ufw >/dev/null 2>&1; then
+            sudo env DEBIAN_FRONTEND=noninteractive timeout --signal=TERM --kill-after=15s 240s apt-get update \
+              -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20
+            sudo env DEBIAN_FRONTEND=noninteractive timeout --signal=TERM --kill-after=15s 180s apt-get install -y ufw
+          fi
+          echo "::endgroup::"
           python3 -m http.server 18889 --bind 127.0.0.1 >/tmp/firewall-ui-host-probe.log 2>&1 &
           PROBE_PID=$!
           export FIREWALL_UI_DOCKER_IMAGE_ARCHIVE="$PWD/release-images/stable/firewall-ui-docker-linux-${{ matrix.arch }}.tar.gz"
           export FIREWALL_UI_DOCKER_IMAGE_SHA256="$(sha256sum "$FIREWALL_UI_DOCKER_IMAGE_ARCHIVE" | awk '{print $1}')"
           trap 'sudo sysctl -w net.ipv4.icmp_echo_ignore_all=0 >/dev/null; kill "$PROBE_PID" || true; sudo -E bash deploy/firewall-ui-docker uninstall || true' EXIT
-          sudo -E bash install.sh --compose
+          ci_run 'initial Compose install' sudo -E bash install.sh --compose
           sudo test -x /usr/local/bin/fw-ui
           sudo -E /usr/local/bin/fw-ui status
           FIREWALL_UI_TEST_UPDATES=1 python3 tests/docker_host.py
@@ -87,27 +101,27 @@ jobs:
           sudo test -f /etc/systemd/system/firewall-ui-docker-update.timer
           sudo test -f /etc/systemd/system/firewall-ui-docker-dev-update.service
           sudo test -f /etc/systemd/system/firewall-ui-docker-dev-update.timer
-          sudo -E bash install.sh --compose
-          sudo -E bash install.sh --compose-configure
+          ci_run 'initial Compose install' sudo -E bash install.sh --compose
+          ci_run 'configure Compose panel' sudo -E bash install.sh --compose-configure
           # An occupied port must fail and restore the previous running panel.
-          if sudo -E env FIREWALL_UI_PORT=18889 bash install.sh --compose-configure; then
+          if ci_run 'reject occupied host port' sudo -E env FIREWALL_UI_PORT=18889 bash install.sh --compose-configure; then
             echo 'Reconfiguration unexpectedly accepted an occupied port' >&2
             exit 1
           fi
           sudo grep -qx 'FIREWALL_UI_DOCKER_PORT=18089' "$FIREWALL_UI_DOCKER_DIR/docker.env"
           python3 tests/docker_host.py
-          sudo -E bash install.sh --compose-reset-password
+          ci_run 'reset Compose password' sudo -E bash install.sh --compose-reset-password
           python3 tests/docker_host.py
           sudo test -s "$FIREWALL_UI_DOCKER_DIR/source/install.sh"
           sudo test -s "$FIREWALL_UI_DOCKER_DIR/install.sh"
           sudo -E env FIREWALL_UI_USERNAME=ci-console FIREWALL_UI_PASSWORD=1 /usr/local/bin/fw-ui credentials
           FIREWALL_UI_USERNAME=ci-console FIREWALL_UI_PASSWORD=1 python3 tests/docker_host.py
-          sudo -E /usr/local/bin/fw-ui restart
+          ci_run 'restart Compose panel' sudo -E /usr/local/bin/fw-ui restart
           FIREWALL_UI_USERNAME=ci-console FIREWALL_UI_PASSWORD=1 python3 tests/docker_host.py
           # Use the same IP/HTTPS wizard as native installation, then return to HTTP.
-          sudo -E env FIREWALL_UI_ACCESS_MODE=ip FIREWALL_UI_PUBLIC_HOST=127.0.0.1 FIREWALL_UI_TLS_MODE=selfsigned bash install.sh --compose-configure
+          ci_run 'switch to HTTPS' sudo -E env FIREWALL_UI_ACCESS_MODE=ip FIREWALL_UI_PUBLIC_HOST=127.0.0.1 FIREWALL_UI_TLS_MODE=selfsigned bash install.sh --compose-configure
           FIREWALL_UI_USERNAME=ci-console FIREWALL_UI_PASSWORD=1 FIREWALL_UI_TEST_HTTPS=1 python3 tests/docker_host.py
-          sudo -E env FIREWALL_UI_ACCESS_MODE=local bash install.sh --compose-configure
+          ci_run 'switch to HTTP' sudo -E env FIREWALL_UI_ACCESS_MODE=local bash install.sh --compose-configure
           FIREWALL_UI_USERNAME=ci-console FIREWALL_UI_PASSWORD=1 python3 tests/docker_host.py
           docker run --rm --network host --privileged --mount type=bind,src="$FIREWALL_UI_STATE_DIR",dst=/var/lib/firewall-ui --entrypoint sh firewall-ui:stable -c '
             printf "{\"firewallPingEnabled\":\"false\"}" > /var/lib/firewall-ui/state.json
@@ -116,7 +130,7 @@ jobs:
           '
           docker volume create --label com.docker.compose.project=firewall-ui-installer-ci --label com.docker.compose.volume=unrelated ci-unrelated-volume
           # Offline removal must use the already installed capable cleanup image.
-          sudo -E env FIREWALL_UI_DOCKER_IMAGE_ARCHIVE=/nonexistent/archive /usr/local/bin/fw-ui uninstall --purge
+          ci_run 'offline full uninstall' sudo -E env FIREWALL_UI_DOCKER_IMAGE_ARCHIVE=/nonexistent/archive /usr/local/bin/fw-ui uninstall --purge
           docker volume inspect ci-unrelated-volume >/dev/null
           sudo -E bash -c 'source install.sh; installer_detect_installations; test "$COMPOSE_INSTALLED" = 0'
           docker volume rm ci-unrelated-volume
