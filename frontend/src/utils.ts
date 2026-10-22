@@ -1,5 +1,5 @@
 import { message } from 'antd';
-import { savedLanguage } from '@/preferences';
+import { savedLanguage } from './preferences.ts';
 
 export type Response<T> = { success: boolean; obj?: T; msg: string };
 type RollbackEnvelope = { rollback?: { token?: string } };
