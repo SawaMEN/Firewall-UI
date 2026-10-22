@@ -265,7 +265,23 @@ func (s *FirewallService) applyAdvancedChangeLocked(ctx context.Context, rule Fi
 	// UFW's INPUT rule does not cover Docker/Podman DNAT packets, which
 	// traverse FORWARD. Reconcile the independent hook in the same change.
 	// Callers roll back the saved advanced rule and system rule on failure.
-	return s.syncContainerProtectionLocked(ctx)
+	if err := s.syncContainerProtectionLocked(ctx); err != nil {
+		return err
+	}
+	if add && isClosePortRule(rule) {
+		if err := verifyNftInputClose(ctx, rule); err != nil {
+			// An external UFW reload might have replaced the nftables
+			// chain during its own rule update; force a fresh transaction.
+			containerPolicyHash = [32]byte{}
+			if retryErr := s.syncContainerProtectionLocked(ctx); retryErr != nil {
+				return errors.Join(err, retryErr)
+			}
+			if retryErr := verifyNftInputClose(ctx, rule); retryErr != nil {
+				return errors.Join(err, retryErr)
+			}
+		}
+	}
+	return nil
 }
 
 func isFirewallSafetyRule(rule FirewallRule) bool {
