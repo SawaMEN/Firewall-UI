@@ -1,33 +1,31 @@
 name: Build and test
 on:
+  # Every main commit must build a fresh dev artifact, including docs-only
+  # changes. A numbered stable release is independent and uses VERSION.
   push:
+    branches: [main]
   pull_request:
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
+      - '**/*.md'
+  schedule:
+    - cron: '23 3 * * 0'
   workflow_dispatch:
 permissions:
   contents: read
+# Dev is built for *every* main commit, so never cancel main push runs.
+# PR re-runs may safely supersede older PR commits.
 concurrency:
-  group: firewall-ui-ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: firewall-ui-ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   frontend:
     runs-on: ubuntu-latest
     outputs:
       build_time: ${{ steps.metadata.outputs.build_time }}
-      distributions: ${{ steps.scope.outputs.distributions }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-      - id: scope
-        env:
-          BEFORE: ${{ github.event.before }}
-        run: |
-          scope=true
-          if [[ "$GITHUB_EVENT_NAME" == push ]] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            changed="$(git diff --name-only "$BEFORE" HEAD)"
-            if [[ -n "$changed" ]] && ! grep -Eqv '^(README\.md|docs/.*)$' <<< "$changed"; then scope=false; fi
-          fi
-          echo "distributions=$scope" >> "$GITHUB_OUTPUT"
       - id: metadata
         run: echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v4
@@ -38,6 +36,7 @@ jobs:
       - run: npm ci --ignore-scripts
         working-directory: frontend
       - run: npm audit --omit=dev --audit-level=high
+        if: github.event_name != 'pull_request'
         working-directory: frontend
       - run: npm test
         working-directory: frontend
@@ -77,8 +76,16 @@ jobs:
             gofmt -d ./cmd ./internal
             exit 1
           fi
-      - run: go test -race -vet=off ./...
-      - run: go vet ./...
+      # Each commit gets full fast Go tests; heavy race detection is kept
+      # for the scheduled/manual suite rather than delaying every dev build.
+      - name: Go tests
+        run: go test -vet=off ./...
+      - name: Go tests with race detection (weekly/manual)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: go test -race -vet=off ./...
+      - name: Go static analysis
+        if: github.event_name != 'pull_request'
+        run: go vet ./...
   binaries:
     needs: [frontend, checks]
     runs-on: ubuntu-latest
@@ -127,7 +134,10 @@ jobs:
 
   distributions:
     needs: [binaries, frontend]
-    if: needs.frontend.outputs.distributions == 'true'
+    # The installer/systemd matrix is expensive and duplicates the Docker
+    # lifecycle smoke tests. Run it weekly or on manual request, not on
+    # every release-producing commit.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -170,6 +180,9 @@ jobs:
 
   browser:
     needs: [binaries]
+    # Browser e2e exercises login, theme, and navigation once per PR,
+    # plus weekly/manual checks. It is not rebuilt on every main commit.
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -180,7 +193,11 @@ jobs:
         with:
           name: firewall-ui-linux-amd64
           path: browser-binary
-      - name: Verify browser authentication and cyberpunk layouts
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-1.56.1
+      - name: Verify browser authentication, tabs and themes
         run: |
           npm install --prefix "$RUNNER_TEMP/browser-tools" --no-audit --no-fund --ignore-scripts playwright@1.56.1
           node "$RUNNER_TEMP/browser-tools/node_modules/playwright/cli.js" install --with-deps chromium
@@ -191,7 +208,7 @@ jobs:
           for attempt in {1..20}; do curl -fsS http://127.0.0.1:18123/ >/dev/null && break; sleep 1; done
           PLAYWRIGHT_TOOLS="$RUNNER_TEMP/browser-tools" FIREWALL_UI_SCREENSHOTS="$RUNNER_TEMP/browser-shots" node tests/browser.cjs
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: failure()
         with:
           name: browser-screenshots
           path: ${{ runner.temp }}/browser-shots

@@ -124,19 +124,9 @@ func (s *FirewallService) ManagedPingEnabled() (bool, error) {
 	return enabled, err
 }
 
-func managedPingEffectiveEnabled(backendEnabled bool) (bool, error) {
-	// The caller passes actual backend state, which is the switch state.
-	// A legacy preference must not disable ping settings on active UFW.
-	return backendEnabled, nil
-}
-
 func (s *FirewallService) reconcileManagedPingStateLocked(backendEnabled bool) error {
 	preferred, configured, err := firewallPingPreference()
 	if err != nil || !configured {
-		return err
-	}
-	backendEnabled, err = managedPingEffectiveEnabled(backendEnabled)
-	if err != nil {
 		return err
 	}
 	if !backendEnabled {
@@ -176,10 +166,6 @@ func (s *FirewallService) SetManagedPingEnabledSafe(ctx context.Context, enabled
 		return FirewallManagedStatus{}, err
 	}
 
-	on, err = managedPingEffectiveEnabled(on)
-	if err != nil {
-		return FirewallManagedStatus{}, err
-	}
 	previousEffective, readErr := readFirewallPingEnabled()
 	if readErr != nil {
 		return FirewallManagedStatus{}, readErr
