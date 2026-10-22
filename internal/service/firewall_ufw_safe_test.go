@@ -129,3 +129,64 @@ func TestUFWDecisionDoesNotIgnoreGlobalAllowOrScopedRules(t *testing.T) {
 		})
 	}
 }
+
+func TestNftInputDropVerifierAcceptsNormalizedKernelSyntax(t *testing.T) {
+	rule := FirewallAdvancedRule{
+		ID: closeRuleID(1332, "tcp"), Action: "deny", Protocol: "tcp",
+		PortStart: 1332, PortEnd: 1332, IPVersion: "any", Priority: -1000,
+	}
+	tests := []struct {
+		name, output string
+		want bool
+	}{
+		{
+			"nft pretty-printed tcp dport",
+			"table inet firewall_ui_containers {\n chain input { type filter hook input priority -50; policy accept;\n" +
+				" tcp dport 1332 counter packets 0 bytes 0 drop comment \"fwui-closed-input:close-port-1332-tcp\"\n }\n}\n",
+			true,
+		},
+		{
+			"nft source format",
+			"table inet firewall_ui_containers {\n chain input { type filter hook input priority -50; policy accept;\n" +
+				" meta l4proto tcp th dport 1332 counter drop comment \"fwui-closed-input:close-port-1332-tcp\"\n }\n}\n",
+			true,
+		},
+		{
+			"wrong protocol",
+			"table inet firewall_ui_containers {\n chain input { type filter hook input priority -50; policy accept;\n" +
+				" udp dport 1332 drop comment \"fwui-closed-input:close-port-1332-tcp\"\n }\n}\n",
+			false,
+		},
+		{
+			"wrong port prefix",
+			"table inet firewall_ui_containers {\n chain input { type filter hook input priority -50; policy accept;\n" +
+				" tcp dport 13320 drop comment \"fwui-closed-input:close-port-1332-tcp\"\n }\n}\n",
+			false,
+		},
+		{
+			"unhooked ordinary chain",
+			"table inet firewall_ui_containers {\n chain input {\n" +
+				" tcp dport 1332 drop comment \"fwui-closed-input:close-port-1332-tcp\"\n }\n}\n",
+			false,
+		},
+		{
+			"rule merely accepts",
+			"table inet firewall_ui_containers {\n chain input { type filter hook input priority -50; policy accept;\n" +
+				" tcp dport 1332 accept comment \"fwui-closed-input:close-port-1332-tcp\"\n }\n}\n",
+			false,
+		},
+		{
+			"other owner",
+			"table inet firewall_ui_containers {\n chain input { type filter hook input priority -50; policy accept;\n" +
+				" tcp dport 1332 drop comment \"not-ours\"\n }\n}\n",
+			false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasNftInputDropText(tt.output, rule); got != tt.want {
+				t.Fatalf("kernel drop detection = %v, want %v: %s", got, tt.want, tt.output)
+			}
+		})
+	}
+}
