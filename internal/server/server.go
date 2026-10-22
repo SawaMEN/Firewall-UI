@@ -319,20 +319,20 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 }
 
 type runtimeSettingsResponse struct {
-	PublicHost       string   `json:"publicHost"`
-	ListenHost       string   `json:"listenHost"`
-	ListenPort       int      `json:"listenPort"`
-	ExternalPort     int      `json:"externalPort"`
-	SecureCookies    bool     `json:"secureCookies"`
-	TLSCert          string   `json:"tlsCert"`
-	TLSKey           string   `json:"tlsKey"`
-	TLSEnabled       bool     `json:"tlsEnabled"`
-	UpdateChannel    string   `json:"updateChannel"`
-	AllowedCIDRs     []string `json:"allowedCidrs"`
-	RollbackSeconds  int      `json:"rollbackSeconds"`
-	PortScanInterval int      `json:"portScanInterval"`
-	SyncIntervalSeconds int `json:"syncIntervalSeconds"`
-	Restarting       bool     `json:"restarting,omitempty"`
+	PublicHost          string   `json:"publicHost"`
+	ListenHost          string   `json:"listenHost"`
+	ListenPort          int      `json:"listenPort"`
+	ExternalPort        int      `json:"externalPort"`
+	SecureCookies       bool     `json:"secureCookies"`
+	TLSCert             string   `json:"tlsCert"`
+	TLSKey              string   `json:"tlsKey"`
+	TLSEnabled          bool     `json:"tlsEnabled"`
+	UpdateChannel       string   `json:"updateChannel"`
+	AllowedCIDRs        []string `json:"allowedCidrs"`
+	RollbackSeconds     int      `json:"rollbackSeconds"`
+	PortScanInterval    int      `json:"portScanInterval"`
+	SyncIntervalSeconds int      `json:"syncIntervalSeconds"`
+	Restarting          bool     `json:"restarting,omitempty"`
 }
 
 func runtimeSettingsView(cfg appconfig.Config, restarting bool) runtimeSettingsResponse {
