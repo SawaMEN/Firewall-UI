@@ -247,7 +247,13 @@ func (s *FirewallService) applyAdvancedChangeLocked(ctx context.Context, rule Fi
 	if backend.name == "nftables" || backend.name == "iptables" {
 		return s.syncManagedSafeLocked(ctx, backend, safetyPort)
 	}
-	return applySystemAdvancedRule(ctx, backend, rule, add)
+	if err := applySystemAdvancedRule(ctx, backend, rule, add); err != nil {
+		return err
+	}
+	// UFW's INPUT rule does not cover Docker/Podman DNAT packets, which
+	// traverse FORWARD. Reconcile the independent hook in the same change.
+	// Callers roll back the saved advanced rule and system rule on failure.
+	return s.syncContainerProtectionLocked(ctx)
 }
 
 func isFirewallSafetyRule(rule FirewallRule) bool {
