@@ -106,10 +106,10 @@ func (s *FirewallService) StartAutoSync() {
 					configured = true
 				}
 
-				// Once the panel toggle has an explicit value, a disabled managed
-				// firewall must stay disabled even if UFW/firewalld themselves are
-				// still running for administrator-owned rules.
-				if configured && !desiredEnabled {
+				// UFW/firewalld are now controlled directly. A legacy "rules
+				// disabled" preference must not suppress synchronization when
+				// the administrator has actually enabled the host firewall.
+				if isManagedNativeFirewall(backend.name) && configured && !desiredEnabled {
 					if err := s.reconcileManagedPingStateLocked(false); err != nil {
 						log.Print("firewall ping reconcile failed:", err)
 					}
