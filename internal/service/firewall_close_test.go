@@ -365,37 +365,28 @@ esac
 	svc := &FirewallService{}
 	ctx := context.Background()
 	rules, err := svc.SetPortClosedSafe(ctx, 1332, "udp", true, 8088)
-	if err != nil || len(rules) != 1 {
-		t.Fatalf("kernel-enforced UFW closed port rejected: %v, rules=%+v", err, rules)
+	if err == nil || !strings.Contains(err.Error(), "UFW DENY") {
+		t.Fatalf("ineffective UFW ALLOW must not report CLOSED: %v, rules=%+v", err, rules)
 	}
-	script, err := os.ReadFile(nftRules)
-	if err != nil {
-		t.Fatal(err)
+	if len(rules) != 0 {
+		t.Fatalf("ineffective close reported saved rules: %+v", rules)
 	}
-	for _, clause := range []string{
-		"chain input { type filter hook input priority -50; policy accept;",
-		"meta l4proto udp th dport 1332 counter drop",
-		"meta l4proto udp ct status dnat ct original proto-dst 1332 counter drop",
-	} {
-		if !strings.Contains(string(script), clause) {
-			t.Fatalf("kernel did not block 1332/udp: missing %q in %s", clause, script)
-		}
+	persisted, err := loadAdvancedFirewallRules()
+	if err != nil || len(persisted) != 0 {
+		t.Fatalf("failed close must not remain saved: %+v, err=%v", persisted, err)
+	}
+	if _, err := os.Stat(nftRules); !os.IsNotExist(err) {
+		t.Fatalf("failed transaction left behind owned nftables policy: %v", err)
 	}
 	backend, err := detectManagedFirewallBackend(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := syncUFWAdvancedRulesLocked(ctx, backend); err != nil {
-		t.Fatalf("autosync rejected kernel-enforced close: %v", err)
+	status, err := runFirewallCommand(ctx, backend.binary, "status", "numbered")
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Auto-sync/idempotent closes must not start a loop of UFW repairs.
-	if _, err := svc.SetPortClosedSafe(ctx, 1332, "udp", true, 8088); err != nil {
-		t.Fatalf("repeated close failed despite active nftables INPUT drop: %v", err)
-	}
-	if _, err := svc.SetPortClosedSafe(ctx, 1332, "udp", false, 8088); err != nil {
-		t.Fatalf("failed to reopen kernel-blocked UDP port: %v", err)
-	}
-	if _, err := os.Stat(nftRules); !os.IsNotExist(err) {
-		t.Fatalf("kernel drop remains after reopening: %v", err)
+	if pos, action := findUFWPortDecisionFamily(status, "1332/udp", false); pos != 5 || action != "ALLOW" {
+		t.Fatalf("test fixture unexpectedly gained a leading DENY: %s", status)
 	}
 }
