@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.18
+
+- Keep ports explicitly closed in the Firewall-UI **Active and expected rules** table, even when the service correctly excludes them from managed ALLOW rules to prevent accidental re-opening.
+- Display verified closures as **ЗАКРЫТ / CLOSED**, and saved closures whose live enforcement could not be verified as **НЕ ЗАКРЫТ / NOT CLOSED**, with reopen/retry controls in the same table.
+- Hide panel-generated technical `close-port-*` entries from the **Advanced rules** editor while preserving all user-created CIDR, interface, range, allow and deny policies.
+- Avoid duplicate overview rows, preserve existing port labels when available and group TCP+UDP closures consistently.
+- Add frontend regression tests for 1332/tcp and 1332/udp, unverified closures, custom advanced rules, duplicate suppression and protocol pairing. No changes to host firewall operations or auto-sync policy.
+
 ## 1.3.17
 
 - Stop adding or restoring Firewall-UI-managed `ALLOW` rules for TCP/UDP ports marked closed, including manually added rules and frozen auto-sync rules.
