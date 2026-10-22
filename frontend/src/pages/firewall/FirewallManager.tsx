@@ -6,7 +6,7 @@ import {
   Divider,
   Input,
   InputNumber,
-  Modal,
+  App,
   Popconfirm,
   Select,
   Space,
@@ -75,6 +75,7 @@ function portLabel(rule: FirewallRule) {
 }
 
 export function FirewallManager() {
+  const { modal } = App.useApp();
   const { i18n } = useTranslation();
   const ru = i18n.language.startsWith('ru');
   const [status, setStatus] = useState<FirewallStatus | null>(null);
@@ -437,7 +438,7 @@ export function FirewallManager() {
                 const apply = () =>
                   mutate('/api/firewall/enabled', { enabled }, 'enabled');
                 if (!enabled && (status.backend === 'ufw' || status.backend === 'firewalld')) {
-                  Modal.confirm({
+                  modal.confirm({
                     title: ru ? 'Выключить системный файрволл?' : 'Disable the system firewall?',
                     content: ru
                       ? 'Все входящие подключения, ранее блокируемые UFW/firewalld, могут стать доступными. Правила сохранятся для повторного включения.'
