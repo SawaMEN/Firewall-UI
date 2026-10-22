@@ -159,7 +159,7 @@ esac
 	t.Setenv("PATH", root)
 	Configure(filepath.Join(root, "state.json"), 8088, 443)
 	_, err := (&FirewallService{}).SetPortClosedSafe(context.Background(), 9000, "tcp", true, 8088)
-	if err == nil || !strings.Contains(err.Error(), "did not install the highest-priority DENY") {
+	if err == nil || !strings.Contains(err.Error(), "no effective leading DENY") {
 		t.Fatalf("successful UFW no-op incorrectly treated as a closed port: %v", err)
 	}
 	rules, err := loadAdvancedFirewallRules()
