@@ -242,7 +242,7 @@ export function FirewallManager() {
         setRefreshError('');
         setLastRefreshed(new Date().toLocaleTimeString());
       } else {
-        setRefreshError(statusResult.msg || advancedResult.msg || 'Refresh failed');
+        setRefreshError(statusResult.msg || advancedResult.msg || (ru ? 'Не удалось обновить состояние' : 'Refresh failed'));
       }
     } finally {
       if (version === refreshVersion.current) setLoading(false);
@@ -276,11 +276,11 @@ export function FirewallManager() {
           setRefreshError('');
           setLastRefreshed(new Date().toLocaleTimeString());
         } else {
-          setRefreshError(statusResult.msg || advancedResult.msg || 'Refresh failed');
+          setRefreshError(statusResult.msg || advancedResult.msg || (ru ? 'Не удалось обновить состояние' : 'Refresh failed'));
         }
       } catch {
         if (!disposed && version === refreshVersion.current) {
-          setRefreshError('Network error');
+          setRefreshError(ru ? 'Ошибка сети' : 'Network error');
         }
       } finally {
         inFlight = false;
@@ -291,7 +291,7 @@ export function FirewallManager() {
       disposed = true;
       window.clearInterval(ticker);
     };
-  }, [visible, loading, status?.syncIntervalSeconds]);
+  }, [visible, loading, status?.syncIntervalSeconds, ru]);
 
   async function mutate(
     path: string,
@@ -813,7 +813,7 @@ export function FirewallManager() {
             options={[
               { value: 'tcp', label: 'TCP' },
               { value: 'udp', label: 'UDP' },
-              { value: 'any', label: 'ANY' },
+              { value: 'any', label: ru ? 'ЛЮБОЙ' : 'ANY' },
             ]}
           />
           <InputNumber
@@ -907,7 +907,7 @@ export function FirewallManager() {
               title: text.protocol,
               dataIndex: 'protocol',
               width: 100,
-              render: (value: string) => <Tag>{formatProtocols([value], ' / ')}</Tag>,
+              render: (value: string) => <Tag>{value === 'any' ? (ru ? 'ЛЮБОЙ' : 'ANY') : formatProtocols([value], ' / ')}</Tag>,
             },
             {
               title: text.range,
