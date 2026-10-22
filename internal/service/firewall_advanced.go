@@ -256,7 +256,17 @@ func (s *FirewallService) applyAdvancedChangeLocked(ctx context.Context, rule Fi
 			return err
 		}
 		if err := verifyNftInputClose(ctx, rule); err != nil {
-			return fmt.Errorf("cannot enforce close for %d/%s: %w", rule.PortStart, rule.Protocol, err)
+			// The table may exist while its INPUT rule was removed by an
+			// external firewall reload. A recent fingerprint only proves
+			// what we last wrote, not what the kernel still holds. Invalidate
+			// the cache and rebuild the owned table before rejecting close.
+			containerPolicyHash = [32]byte{}
+			if repairErr := s.syncContainerProtectionLocked(ctx); repairErr != nil {
+				return fmt.Errorf("repair kernel close for %d/%s: %w", rule.PortStart, rule.Protocol, errors.Join(err, repairErr))
+			}
+			if retryErr := verifyNftInputClose(ctx, rule); retryErr != nil {
+				return fmt.Errorf("cannot enforce close for %d/%s after repair: %w", rule.PortStart, rule.Protocol, errors.Join(err, retryErr))
+			}
 		}
 	}
 	if err := applySystemAdvancedRule(ctx, backend, rule, add); err != nil {
