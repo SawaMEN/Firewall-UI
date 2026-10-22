@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { pairProtocolRules, formatProtocols, formatPortRanges, groupPortsByProcess, groupFirewallRules, summarizePorts } from '../src/pages/firewall/portGroups.ts';
+import { pairProtocolRules, formatProtocols, formatPortRanges, groupPortsByProcess, groupFirewallRules, firewallOverviewRules, isManagedPortClose, summarizePorts } from '../src/pages/firewall/portGroups.ts';
 
 const socket = (port, processes, extra = {}) => ({ socketId: String(port), port, processes, protocol: 'tcp', address: '0.0.0.0', family: 'IPv4', state: 'LISTEN', listening: true, loopback: false, ...extra });
 test('ranges use hyphens and never fill gaps or duplicate ports', () => {
@@ -93,4 +93,47 @@ test('non-service rules retain different labels and ownership states', () => {
   const groups = groupFirewallRules(rules, new Set());
   assert.equal(groups.length, 4);
   assert.ok(groups.every(group => group.rules.length === 1));
+});
+
+test('closed TCP/UDP ports stay in active-and-expected overview even when filtered from managed ALLOWs', () => {
+  const close = (protocol, port, extra = {}) => ({
+    id: `close-port-${port}-${protocol}`, action: 'deny', protocol,
+    portStart: port, portEnd: port, priority: -1000, ipVersion: 'any',
+    ...extra,
+  });
+  const base = [{ port: 22, protocol: 'tcp', source: 'ssh', label: 'SSH', exists: true, owned: true }];
+  const advanced = [
+    close('tcp', 1332),
+    close('udp', 1332),
+    { id: 'custom-deny', action: 'deny', protocol: 'tcp', portStart: 9090, portEnd: 9090, priority: 0, ipVersion: 'any' },
+  ];
+  const overview = firewallOverviewRules(base, advanced);
+  assert.equal(overview.length, 3);
+  assert.deepEqual(overview.filter(r => r.port === 1332).map(r => r.protocol).sort(), ['tcp', 'udp']);
+  assert.ok(overview.filter(r => r.port === 1332).every(r => r.source === 'closed' && !r.exists));
+  assert.equal(isManagedPortClose(advanced[2]), false);
+  assert.equal(advanced.filter(rule => !isManagedPortClose(rule)).length, 1);
+  const paired = groupFirewallRules(overview, new Set(['close-port-1332-tcp', 'close-port-1332-udp']));
+  assert.equal(paired.filter(r => r.rules.some(member => member.port === 1332)).length, 1);
+  assert.equal(base.length, 1, 'presentation must not mutate managed ALLOW rules');
+});
+
+test('closed port view avoids duplicates and does not hide custom advanced DENY rules', () => {
+  const close = { id: 'close-port-1332-tcp', action: 'deny', protocol: 'tcp', portStart: 1332, portEnd: 1332, ipVersion: 'any', priority: -1000 };
+  const source = { port: 1332, protocol: 'tcp', source: 'service', label: 'proxy', owned: true, exists: false };
+  const overview = firewallOverviewRules([source], [close]);
+  assert.equal(overview.length, 1);
+  assert.deepEqual(overview[0], source);
+  assert.equal(firewallOverviewRules([], [close]).length, 1, 'pending verification still needs a visible row');
+  for (const invalid of [
+    { ...close, id: 'user-deny' },
+    { ...close, priority: 0 },
+    { ...close, sourceCidr: '192.0.2.0/24' },
+    { ...close, portEnd: 1333 },
+    { ...close, action: 'allow' },
+    { ...close, ipVersion: 'ipv4' },
+  ]) {
+    assert.equal(isManagedPortClose(invalid), false);
+    assert.equal(firewallOverviewRules([], [invalid]).length, 0);
+  }
 });
