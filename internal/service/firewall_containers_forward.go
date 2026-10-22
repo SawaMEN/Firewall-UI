@@ -243,6 +243,10 @@ func buildContainerForwardRules(ports []ContainerPort, manual []FirewallManualRu
 		// manual allow is an explicit administrator decision. The final drop
 		// protects all other attempts, including forwarded Docker traffic.
 		for _, rule := range advanced {
+			// Explicit close rules were already installed ahead of conntrack.
+			if isClosePortRule(rule) {
+				continue
+			}
 			if rule.Protocol != "any" && rule.Protocol != port.Protocol {
 				continue
 			}
