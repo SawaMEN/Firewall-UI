@@ -56,6 +56,25 @@ func TestAdvancedRuleOverlaps(t *testing.T) {
 	}
 }
 
+func TestAdvancedOverlapHonorsCIDRAddressFamily(t *testing.T) {
+	v4 := FirewallAdvancedRule{ID: "v4", Action: "allow", Protocol: "tcp", PortStart: 443, SourceCIDR: "192.0.2.0/24", IPVersion: "any"}
+	v6 := FirewallAdvancedRule{ID: "v6", Action: "deny", Protocol: "tcp", PortStart: 443, IPVersion: "ipv6"}
+	if advancedOverlap(v4, v6) {
+		t.Fatal("IPv4 CIDR cannot overlap an IPv6-only rule")
+	}
+	if len(AnalyzeFirewallRules("nftables", nil, []FirewallAdvancedRule{v4, v6}).Conflicts) != 0 {
+		t.Fatal("conflict analysis reported a cross-family false positive")
+	}
+	v6.IPVersion = "ipv4"
+	if !advancedOverlap(v4, v6) {
+		t.Fatal("matching IPv4 rules should overlap")
+	}
+	v4.SourceCIDR = "2001:db8::/32"
+	if advancedOverlap(v4, v6) {
+		t.Fatal("IPv6 CIDR cannot overlap an IPv4-only rule")
+	}
+}
+
 func TestFirewalldZoneParser(t *testing.T) {
 	zones := parseFirewalldActiveZones("public\n  interfaces: eth0 eth1\n  sources: 10.0.0.0/8\nhome\n  interfaces: wg0\n")
 	if len(zones["public"]) != 2 || zones["public"][0] != "eth0" || zones["home"][0] != "wg0" {

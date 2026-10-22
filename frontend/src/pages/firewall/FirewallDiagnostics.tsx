@@ -11,7 +11,11 @@ type Diagnosis = { verdict: string; rule?: string; reason: string; backend: stri
 type Counter = { rule: string; packets: number; bytes: number; table: string };
 type Traffic = { supported: boolean; counters: Counter[]; note: string };
 
-export default function FirewallDiagnostics({ backend, enabled, ru, onReload }: { backend: string; enabled: boolean; ru: boolean; onReload: () => void }) {
+type DiagnosticsMode = 'firewall' | 'overview' | 'ports';
+
+type Props = { backend?: string; enabled?: boolean; ru: boolean; onReload?: () => void; mode?: DiagnosticsMode };
+
+export default function FirewallDiagnostics({ backend, enabled, ru, onReload, mode = 'firewall' }: Props) {
   const [zones, setZones] = useState<Zones | null>(null);
   const [containers, setContainers] = useState<Containers | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
@@ -27,21 +31,33 @@ export default function FirewallDiagnostics({ backend, enabled, ru, onReload }: 
   const [error, setError] = useState('');
 
   async function refresh() {
-    const [rules, docker, counts] = await Promise.all([
-      HttpUtil.get<Analysis>('/api/firewall/analyze'),
-      HttpUtil.get<Containers>('/api/firewall/containers'),
-      HttpUtil.get<Traffic>('/api/firewall/traffic'),
-    ]);
-    if (rules.success && rules.obj) setAnalysis(rules.obj);
-    if (docker.success && docker.obj) setContainers(docker.obj);
-    if (counts.success && counts.obj) {
-      setTraffic(counts.obj);
-      // Display sampled cumulative totals; a reset occurs when a rule is replaced.
-      setHistory((old) => [...old, counts.obj!.counters.reduce((sum, item) => sum + item.packets, 0)].slice(-20));
-    }
-    if (backend === 'firewalld') {
-      const res = await HttpUtil.get<Zones>('/api/firewall/zones');
-      if (res.success && res.obj) { setZones(res.obj); setZone(res.obj.selected); }
+    try {
+      if (mode === 'overview') {
+        const rules = await HttpUtil.get<Analysis>('/api/firewall/analyze');
+        if (rules.success && rules.obj) { setAnalysis(rules.obj); setError(''); }
+        else setError(rules.msg || (ru ? 'Ошибка анализа правил' : 'Rule analysis failed'));
+        return;
+      }
+      if (mode === 'ports') {
+        const counts = await HttpUtil.get<Traffic>('/api/firewall/traffic');
+        if (counts.success && counts.obj) {
+          setTraffic(counts.obj);
+          setError('');
+          // Each sample is a snapshot of cumulative packet counters.
+          setHistory((old) => [...old, counts.obj!.counters.reduce((sum, item) => sum + item.packets, 0)].slice(-20));
+        } else setError(counts.msg || (ru ? 'Не удалось прочитать счётчики' : 'Failed to load traffic counters'));
+        return;
+      }
+      const docker = await HttpUtil.get<Containers>('/api/firewall/containers');
+      if (docker.success && docker.obj) { setContainers(docker.obj); setError(''); }
+      else setError(docker.msg || (ru ? 'Ошибка состояния контейнеров' : 'Container status failed'));
+      if (backend === 'firewalld') {
+        const res = await HttpUtil.get<Zones>('/api/firewall/zones');
+        if (res.success && res.obj) { setZones(res.obj); setZone(res.obj.selected); }
+        else setError(res.msg || (ru ? 'Ошибка зон firewalld' : 'Firewalld zone status failed'));
+      }
+    } catch {
+      setError(ru ? 'Не удалось получить данные диагностики' : 'Could not load diagnostics');
     }
   }
   useEffect(() => {
@@ -50,13 +66,13 @@ export default function FirewallDiagnostics({ backend, enabled, ru, onReload }: 
       if (!document.hidden) void refresh();
     }, 15000);
     return () => window.clearInterval(timer);
-  }, [backend]);
+  }, [backend, mode, ru]);
 
   async function selectZone() {
     setBusy('zone'); setError('');
     try {
       const res = await HttpUtil.post<{ zones: Zones }>('/api/firewall/zones', { zone });
-      if (res.success && res.obj) { setZones(res.obj.zones); onReload(); }
+      if (res.success && res.obj) { setZones(res.obj.zones); onReload?.(); }
       else setError(res.msg);
     } finally { setBusy(''); }
   }
@@ -64,7 +80,7 @@ export default function FirewallDiagnostics({ backend, enabled, ru, onReload }: 
     setBusy('docker'); setError('');
     try {
       const res = await HttpUtil.post<{ status: Containers }>('/api/firewall/containers', { enabled: value });
-      if (res.success && res.obj) { setContainers(res.obj.status); onReload(); }
+      if (res.success && res.obj) { setContainers(res.obj.status); onReload?.(); }
       else setError(res.msg);
     } finally { setBusy(''); }
   }
@@ -89,7 +105,7 @@ export default function FirewallDiagnostics({ backend, enabled, ru, onReload }: 
   return (
     <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
       {error && <Alert type="error" title={error} showIcon closable onClose={() => setError('')} />}
-      {backend === 'firewalld' && zones?.supported && (
+      {mode === 'firewall' && backend === 'firewalld' && zones?.supported && (
         <Card className="panel-card" title={ru ? 'Зоны firewalld' : 'Firewalld zones'}>
           <Space wrap>
             <Select value={zone} onChange={setZone} style={{ minWidth: 180 }}
@@ -109,6 +125,7 @@ export default function FirewallDiagnostics({ backend, enabled, ru, onReload }: 
         </Card>
       )}
 
+      {mode === 'firewall' && (
       <Card className="panel-card" title={ru ? 'Опубликованные порты Docker/Podman' : 'Docker/Podman published ports'}>
         <Space align="center" wrap>
           <Switch checked={!!containers?.enabled} disabled={!containers?.supported || !enabled}
@@ -123,11 +140,13 @@ export default function FirewallDiagnostics({ backend, enabled, ru, onReload }: 
         </Typography.Paragraph>
         <Typography.Text type="secondary">{ru ? 'Обнаружено опубликованных портов' : 'Published port mappings'}: {containers?.ports.filter((p) => p.public).length ?? '—'}</Typography.Text>
       </Card>
+      )}
 
+      {mode === 'overview' && (
       <Card className="panel-card" title={ru ? 'Анализ конфликтующих правил' : 'Rule conflict analysis'}
         extra={<Button size="small" onClick={() => void refresh()}>{ru ? 'Обновить' : 'Refresh'}</Button>}>
         {analysis?.notes.map((note) => <Alert key={note} type="info" title={note} style={{ marginBottom: 8 }} />)}
-        {analysis?.conflicts.length === 0 ? <Typography.Text type="secondary">{ru ? 'Очевидных пересечений не обнаружено' : 'No obvious overlaps detected'}</Typography.Text> : (
+        {!analysis ? <Typography.Text type="secondary">{ru ? 'Загрузка анализа…' : 'Loading analysis…'}</Typography.Text> : analysis.conflicts.length === 0 ? <Typography.Text type="secondary">{ru ? 'Очевидных пересечений не обнаружено' : 'No obvious overlaps detected'}</Typography.Text> : (
           <Table<Conflict> size="small" rowKey={(x) => `${x.first}/${x.second}`}
             dataSource={analysis?.conflicts || []} pagination={{ pageSize: 8 }}
             columns={[
@@ -138,7 +157,9 @@ export default function FirewallDiagnostics({ backend, enabled, ru, onReload }: 
           />
         )}
       </Card>
+      )}
 
+      {mode === 'ports' && (
       <Card className="panel-card" title={ru ? 'Проверка доступа и диагностика подключения' : 'Access check and connection diagnostics'}>
         <Space wrap>
           <Input value={sourceIp} onChange={(e) => setSourceIp(e.target.value)} placeholder={ru ? 'IP источника' : 'Source IP'} style={{ width: 170 }} />
@@ -162,7 +183,9 @@ export default function FirewallDiagnostics({ backend, enabled, ru, onReload }: 
           {diagnosis.notes.map((note) => <Typography.Paragraph type="secondary" key={note}>{note}</Typography.Paragraph>)}
         </>}
       </Card>
+      )}
 
+      {mode === 'ports' && (
       <Card className="panel-card" title={ru ? 'Счётчики сетевого трафика' : 'Traffic counters'}>
         <Typography.Paragraph type="secondary">{traffic?.note}</Typography.Paragraph>
         {traffic?.supported && <>
@@ -179,6 +202,7 @@ export default function FirewallDiagnostics({ backend, enabled, ru, onReload }: 
           />
         </>}
       </Card>
+      )}
     </Space>
   );
 }

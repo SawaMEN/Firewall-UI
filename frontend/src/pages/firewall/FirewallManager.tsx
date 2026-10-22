@@ -3,6 +3,7 @@ import {
   Alert,
   Button,
   Card,
+  Collapse,
   Divider,
   Input,
   InputNumber,
@@ -136,7 +137,7 @@ export function FirewallManager() {
              safety:
               'Правила применяются автоматически. Выключение UFW/firewalld отключает системную защиту всего сервера. Порт панели и SSH сохраняются при включении.',
             activeRules: 'Активные и ожидаемые правила',
-            manual: 'Простые ручные правила',
+            manual: 'Ручные правила',
             advanced: 'Расширенные правила',
             advancedHint:
               'CIDR, allow/deny, диапазоны портов, IPv4/IPv6, интерфейс и приоритет. Firewalld не поддерживает поле интерфейса в этом режиме.',
@@ -168,7 +169,7 @@ export function FirewallManager() {
              safety:
               'Rules are applied automatically. Turning off UFW/firewalld disables host-wide firewall protection. Panel and SSH access is preserved when enabling.',
             activeRules: 'Active and expected rules',
-            manual: 'Simple manual rules',
+            manual: 'Manual rules',
             advanced: 'Advanced rules',
             advancedHint:
               'CIDR, allow/deny, port ranges, IPv4/IPv6, interface and priority. Firewalld does not support the interface field in this mode.',
@@ -652,9 +653,13 @@ export function FirewallManager() {
             },
           ]}
         />
-      </Card>
-
-      <Card className="panel-card" title={text.advanced}>
+        <Divider />
+        <Collapse
+          items={[{
+            key: 'advanced',
+            label: text.advanced,
+            children: (
+              <>
         <Alert
           type="info"
           showIcon
@@ -822,6 +827,10 @@ export function FirewallManager() {
               ),
             },
           ]}
+        />
+              </>
+            ),
+          }]}
         />
       </Card>
       <FirewallDiagnostics backend={status.backend} enabled={status.enabled} ru={ru} onReload={() => { void load(); }} />

@@ -20,6 +20,7 @@ import {
   type Port,
 } from '@/pages/firewall/portGroups';
 import { AddressLabel } from '@/pages/firewall/PortLabels';
+import FirewallDiagnostics from '@/pages/firewall/FirewallDiagnostics';
 
 type ContainerPort = {
   runtime: string;
@@ -257,6 +258,7 @@ export default function DashboardPage() {
           ]}
         />
       </Card>
+      <FirewallDiagnostics mode="overview" ru={ru} />
     </Space>
   );
 }

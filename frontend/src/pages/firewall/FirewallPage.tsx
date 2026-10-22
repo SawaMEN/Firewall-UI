@@ -56,14 +56,14 @@ export default function FirewallPage() {
         icon: <SafetyOutlined />,
         title: ru ? 'Файрволл' : 'Firewall',
         subtitle: ru
-          ? 'Автосинхронизация, простые правила и расширенные CIDR/allow/deny политики.'
+          ? 'Автосинхронизация и ручные правила, включая расширенные CIDR/allow/deny политики.'
           : 'Auto-sync, simple rules and advanced CIDR/allow/deny policies.',
       },
       ports: {
         icon: <DatabaseOutlined />,
         title: ru ? 'Порты и процессы' : 'Ports & processes',
         subtitle: ru
-          ? 'Live TCP/UDP-сокеты, процессы и публикации Docker/Podman.'
+          ? 'Live TCP/UDP-сокеты, процессы, диагностика подключения и счётчики трафика.'
           : 'Live TCP/UDP sockets, processes and Docker/Podman publications.',
       },
       settings: {

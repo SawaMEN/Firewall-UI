@@ -45,6 +45,7 @@ import {
   type ProcessGroup,
 } from './portGroups';
 import { AddressLabel } from './PortLabels';
+import FirewallDiagnostics from './FirewallDiagnostics';
 
 type ContainerPort = {
   runtime: string;
@@ -701,6 +702,7 @@ export function PortsTable() {
   ];
 
   return (
+    <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
     <Card className="panel-card ports-panel">
       <div className="ports-heading">
         <div>
@@ -899,5 +901,7 @@ export function PortsTable() {
         </Typography.Text>
       </div>
     </Card>
+    <FirewallDiagnostics mode="ports" ru={ru} />
+    </Space>
   );
 }

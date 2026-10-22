@@ -31,8 +31,8 @@ export default function AppSidebar({ page, onPageChange }: Props) {
   const ru = i18n.language.startsWith('ru');
 
   const items = [
-    { key: 'overview', icon: <DashboardOutlined />, label: ru ? 'Обзор' : 'Overview' },
     { key: 'firewall', icon: <SafetyOutlined />, label: ru ? 'Файрволл' : 'Firewall' },
+    { key: 'overview', icon: <DashboardOutlined />, label: ru ? 'Обзор' : 'Overview' },
     { key: 'ports', icon: <DatabaseOutlined />, label: ru ? 'Порты и процессы' : 'Ports & processes' },
     { key: 'settings', icon: <SettingOutlined />, label: ru ? 'Настройки' : 'Settings' },
   ];

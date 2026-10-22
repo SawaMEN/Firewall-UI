@@ -36,11 +36,42 @@ type AccessDiagnosis struct {
 	Notes      []string        `json:"notes"`
 }
 
+// advancedFamilyMask combines the IP version and the source CIDR family.
+func advancedFamilyMask(r FirewallAdvancedRule) int {
+	mask := 3 // IPv4 (1) and IPv6 (2).
+	switch r.IPVersion {
+	case "ipv4":
+		mask = 1
+	case "ipv6":
+		mask = 2
+	}
+	if r.SourceCIDR == "" {
+		return mask
+	}
+	var ip net.IP
+	if strings.Contains(r.SourceCIDR, "/") {
+		parsed, _, err := net.ParseCIDR(r.SourceCIDR)
+		if err != nil {
+			return mask // Validation handles malformed source ranges.
+		}
+		ip = parsed
+	} else {
+		ip = net.ParseIP(r.SourceCIDR)
+	}
+	if ip == nil {
+		return mask
+	}
+	if ip.To4() != nil {
+		return mask & 1
+	}
+	return mask & 2
+}
+
 func advancedOverlap(a, b FirewallAdvancedRule) bool {
 	if a.Protocol != "any" && b.Protocol != "any" && a.Protocol != b.Protocol {
 		return false
 	}
-	if a.IPVersion != "any" && b.IPVersion != "any" && a.IPVersion != b.IPVersion {
+	if advancedFamilyMask(a)&advancedFamilyMask(b) == 0 {
 		return false
 	}
 	if a.Interface != "" && b.Interface != "" && a.Interface != b.Interface {
