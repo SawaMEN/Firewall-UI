@@ -90,20 +90,20 @@ export default function SettingsPage() {
       ru
         ? {
             webTitle: 'Веб-панель и безопасность',
-            hint: 'Рекомендуется localhost + reverse proxy/SSH tunnel. CIDR allowlist нельзя сохранить, если он отрежет текущего клиента.',
+            hint: 'Рекомендуется доступ только с этого сервера через обратный прокси или SSH-туннель. Список разрешённых IP-адресов нельзя сохранить, если он заблокирует текущий доступ.',
             listen: 'Доступ к панели',
-            local: 'Только localhost',
+            local: 'Только с этого сервера (localhost)',
             ipv4: 'Все IPv4-интерфейсы',
             ipv6: 'Все IPv6-интерфейсы',
             port: 'Порт панели',
-            external: 'Внешний порт reverse proxy',
+            external: 'Внешний порт обратного прокси',
             externalHint: '0 — отдельного внешнего порта нет.',
-            secure: 'Secure cookie',
+            secure: 'Защищённые файлы cookie',
             secureHint: 'Включайте при доступе только через HTTPS.',
             cidrs: 'Разрешённые IP/CIDR',
             cidrsHint: 'По одному IP или CIDR на строку. Пусто — ограничение отключено.',
-            rollback: 'Rollback timeout, сек.',
-            rollbackHint: 'UI должен подтвердить доступность после опасного изменения, иначе прошлые правила восстановятся.',
+            rollback: 'Время до отката, сек.',
+            rollbackHint: 'Панель должна подтвердить доступность после опасного изменения, иначе предыдущие правила восстановятся.',
             scan: 'Интервал сканирования портов, сек.',
             syncInterval: 'Интервал синхронизации файрволла',
             syncIntervalHint: 'Как часто проверять и восстанавливать правила. Изменения через панель применяются сразу.',
@@ -115,22 +115,22 @@ export default function SettingsPage() {
             failed: 'Не удалось загрузить настройки.',
             updates: 'Обновления',
             channel: 'Канал обновлений',
-            stable: 'Stable',
-            dev: 'Dev',
-            stableHint: 'Stable устанавливается вручную после проверки SHA-256.',
-            devHint: 'Dev обновляется автоматически из main.',
+            stable: 'Стабильный',
+            dev: 'Разработка',
+            stableHint: 'Стабильная версия устанавливается вручную после проверки SHA-256.',
+            devHint: 'Версия для разработки обновляется автоматически из ветки main.',
             current: 'Текущая версия',
             latest: 'Доступная версия',
             check: 'Проверить',
             update: 'Установить',
             noUpdate: 'Установлена актуальная версия.',
-            backup: 'Backup и история',
-            export: 'Скачать backup',
-            import: 'Восстановить backup',
+            backup: 'Резервные копии и история',
+            export: 'Скачать резервную копию',
+            import: 'Восстановить из резервной копии',
             restoreConfirm: 'Восстановить этот снимок правил?',
             historyEmpty: 'История пока пуста',
             restart: 'Перезапустить сервис',
-            restartNeeded: 'Backup восстановлен. Для применения сетевых настроек нужен перезапуск.',
+            restartNeeded: 'Резервная копия восстановлена. Для применения сетевых настроек нужен перезапуск.',
             audit: 'Журнал действий',
             time: 'Время',
             action: 'Действие',
@@ -467,7 +467,7 @@ export default function SettingsPage() {
               { value: 'dev', label: text.dev },
             ]} />
           </Form.Item>
-          <Alert type={channel === 'dev' ? 'warning' : 'info'} showIcon title={channel === 'dev' ? text.dev : text.stable} description={updateStatus?.docker ? (ru ? (channel === 'dev' ? 'Docker Dev: автоматическая проверка и установка каждые 30 минут без подтверждения.' : updateStatus.automatic ? 'Docker Stable: проверка и установка каждый час (включено в установщике).' : 'Docker Stable: автоматическое обновление выключено; включить можно в установщике.') : (channel === 'dev' ? 'Docker Dev: check and install automatically every 30 minutes without confirmation.' : updateStatus.automatic ? 'Docker Stable: check and install hourly (enabled in the installer).' : 'Docker Stable: automatic updates are disabled; enable them in the installer.')) : updateStatus?.manualInstall ? (ru ? 'Docker обновляется через установщик на сервере: пункт 1, затем 2.' : 'Update Docker using the server installer: select 1, then 2.') : channel === 'dev' ? text.devHint : text.stableHint} style={{ marginBottom: 16 }} />
+          <Alert type={channel === 'dev' ? 'warning' : 'info'} showIcon title={channel === 'dev' ? text.dev : text.stable} description={updateStatus?.docker ? (ru ? (channel === 'dev' ? 'Docker, канал разработки: автоматическая проверка и установка каждые 30 минут без подтверждения.' : updateStatus.automatic ? 'Docker, стабильный канал: проверка и установка каждый час (включено в установщике).' : 'Docker, стабильный канал: автоматическое обновление выключено; включить можно в установщике.') : (channel === 'dev' ? 'Docker Dev: check and install automatically every 30 minutes without confirmation.' : updateStatus.automatic ? 'Docker Stable: check and install hourly (enabled in the installer).' : 'Docker Stable: automatic updates are disabled; enable them in the installer.')) : updateStatus?.manualInstall ? (ru ? 'Docker обновляется через установщик на сервере: пункт 1, затем 2.' : 'Update Docker using the server installer: select 1, then 2.') : channel === 'dev' ? text.devHint : text.stableHint} style={{ marginBottom: 16 }} />
           {updateError ? <Alert type="error" showIcon title={updateError} style={{ marginBottom: 16 }} /> : null}
           <Space wrap>
             <Typography.Text>{text.current}: <Tag>{updateStatus?.currentVersion || '—'}</Tag></Typography.Text>
@@ -512,7 +512,7 @@ export default function SettingsPage() {
             pagination={{ pageSize: 8, hideOnSinglePage: true }}
             locale={{ emptyText: text.historyEmpty }}
             columns={[
-              { title: text.time, dataIndex: 'createdAt', width: 190, render: (value: string) => new Date(value).toLocaleString() },
+              { title: text.time, dataIndex: 'createdAt', width: 190, render: (value: string) => new Date(value).toLocaleString(ru ? 'ru-RU' : 'en-US') },
               { title: text.action, dataIndex: 'reason' },
               {
                 title: '',
@@ -535,10 +535,10 @@ export default function SettingsPage() {
             pagination={{ pageSize: 12, showSizeChanger: true }}
             scroll={{ x: 760 }}
             columns={[
-              { title: text.time, dataIndex: 'time', width: 190, render: (value: string) => new Date(value).toLocaleString() },
+              { title: text.time, dataIndex: 'time', width: 190, render: (value: string) => new Date(value).toLocaleString(ru ? 'ru-RU' : 'en-US') },
               { title: text.action, dataIndex: 'action' },
               { title: text.client, dataIndex: 'remoteIp', width: 150, render: (value?: string) => value || '—' },
-              { title: text.result, dataIndex: 'success', width: 110, render: (value: boolean) => <Tag color={value ? 'success' : 'error'}>{value ? 'OK' : 'ERROR'}</Tag> },
+              { title: text.result, dataIndex: 'success', width: 110, render: (value: boolean) => <Tag color={value ? 'success' : 'error'}>{value ? (ru ? 'Успешно' : 'Success') : (ru ? 'Ошибка' : 'Error')}</Tag> },
               { title: ru ? 'Сообщение' : 'Message', dataIndex: 'message', ellipsis: true, render: (value?: string) => value || '—' },
             ]}
           />
