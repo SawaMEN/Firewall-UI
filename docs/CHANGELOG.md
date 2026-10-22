@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.8
+
+- Show the real UFW daemon state separately from Firewall-UI-managed rules.
+- Warn when UFW permits incoming connections by default, without silently changing host-wide firewall policy.
+- Verify that UFW allow rules were persisted before reporting a successful sync.
+- Verify firewall activation after enabling management and surface command failures.
+- Expand UFW regression coverage for incoming policy detection, rule persistence and the ping-management fixture.
+
 ## 1.3.7
 
 - Restore the password prompt with Enter-to-generate behavior for native and Docker installations.
