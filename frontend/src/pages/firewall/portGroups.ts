@@ -147,6 +147,59 @@ export type RulePort = {
   owned: boolean;
   exists: boolean;
 };
+
+// "Close port" is a panel-generated control rule, not a user-authored
+// advanced rule. It is intentionally excluded from managed ALLOW rules so
+// auto-sync cannot reopen it; the firewall overview must still display it.
+export type PortClosePolicy = {
+  id: string;
+  action: string;
+  protocol: string;
+  portStart?: number;
+  portEnd?: number;
+  sourceCidr?: string;
+  interface?: string;
+  ipVersion?: string;
+  priority: number;
+};
+
+export function isManagedPortClose(rule: PortClosePolicy): boolean {
+  const port = rule.portStart;
+  return Number.isInteger(port) && port! >= 1 && port! <= 65535 &&
+    (rule.protocol === 'tcp' || rule.protocol === 'udp') &&
+    rule.id === `close-port-${port}-${rule.protocol}` &&
+    rule.action === 'deny' && rule.portEnd === port &&
+    (rule.sourceCidr || '') === '' && (rule.interface || '') === '' &&
+    (rule.ipVersion || 'any') === 'any' && rule.priority === -1000;
+}
+
+// Presentation only: do NOT feed these rows into managedDesiredRules, because
+// that would recreate an ALLOW for a closed port on the host.
+export function firewallOverviewRules<T extends RulePort>(
+  rules: T[],
+  advanced: PortClosePolicy[],
+): RulePort[] {
+  const result: RulePort[] = [...rules];
+  const existing = new Set(
+    rules.filter((rule) => rule.port && !rule.portRange)
+      .map((rule) => `${rule.port}/${rule.protocol}`),
+  );
+  for (const rule of advanced) {
+    if (!isManagedPortClose(rule)) continue;
+    const key = `${rule.portStart}/${rule.protocol}`;
+    if (existing.has(key)) continue;
+    existing.add(key);
+    result.push({
+      port: rule.portStart,
+      protocol: rule.protocol,
+      source: 'closed',
+      label: '',
+      owned: false,
+      exists: false,
+    });
+  }
+  return result;
+}
 export function groupFirewallRules<T extends RulePort>(
   rules: T[],
   closedIds: Set<string>,
