@@ -59,6 +59,8 @@ const { chromium } = require(path.join(process.env.PLAYWRIGHT_TOOLS, 'node_modul
   await page.screenshot({ path: path.join(output, 'login.png') });
   await signIn(page);
   await page.locator('.page-header').waitFor();
+  // Firewall is now the home page; navigate explicitly before overview checks.
+  await page.getByRole('menuitem', { name: 'Обзор' }).click();
   await page.locator('.dashboard-stat').first().waitFor();
   assert.equal(await page.evaluate(async () => (await fetch('/api/session')).status), 200);
   assert.deepEqual(await page.locator('.sider-nav').evaluate(node => ({ color: getComputedStyle(node).backgroundColor, image: getComputedStyle(node).backgroundImage })), { color: 'rgba(0, 0, 0, 0)', image: 'none' });
@@ -126,13 +128,14 @@ const { chromium } = require(path.join(process.env.PLAYWRIGHT_TOOLS, 'node_modul
     return response(route, { rules: advanced });
   });
   await page.getByRole('menuitem', { name: 'Файрволл' }).click();
-  const manualCard = page.locator('.ant-card').filter({ has: page.getByText('Простые ручные правила', { exact: true }) });
-  const advancedCard = page.locator('.ant-card').filter({ has: page.getByText('Расширенные правила', { exact: true }) });
+  const manualCard = page.locator('.ant-card').filter({ has: page.getByText('Ручные правила', { exact: true }) });
+  const advancedSection = manualCard.locator('.ant-collapse-item').filter({ has: page.getByText('Расширенные правила', { exact: true }) });
   await manualCard.getByText('TCP / UDP', { exact: true }).waitFor();
-  await advancedCard.getByText('TCP / UDP', { exact: true }).waitFor();
+  await advancedSection.locator('.ant-collapse-header').click();
+  await advancedSection.getByText('TCP / UDP', { exact: true }).waitFor();
   assert.equal(await manualCard.getByRole('button', { name: 'Удалить', exact: true }).count(), 0);
   await manualCard.locator('.ant-table-row-expand-icon-collapsed').click();
-  await advancedCard.locator('.ant-table-row-expand-icon-collapsed').click();
+  await advancedSection.locator('.ant-table-row-expand-icon-collapsed').click();
   await page.screenshot({ path: path.join(output, 'paired-rules-desktop.png'), fullPage: true });
   const manualTCP = manualCard.locator('.ant-table-expanded-row .ant-table-row').filter({ has: page.getByText('TCP', { exact: true }) });
   await manualTCP.getByRole('button', { name: 'Удалить', exact: true }).click();
@@ -140,10 +143,10 @@ const { chromium } = require(path.join(process.env.PLAYWRIGHT_TOOLS, 'node_modul
   await manualCard.getByText('UDP', { exact: true }).waitFor();
   assert.deepEqual(requests[0], { port: 9000, protocol: 'tcp' });
   assert.equal(await manualCard.getByText('TCP / UDP', { exact: true }).count(), 0);
-  const advancedTCP = advancedCard.locator('.ant-table-expanded-row .ant-table-row').filter({ has: page.getByText('TCP', { exact: true }) });
+  const advancedTCP = advancedSection.locator('.ant-table-expanded-row .ant-table-row').filter({ has: page.getByText('TCP', { exact: true }) });
   await advancedTCP.getByRole('button', { name: 'Удалить', exact: true }).click();
   await page.locator('.ant-popconfirm').getByRole('button', { name: /OK|Да|ОК/ }).click();
-  await advancedCard.getByText('UDP', { exact: true }).waitFor();
+  await advancedSection.getByText('UDP', { exact: true }).waitFor();
   assert.deepEqual(requests[1], { id: 'paired-tcp' });
   assert.deepEqual(advanced.map(rule => rule.id), ['paired-udp']);
   await page.setViewportSize({ width: 390, height: 844 });
