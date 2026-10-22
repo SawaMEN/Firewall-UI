@@ -234,11 +234,17 @@ func (s *FirewallService) SetManagedEnabledSafe(ctx context.Context, enabled boo
 func (s *FirewallService) SetManagedAutoSyncPreferenceSafe(ctx context.Context, enabled bool, safetyPort int) (FirewallManagedStatus, error) {
 	firewallMu.Lock()
 	defer firewallMu.Unlock()
-	if err := (&SettingService{}).setBool(firewallAutoSyncKey, enabled); err != nil {
+
+	before, err := firewallAutoSync()
+	if err != nil {
 		return FirewallManagedStatus{}, err
 	}
+	var backend firewallBackend
+	shouldSync := false
 	if enabled {
-		backend, err := detectManagedFirewallBackend(ctx)
+		// Validate the backend before persisting the requested switch, so a
+		// failed lookup cannot leave a misleading auto-sync preference.
+		backend, err = detectManagedFirewallBackend(ctx)
 		if err != nil {
 			return FirewallManagedStatus{}, err
 		}
@@ -250,10 +256,20 @@ func (s *FirewallService) SetManagedAutoSyncPreferenceSafe(ctx context.Context, 
 		if err != nil {
 			return FirewallManagedStatus{}, err
 		}
-		if on && (!isManagedNativeFirewall(backend.name) || !configured || desiredEnabled) {
-			if err := s.syncManagedSafeLocked(ctx, backend, safetyPort); err != nil {
-				return FirewallManagedStatus{}, err
+		shouldSync = on && (!isManagedNativeFirewall(backend.name) || !configured || desiredEnabled)
+	}
+	if err := (&SettingService{}).setBool(firewallAutoSyncKey, enabled); err != nil {
+		return FirewallManagedStatus{}, err
+	}
+	if shouldSync {
+		if err := s.syncManagedSafeLocked(ctx, backend, safetyPort); err != nil {
+			restoreErr := (&SettingService{}).setBool(firewallAutoSyncKey, before)
+			if restoreErr == nil {
+				recovery, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				restoreErr = s.syncManagedSafeLocked(recovery, backend, safetyPort)
 			}
+			return FirewallManagedStatus{}, errors.Join(err, restoreErr)
 		}
 	}
 	return s.managedStatusSafeLocked(ctx, safetyPort)
