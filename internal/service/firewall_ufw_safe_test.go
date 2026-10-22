@@ -101,3 +101,31 @@ func TestUFWPortDecisionSeparatesIPv4AndIPv6(t *testing.T) {
 		t.Fatalf("IPv6 ALLOW must not be hidden by IPv4 DENY: %d %s", pos, action)
 	}
 }
+
+func TestUFWDecisionDoesNotIgnoreEarlierPortRangeAllow(t *testing.T) {
+	status := "Status: active\n[ 1] 1300:1400/udp ALLOW IN Anywhere\n[ 2] 1332/udp DENY IN Anywhere\n"
+	if position, action := findUFWPortDecisionFamily(status, "1332/udp", false); position != 1 || action != "ALLOW" {
+		t.Fatalf("port range ALLOW shadows specific DENY: got %d %s", position, action)
+	}
+}
+
+func TestUFWDecisionDoesNotIgnoreGlobalAllowOrScopedRules(t *testing.T) {
+	cases := []struct {
+		name, status, action string
+		position int
+	}{
+		{"global allow", "Status: active\n[ 1] Anywhere ALLOW IN Anywhere\n[ 2] 1332/udp DENY IN Anywhere\n", "ALLOW", 1},
+		{"scoped deny", "Status: active\n[ 1] 1332/udp DENY IN 10.0.0.0/8\n[ 2] 1332/udp ALLOW IN Anywhere\n", "ALLOW", 2},
+		{"scoped allow", "Status: active\n[ 1] 1332/udp ALLOW IN 10.0.0.0/8\n[ 2] 1332/udp DENY IN Anywhere\n", "ALLOW", 1},
+		{"unrelated protocol", "Status: active\n[ 1] 1300:1400/tcp ALLOW IN Anywhere\n[ 2] 1332/udp DENY IN Anywhere\n", "DENY", 2},
+		{"unrelated range", "Status: active\n[ 1] 1400:1500/udp ALLOW IN Anywhere\n[ 2] 1332/udp DENY IN Anywhere\n", "DENY", 2},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			pos, action := findUFWPortDecisionFamily(c.status, "1332/udp", false)
+			if pos != c.position || action != c.action {
+				t.Fatalf("decision = %d %s; expected %d %s", pos, action, c.position, c.action)
+			}
+		})
+	}
+}
