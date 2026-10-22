@@ -385,9 +385,16 @@ func parseUFWAllowSpec(line string) (string, bool) {
 	if len(fields) < 3 || fields[0] != "ufw" || fields[1] != "allow" {
 		return "", false
 	}
-	if spec, ok := canonicalFirewallSpec(fields[2]); ok {
-		return spec, true
+	// The short form may still carry "from <CIDR>" or "on <iface>".
+	// Returning early here falsely treats a source-restricted ALLOW as a
+	// global port rule, so scan restrictions before accepting either form.
+	for i := 2; i < len(fields); i++ {
+		if fields[i] == "comment" {
+			fields = fields[:i]
+			break
+		}
 	}
+	spec, short := canonicalFirewallSpec(fields[2])
 	var port, proto string
 	for i := 2; i+1 < len(fields); i++ {
 		switch fields[i] {
@@ -406,6 +413,9 @@ func parseUFWAllowSpec(line string) (string, bool) {
 		case "proto":
 			proto = fields[i+1]
 		}
+	}
+	if short {
+		return spec, true
 	}
 	if port == "" || proto == "" {
 		return "", false
