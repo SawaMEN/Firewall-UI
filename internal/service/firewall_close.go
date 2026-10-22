@@ -35,10 +35,12 @@ func (s *FirewallService) SetPortClosedSafe(ctx context.Context, port int, proto
 	if !enabled {
 		return nil, fmt.Errorf("%w: Включите файрволл перед изменением доступа к порту", ErrInvalidFirewallChange)
 	}
-	if desired, configured, err := firewallManagedEnabledPreference(); err != nil {
-		return nil, err
-	} else if configured && !desired {
-		return nil, fmt.Errorf("%w: Включите управление файрволлом в панели", ErrInvalidFirewallChange)
+	if isManagedNativeFirewall(backend.name) {
+		if desired, configured, err := firewallManagedEnabledPreference(); err != nil {
+			return nil, err
+		} else if configured && !desired {
+			return nil, fmt.Errorf("%w: Включите файрволл в панели", ErrInvalidFirewallChange)
+		}
 	}
 	if closed {
 		desired, err := s.managedDesiredRules(false, safetyPort)
@@ -69,16 +71,11 @@ func (s *FirewallService) SetPortClosedSafe(ctx context.Context, port int, proto
 				// Repeated close requests must repair a missing/stale UFW rule
 				// and install the DNAT hook after an upgrade or restart.
 				if backend.name == "ufw" {
-					status, statusErr := runFirewallCommand(ctx, backend.binary, "status", "numbered")
-					if statusErr != nil {
-						return nil, statusErr
-					}
-					number := findUFWManagedRuleNumber(status, "Firewall-UI advanced "+id, "")
-					if number != 1 {
-						if number > 0 {
-							if err := deleteUFWManagedRules(ctx, backend.binary, "Firewall-UI advanced "+id, ""); err != nil {
-								return nil, err
-							}
+					if _, err := verifyUFWClosedPort(ctx, backend.binary, rule); err != nil {
+						// Reconcile only Firewall-UI-owned rules; leave other
+						// administrator rules untouched.
+						if err := deleteUFWManagedRules(ctx, backend.binary, "Firewall-UI advanced "+id, ""); err != nil {
+							return nil, err
 						}
 						if err := applySystemAdvancedRule(ctx, backend, rule, true); err != nil {
 							return nil, err

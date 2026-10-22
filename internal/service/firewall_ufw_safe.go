@@ -57,6 +57,137 @@ func findUFWManagedRuleNumber(status, comment, spec string) int {
 	return 0
 }
 
+// ufw status numbered may omit comments and may list unrelated rules above a
+// port. Return the *first matching inbound rule* for the target port; only
+// that action determines whether the port is allowed or denied.
+func findUFWPortDecision(status, spec string) (int, string) {
+	ipv6Position, ipv6Action := 0, ""
+	for _, raw := range strings.Split(status, "\n") {
+		line := strings.TrimSpace(raw)
+		if !strings.HasPrefix(line, "[") {
+			continue
+		}
+		end := strings.IndexByte(line, ']')
+		if end < 0 {
+			continue
+		}
+		number, err := strconv.Atoi(strings.TrimSpace(line[1:end]))
+		if err != nil || number < 1 {
+			continue
+		}
+		before, _, _ := strings.Cut(line[end+1:], "#")
+		fields := strings.Fields(before)
+		if len(fields) < 3 || !strings.EqualFold(fields[0], spec) {
+			continue
+		}
+		actionAt := 1
+		ipv6 := false
+		if fields[actionAt] == "(v6)" {
+			ipv6 = true
+			actionAt++
+		}
+		if len(fields) < actionAt+2 || fields[actionAt+1] != "IN" {
+			continue
+		}
+		action := fields[actionAt]
+		if action != "ALLOW" && action != "DENY" && action != "REJECT" {
+			continue
+		}
+		if !ipv6 {
+			return number, action
+		}
+		if ipv6Position == 0 {
+			ipv6Position, ipv6Action = number, action
+		}
+	}
+	return ipv6Position, ipv6Action
+}
+
+// Check the persistent UFW command list as well as the active numbered
+// rules. This identifies Firewall-UI-owned rules even when the numbered
+// display omits the # comment.
+func hasUFWAdvancedRule(added, comment string) bool {
+	for _, line := range strings.Split(added, "\n") {
+		args := ownedUFWDeleteArgs(line)
+		if len(args) >= 5 && args[len(args)-1] == comment {
+			return true
+		}
+	}
+	return false
+}
+
+func verifyUFWClosedPort(ctx context.Context, binary string, rule FirewallAdvancedRule) (int, error) {
+	status, err := runFirewallCommand(ctx, binary, "status", "numbered")
+	if err != nil {
+		return 0, err
+	}
+	position, action := findUFWPortDecision(status, strconv.Itoa(rule.PortStart)+"/"+rule.Protocol)
+	if action != "DENY" {
+		return position, fmt.Errorf("UFW has no effective leading DENY for %d/%s (first matching rule: %s at position %d)", rule.PortStart, rule.Protocol, action, position)
+	}
+	comment := "Firewall-UI advanced " + rule.ID
+	if findUFWManagedRuleNumber(status, comment, "") != 0 {
+		return position, nil
+	}
+	added, err := runFirewallCommand(ctx, binary, "show", "added")
+	if err != nil {
+		return position, err
+	}
+	if !hasUFWAdvancedRule(added, comment) {
+		return position, fmt.Errorf("UFW DENY for %d/%s exists but Firewall-UI-owned rule %q is missing from 'ufw show added'", rule.PortStart, rule.Protocol, comment)
+	}
+	return position, nil
+}
+
+// Sync saved advanced policy with UFW even after a restart or when the
+// automatic listening-port switch is off. A rule must be present in UFW's
+// persistent configuration; for closed ports it must also be the first
+// applicable inbound action for that port.
+func syncUFWAdvancedRulesLocked(ctx context.Context, backend firewallBackend) error {
+	if backend.name != "ufw" {
+		return nil
+	}
+	on, err := backend.enabled(ctx)
+	if err != nil || !on {
+		return err
+	}
+	rules, err := loadAdvancedFirewallRules()
+	if err != nil || len(rules) == 0 {
+		return err
+	}
+	added, err := runFirewallCommand(ctx, backend.binary, "show", "added")
+	if err != nil {
+		return err
+	}
+	for _, rule := range rules {
+		comment := "Firewall-UI advanced " + rule.ID
+		exists := hasUFWAdvancedRule(added, comment)
+		if exists && isClosePortRule(rule) {
+			if _, err := verifyUFWClosedPort(ctx, backend.binary, rule); err != nil {
+				// Only remove and replace a rule identified by its ownership
+				// marker; don't modify administrator-owned entries.
+				if err := deleteUFWManagedRules(ctx, backend.binary, comment, ""); err != nil {
+					return err
+				}
+				exists = false
+			}
+		}
+		if !exists {
+			if err := applySystemAdvancedRule(ctx, backend, rule, true); err != nil {
+				return fmt.Errorf("synchronize advanced UFW rule %s: %w", rule.ID, err)
+			}
+			added, err = runFirewallCommand(ctx, backend.binary, "show", "added")
+			if err != nil {
+				return err
+			}
+			if !hasUFWAdvancedRule(added, comment) {
+				return fmt.Errorf("advanced UFW rule %s did not persist", rule.ID)
+			}
+		}
+	}
+	return nil
+}
+
 func deleteUFWManagedRules(ctx context.Context, binary, comment, spec string) error {
 	for attempts := 0; attempts < 128; attempts++ {
 		status, err := runFirewallCommand(ctx, binary, "status", "numbered")
@@ -83,11 +214,36 @@ func deleteUFWManagedRules(ctx context.Context, binary, comment, spec string) er
 			return nil
 		}
 		number := findUFWManagedRuleNumber(status, comment, spec)
-		if number == 0 {
+		if number > 0 {
+			if _, err := runFirewallCommand(ctx, binary, "--force", "delete", strconv.Itoa(number)); err != nil {
+				return fmt.Errorf("delete UFW rule %d: %w", number, err)
+			}
+			continue
+		}
+		// Some UFW versions omit comments from "status numbered" entirely.
+		// Find the *owned* rule in persistent configuration instead of
+		// silently treating it as deleted and leaving the port blocked.
+		added, err := runFirewallCommand(ctx, binary, "show", "added")
+		if err != nil {
+			return err
+		}
+		var args []string
+		for _, line := range strings.Split(added, "\n") {
+			candidate := ownedUFWDeleteArgs(line)
+			if len(candidate) < 6 || candidate[len(candidate)-1] != comment {
+				continue
+			}
+			if spec != "" && candidate[3] != spec {
+				continue
+			}
+			args = candidate
+			break
+		}
+		if len(args) == 0 {
 			return nil
 		}
-		if _, err := runFirewallCommand(ctx, binary, "--force", "delete", strconv.Itoa(number)); err != nil {
-			return fmt.Errorf("delete UFW rule %d: %w", number, err)
+		if _, err := runFirewallCommand(ctx, binary, args...); err != nil {
+			return fmt.Errorf("delete UFW rule with missing numbered comment: %w", err)
 		}
 	}
 	return fmt.Errorf("too many matching UFW rules for comment %q", comment)

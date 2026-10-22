@@ -6,6 +6,7 @@ import {
   Divider,
   Input,
   InputNumber,
+  Modal,
   Popconfirm,
   Select,
   Space,
@@ -117,13 +118,12 @@ export function FirewallManager() {
             failed: 'Не удалось получить состояние файрволла.',
             noFirewall: 'Поддерживаемый файрволл не найден.',
             install: 'Установить UFW',
-            enabled: 'Правила Firewall-UI включены',
-            disabled: 'Правила Firewall-UI выключены',
+            enabled: 'Файрволл включён',
+            disabled: 'Файрволл выключен',
             auto: 'Автоматически открывать порты слушающих сервисов',
             ping: 'Разрешить ping',
-            sync: 'Синхронизировать',
-            safety:
-              'Порт панели и SSH защищаются автоматически. Опасные изменения откатываются, если UI не подтвердит доступность.',
+             safety:
+              'Правила применяются автоматически. Выключение UFW/firewalld отключает системную защиту всего сервера. Порт панели и SSH сохраняются при включении.',
             activeRules: 'Активные и ожидаемые правила',
             manual: 'Простые ручные правила',
             advanced: 'Расширенные правила',
@@ -150,13 +150,12 @@ export function FirewallManager() {
             failed: 'Failed to load firewall status.',
             noFirewall: 'No supported firewall was found.',
             install: 'Install UFW',
-            enabled: 'Firewall-UI rules enabled',
-            disabled: 'Firewall-UI rules disabled',
+            enabled: 'Firewall enabled',
+            disabled: 'Firewall disabled',
             auto: 'Automatically open listening service ports',
             ping: 'Allow ping',
-            sync: 'Sync now',
-            safety:
-              'Panel and SSH ports are protected automatically. Risky changes roll back if the UI cannot confirm connectivity.',
+             safety:
+              'Rules are applied automatically. Turning off UFW/firewalld disables host-wide firewall protection. Panel and SSH access is preserved when enabling.',
             activeRules: 'Active and expected rules',
             manual: 'Simple manual rules',
             advanced: 'Advanced rules',
@@ -258,6 +257,7 @@ export function FirewallManager() {
           ipVersion: 'any',
           priority: 100,
         });
+        await load();
       }
     } finally {
       setAction('');
@@ -271,7 +271,10 @@ export function FirewallManager() {
         '/api/firewall/advanced/delete',
         { id },
       );
-      if (result.success && result.obj) setAdvanced(result.obj.rules);
+      if (result.success && result.obj) {
+        setAdvanced(result.obj.rules);
+        await load();
+      }
     } finally {
       setAction('');
     }
@@ -430,34 +433,31 @@ export function FirewallManager() {
             <Switch
               checked={status.enabled}
               loading={action === 'enabled'}
-              onChange={(enabled) =>
-                void mutate(
-                  '/api/firewall/enabled',
-                  { enabled },
-                  'enabled',
-                )
-              }
+              onChange={(enabled) => {
+                const apply = () =>
+                  mutate('/api/firewall/enabled', { enabled }, 'enabled');
+                if (!enabled && (status.backend === 'ufw' || status.backend === 'firewalld')) {
+                  Modal.confirm({
+                    title: ru ? 'Выключить системный файрволл?' : 'Disable the system firewall?',
+                    content: ru
+                      ? 'Все входящие подключения, ранее блокируемые UFW/firewalld, могут стать доступными. Правила сохранятся для повторного включения.'
+                      : 'Incoming connections previously blocked by UFW/firewalld may become reachable. Existing rules will be kept for re-enabling.',
+                    okText: ru ? 'Выключить' : 'Disable',
+                    okButtonProps: { danger: true },
+                    cancelText: ru ? 'Отмена' : 'Cancel',
+                    onOk: async () => { await apply(); },
+                  });
+                } else {
+                  void apply();
+                }
+              }}
             />
             <Typography.Text strong>
               {status.enabled ? text.enabled : text.disabled}
             </Typography.Text>
           </Space>
           <Tag>{status.backend}</Tag>
-          {status.backend === 'ufw' && (
-            <Tag color={status.systemActive ? 'success' : 'warning'}>
-              {status.systemActive
-                ? (ru ? 'UFW активен' : 'UFW active')
-                : (ru ? 'UFW неактивен' : 'UFW inactive')}
-            </Tag>
-          )}
-          <Button
-            loading={action === 'sync'}
-            onClick={() =>
-              void mutate('/api/firewall/sync', {}, 'sync')
-            }
-          >
-            {text.sync}
-          </Button>
+
         </Space>
         <Alert
           type="info"

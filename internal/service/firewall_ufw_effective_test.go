@@ -36,8 +36,8 @@ esac
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.Backend != "ufw" || !status.SystemActive || status.Enabled || status.IncomingPolicy != "allow" {
-		t.Fatalf("UFW status wrongly equates host and panel policy: %+v", status)
+	if status.Backend != "ufw" || !status.SystemActive || !status.Enabled || status.IncomingPolicy != "allow" {
+		t.Fatalf("UFW status does not show the actual host state: %+v", status)
 	}
 }
 
@@ -68,5 +68,26 @@ esac
 	}
 	if len(ledger) == 0 {
 		t.Fatal("the ownership ledger was lost on failed verification")
+	}
+}
+
+func TestParseUFWAllowSpecNormalization(t *testing.T) {
+	cases := []struct {
+		line string
+		want string
+	}{
+		{"ufw allow 1332/tcp", "1332/tcp"},
+		{"ufw allow to any port 1332 proto tcp comment 'Firewall-UI managed'", "1332/tcp"},
+		{"ufw allow proto tcp to any port 1332", "1332/tcp"},
+		{"ufw allow to any port 1000:2000 proto udp", "1000-2000/udp"},
+		{"ufw deny to any port 1332 proto tcp", ""},
+		{"ufw allow from 192.0.2.0/24 to any port 1332 proto tcp", ""},
+		{"ufw allow in on eth0 to any port 1332 proto tcp", ""},
+	}
+	for _, tc := range cases {
+		got, _ := parseUFWAllowSpec(tc.line)
+		if got != tc.want {
+			t.Errorf("parseUFWAllowSpec(%q) = %q, want %q", tc.line, got, tc.want)
+		}
 	}
 }

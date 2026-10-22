@@ -123,11 +123,11 @@ func (s *FirewallService) syncContainerProtectionLocked(ctx context.Context) err
 	if err != nil {
 		return err
 	}
-	if !configured || managed {
-		backend, detectErr := detectManagedFirewallBackend(ctx)
-		if detectErr != nil {
-			return detectErr
-		}
+	backend, detectErr := detectManagedFirewallBackend(ctx)
+	if detectErr != nil {
+		return detectErr
+	}
+	if !isManagedNativeFirewall(backend.name) || !configured || managed {
 		managed, err = backend.enabled(ctx)
 		if err != nil {
 			return err
