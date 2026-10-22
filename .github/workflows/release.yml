@@ -29,6 +29,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           BUILD_COMMIT: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_WORKFLOW: ${{ github.event.workflow_run.name }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
           set -euo pipefail
           CURRENT_HEAD="$(gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq '.commit.sha')"
@@ -36,11 +38,39 @@ jobs:
             echo 'A newer main commit exists; skip outdated publication.'
             exit 0
           fi
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$BUILD_COMMIT&per_page=100" > /tmp/firewall-ui-runs.json
-          BINARY_RUN="$(jq -r '[.workflow_runs[] | select(.name == "Build and test" and .conclusion == "success" and .head_branch == "main" and .event != "pull_request")] | first | .id // empty' /tmp/firewall-ui-runs.json)"
-          DOCKER_RUN="$(jq -r '[.workflow_runs[] | select(.name == "Docker build" and .conclusion == "success" and .head_branch == "main" and .event != "pull_request")] | first | .id // empty' /tmp/firewall-ui-runs.json)"
+          # The workflow_run event itself is authoritative: GitHub's Actions
+          # list endpoint may lag behind a successful completed run.
+          BINARY_RUN=''
+          DOCKER_RUN=''
+          if [[ "$SOURCE_WORKFLOW" == 'Build and test' ]]; then
+            BINARY_RUN="$SOURCE_RUN_ID"
+          elif [[ "$SOURCE_WORKFLOW" == 'Docker build' ]]; then
+            DOCKER_RUN="$SOURCE_RUN_ID"
+          else
+            echo "::error::Unexpected completed workflow: $SOURCE_WORKFLOW"
+            exit 1
+          fi
+          # Discover the other verified build, retrying through GitHub API
+          # eventual consistency. Do not turn a successful binary build into
+          # a green no-op just because it was missing from the first response.
+          for attempt in {1..15}; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$BUILD_COMMIT&per_page=100" > /tmp/firewall-ui-runs.json
+            if [[ -z "$BINARY_RUN" ]]; then
+              BINARY_RUN="$(jq -r '[.workflow_runs[] | select(.name == "Build and test" and .conclusion == "success" and .head_branch == "main" and .event == "push")] | first | .id // empty' /tmp/firewall-ui-runs.json)"
+            fi
+            if [[ -z "$DOCKER_RUN" ]]; then
+              DOCKER_RUN="$(jq -r '[.workflow_runs[] | select(.name == "Docker build" and .conclusion == "success" and .head_branch == "main" and .event == "push")] | first | .id // empty' /tmp/firewall-ui-runs.json)"
+            fi
+            if [[ -n "$BINARY_RUN" && -n "$DOCKER_RUN" ]]; then
+              break
+            fi
+            if [[ "$attempt" -lt 15 ]]; then
+              echo "Build status not fully indexed yet ($attempt/15): binaries=${BINARY_RUN:-pending}, docker=${DOCKER_RUN:-pending}"
+              sleep 8
+            fi
+          done
           if [[ -z "$BINARY_RUN" ]]; then
-            echo 'Verified binaries are not ready. The binary workflow will trigger publication when it succeeds.'
+            echo "::notice::Verified binary build not finished. Docker completion cannot publish stable until binaries pass."
             exit 0
           fi
           echo "binary_run=$BINARY_RUN" >> "$GITHUB_OUTPUT"
@@ -48,8 +78,9 @@ jobs:
           if [[ -n "$DOCKER_RUN" ]]; then
             echo "docker_run=$DOCKER_RUN" >> "$GITHUB_OUTPUT"
             echo 'docker_ready=true' >> "$GITHUB_OUTPUT"
+            echo "Verified both builds: binaries=$BINARY_RUN docker=$DOCKER_RUN"
           else
-            echo 'Docker build has not passed; dev can publish, stable must wait.'
+            echo "::notice::Docker build has not passed; dev can publish, stable will be triggered by Docker completion."
           fi
       - name: Download verified binaries
         if: steps.builds.outputs.binary_ready == 'true'
