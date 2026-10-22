@@ -37,7 +37,18 @@ func exportFirewallBackupLocked() (FirewallBackup, error) {
 	if err != nil {
 		return FirewallBackup{}, err
 	}
-	if !configured {
+	// UFW/firewalld can be enabled or disabled outside the panel. A backup
+	// is used for rollback, so saving the old preference instead of live
+	// state can unexpectedly disable an active host firewall on recovery.
+	probe, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if backend, detectErr := detectManagedFirewallBackend(probe); detectErr == nil &&
+		(backend.name == "ufw" || backend.name == "firewalld") {
+		enabled, err = backend.enabled(probe)
+		if err != nil {
+			return FirewallBackup{}, fmt.Errorf("read live %s state for backup: %w", backend.name, err)
+		}
+	} else if !configured {
 		enabled = false
 	}
 	ping, err := (&FirewallService{}).ManagedPingEnabled()
