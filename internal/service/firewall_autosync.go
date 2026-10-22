@@ -148,11 +148,17 @@ func (s *FirewallService) StartAutoSync() {
 			}
 
 			syncNow()
+			lastSync := time.Now()
+			// A cheap scheduling check permits changing the interval without
+			// restarting, while host firewall commands run only when due.
 			ticker := time.NewTicker(5 * time.Second)
 			defer ticker.Stop()
-			for {
-				<-ticker.C
+			for range ticker.C {
+				if time.Since(lastSync) < s.syncInterval() {
+					continue
+				}
 				syncNow()
+				lastSync = time.Now()
 			}
 		}()
 	})
