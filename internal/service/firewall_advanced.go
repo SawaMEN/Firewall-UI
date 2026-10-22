@@ -256,7 +256,17 @@ func (s *FirewallService) applyAdvancedChangeLocked(ctx context.Context, rule Fi
 			return err
 		}
 		if err := verifyNftInputClose(ctx, rule); err != nil {
-			return fmt.Errorf("cannot enforce close for %d/%s: %w", rule.PortStart, rule.Protocol, err)
+			// A stale hash only proves that we previously installed the
+			// rule; another service (including UFW reload) may have removed
+			// the INPUT drop while the owned table still exists. Force one
+			// kernel reapply and re-read before rejecting the close.
+			containerPolicyHash = [32]byte{}
+			if repairErr := s.syncContainerProtectionLocked(ctx); repairErr != nil {
+				return fmt.Errorf("cannot enforce close for %d/%s: verification: %v; kernel repair: %w", rule.PortStart, rule.Protocol, err, repairErr)
+			}
+			if retryErr := verifyNftInputClose(ctx, rule); retryErr != nil {
+				return fmt.Errorf("cannot enforce close for %d/%s after kernel repair: %w", rule.PortStart, rule.Protocol, retryErr)
+			}
 		}
 	}
 	if err := applySystemAdvancedRule(ctx, backend, rule, add); err != nil {
