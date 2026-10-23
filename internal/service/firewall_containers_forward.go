@@ -42,6 +42,10 @@ func containerProtectionEnabled() (bool, error) {
 func (s *FirewallService) ContainerProtectionStatus(ctx context.Context) (ContainerProtectionStatus, error) {
 	firewallMu.Lock()
 	defer firewallMu.Unlock()
+	return s.containerProtectionStatusLocked(ctx)
+}
+
+func (s *FirewallService) containerProtectionStatusLocked(ctx context.Context) (ContainerProtectionStatus, error) {
 	enabled, err := containerProtectionEnabled()
 	if err != nil {
 		return ContainerProtectionStatus{}, err
@@ -69,22 +73,15 @@ func (s *FirewallService) ContainerProtectionStatus(ctx context.Context) (Contai
 	if err != nil {
 		return status, err
 	}
-	doc, err := decodeNFTPolicy([]byte(raw))
-	if err != nil {
-		return status, err
-	}
-	if nftTableInactive(doc, containerNFTTable) {
-		status.Message = "Container FORWARD hook is missing or changed"
+	if err := verifyNFTContainerHooks([]byte(raw)); err != nil {
+		status.Message = err.Error()
 		return status, nil
 	}
-	for _, item := range doc.Nftables {
-		if c := item.Chain; c != nil && c.Family == "inet" && c.Table == containerNFTTable && c.Name == "forward" && c.Type == "filter" && c.Hook == "forward" && c.Priority == -50 && c.Policy == "accept" {
-			status.Active = true
-		}
+	if err := verifyNFTSnapshotFingerprint([]byte(raw), containerPolicyObservedHash); err != nil {
+		status.Message = err.Error()
+		return status, nil
 	}
-	if !status.Active {
-		status.Message = "Container FORWARD hook is missing or changed"
-	}
+	status.Active = true
 	return status, nil
 }
 
@@ -128,7 +125,7 @@ func containerTableExists(ctx context.Context, nft string) (bool, error) {
 
 // Always keep a dedicated, non-destructive FORWARD hook. No Docker chains,
 // host FORWARD policy or administrator-owned nftables objects are modified.
-func (s *FirewallService) syncContainerProtectionLocked(ctx context.Context) error {
+func (s *FirewallService) syncContainerProtectionLocked(ctx context.Context, safetyPorts ...int) error {
 	enabled, err := containerProtectionEnabled()
 	if err != nil {
 		return err
@@ -178,12 +175,26 @@ func (s *FirewallService) syncContainerProtectionLocked(ctx context.Context) err
 	}
 	if !needForwardHook {
 		containerPolicyHash = [32]byte{}
+		containerPolicyObservedHash = [32]byte{}
 		if exists {
-			_, err = runFirewallCommand(ctx, nft, "delete", "table", "inet", containerNFTTable)
+			if _, err = runFirewallCommand(ctx, nft, "delete", "table", "inet", containerNFTTable); err != nil {
+				return err
+			}
+			stillExists, err := containerTableExists(ctx, nft)
+			if err != nil {
+				return err
+			}
+			if stillExists {
+				return errors.New("nftables auxiliary table remains after cleanup")
+			}
 		}
-		return err
+		return nil
 	}
-	safety, err := s.managedDesiredRules(false, rememberedFirewallSafetyPort())
+	safetyPort := rememberedFirewallSafetyPort()
+	if len(safetyPorts) > 0 && safetyPorts[0] > 0 {
+		safetyPort = safetyPorts[0]
+	}
+	safety, err := s.managedDesiredRules(false, safetyPort)
 	if err != nil {
 		return err
 	}
@@ -228,11 +239,33 @@ func (s *FirewallService) syncContainerProtectionLocked(ctx context.Context) err
 	if err != nil {
 		return fmt.Errorf("apply container FORWARD protection: %w: %s", err, strings.TrimSpace(string(output)))
 	}
-	containerPolicyHash = fingerprint
-	containerPolicyObservedHash = [32]byte{}
-	if raw, readErr := runFirewallCommand(ctx, nft, "-j", "list", "table", "inet", containerNFTTable); readErr == nil {
-		containerPolicyObservedHash, _ = normalizedNFTRulesetFingerprint([]byte(raw))
+	// A successful process exit is not evidence of an attached live hook.
+	// Never prime the no-op cache from an unverified or unreadable snapshot.
+	containerPolicyHash, containerPolicyObservedHash = [32]byte{}, [32]byte{}
+	raw, err := runFirewallCommand(ctx, nft, "-j", "list", "table", "inet", containerNFTTable)
+	if err != nil {
+		return fmt.Errorf("verify installed container policy: %w", err)
 	}
+	if err := verifyNFTContainerHooks([]byte(raw)); err != nil {
+		return err
+	}
+	for _, rule := range advanced {
+		if isClosePortRule(rule) {
+			if err := verifyNFTClosedPortJSON([]byte(raw), rule); err != nil {
+				return err
+			}
+		}
+	}
+	if len(ports) > 0 {
+		if err := verifyNFTMarkedRules([]byte(raw), script, containerNFTTable, "fwui-container-"); err != nil {
+			return err
+		}
+	}
+	observed, err := normalizedNFTRulesetFingerprint([]byte(raw))
+	if err != nil {
+		return err
+	}
+	containerPolicyHash, containerPolicyObservedHash = fingerprint, observed
 	containerPolicyLastCheck = time.Now()
 	return nil
 }

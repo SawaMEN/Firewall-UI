@@ -11,12 +11,12 @@ import (
 // transport-header match has been decoded to a named TCP/UDP payload.
 func closedPortNFTFixture(protocol string, port int) string {
 	return fmt.Sprintf(`{"nftables":[
- {"chain":{"family":"inet","table":"firewall_ui_containers","name":"input","type":"filter","hook":"input","prio":-50}},
+ {"chain":{"family":"inet","table":"firewall_ui_containers","name":"input","type":"filter","hook":"input","prio":-50,"policy":"accept"}},
  {"rule":{"family":"inet","table":"firewall_ui_containers","chain":"input","comment":"fwui-closed-input:close-port-%[2]d-%[1]s","expr":[
  {"match":{"op":"==","left":{"meta":{"key":"l4proto"}},"right":"%[1]s"}},
  {"match":{"op":"==","left":{"payload":{"protocol":"%[1]s","field":"dport"}},"right":%[2]d}},
  {"counter":{"packets":12,"bytes":2048}},{"drop":null}]}},
- {"chain":{"family":"inet","table":"firewall_ui_containers","name":"forward","type":"filter","hook":"forward","prio":-50}},
+ {"chain":{"family":"inet","table":"firewall_ui_containers","name":"forward","type":"filter","hook":"forward","prio":-50,"policy":"accept"}},
  {"rule":{"family":"inet","table":"firewall_ui_containers","chain":"forward","comment":"fwui-closed-port:close-port-%[2]d-%[1]s","expr":[
  {"match":{"op":"==","left":{"meta":{"key":"l4proto"}},"right":"%[1]s"}},
  {"match":{"op":"in","left":{"ct":{"key":"status"}},"right":"dnat"}},

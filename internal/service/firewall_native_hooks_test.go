@@ -73,6 +73,13 @@ func TestNativeNFTCloseReopenAndRecovery(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, "main.json"), []byte(mainJSON), 0600); err != nil {
 				t.Fatal(err)
 			}
+			if err := os.WriteFile(filepath.Join(root, "main-base.json"), []byte(mainJSON), 0600); err != nil {
+				t.Fatal(err)
+			}
+			closedMain := strings.TrimSuffix(mainJSON, "]}") + `,{"rule":{"family":"inet","table":"firewall_ui","chain":"input","comment":"fwui-advanced:close-port-1332-` + proto + `","expr":[{"drop":null}]}}]}`
+			if err := os.WriteFile(filepath.Join(root, "main-closed.json"), []byte(closedMain), 0600); err != nil {
+				t.Fatal(err)
+			}
 			pingPath := filepath.Join(root, "ping")
 			if err := os.WriteFile(pingPath, []byte("0\n"), 0600); err != nil {
 				t.Fatal(err)
@@ -101,6 +108,11 @@ case "$*" in
   /bin/cat > "$FWUI_HOOK_ROOT/batch"
   if /bin/grep -q 'table inet firewall_ui {' "$FWUI_HOOK_ROOT/batch"; then
    /bin/cp "$FWUI_HOOK_ROOT/batch" "$FWUI_HOOK_ROOT/main"
+   if /bin/grep -q 'fwui-advanced:close-port-' "$FWUI_HOOK_ROOT/batch"; then
+    /bin/cp "$FWUI_HOOK_ROOT/main-closed.json" "$FWUI_HOOK_ROOT/main.json"
+   else
+    /bin/cp "$FWUI_HOOK_ROOT/main-base.json" "$FWUI_HOOK_ROOT/main.json"
+   fi
   else
    /bin/cp "$FWUI_HOOK_ROOT/batch" "$FWUI_HOOK_ROOT/aux"
   fi;;

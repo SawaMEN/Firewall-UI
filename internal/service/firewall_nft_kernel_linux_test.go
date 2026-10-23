@@ -210,6 +210,17 @@ func TestNFTKernelInputLifecycle(t *testing.T) {
 	if _, err := svc.SyncManagedSafe(ctx, 18088); err != nil {
 		t.Fatal(err)
 	}
+	// Interrupted disable: saved OFF must also remove lingering owned hooks.
+	if err := setFirewallManagedEnabledPreference(false); err != nil {
+		t.Fatal(err)
+	}
+	disabled, err := svc.SyncManagedSafe(ctx, 18088)
+	if err != nil || disabled.Enabled {
+		t.Fatalf("saved OFF left native filtering active: %+v %v", disabled, err)
+	}
+	if _, err := svc.SetManagedEnabledSafe(ctx, true, 18088); err != nil {
+		t.Fatal(err)
+	}
 	// Detached hooks and lost rules are reported from kernel evidence.
 	kernelRun(t, nft, "flush", "chain", "inet", managedNftTable, managedNftChain)
 	status, err := svc.GetManagedStatusSafe(ctx, 18088)
@@ -540,6 +551,29 @@ func TestNFTKernelDNATForward(t *testing.T) {
 	}
 	if !foundGlobalCounter {
 		t.Fatal("unconditional advanced rule lost its kernel counter/identity")
+	}
+	probe := AccessProbe{SourceIP: "10.75.0.2", Port: 18088, Protocol: "tcp", Interface: "cl0"}
+	diagnosis, err := svc.InspectAccess(ctx, 18088, probe)
+	if err != nil || diagnosis.Verdict != "predicted-allow" || !strings.Contains(diagnosis.Reason, "FORWARD rule precedes") {
+		t.Fatalf("protected DNAT diagnosis diverged from policy: %+v %v", diagnosis, err)
+	}
+	newRequestPort := probe
+	newRequestPort.Port = 19332
+	unprotectedDiagnosis, err := svc.InspectAccess(ctx, 19332, newRequestPort)
+	if err != nil || unprotectedDiagnosis.Verdict != "predicted-deny" {
+		t.Fatalf("request port invented a live FORWARD exception: %+v %v", unprotectedDiagnosis, err)
+	}
+	kernelRun(t, nft, "flush", "chain", "inet", containerNFTTable, "forward")
+	containerStatus, err := svc.ContainerProtectionStatus(ctx)
+	if err != nil || containerStatus.Active {
+		t.Fatalf("flushed FORWARD shown protected: %+v %v", containerStatus, err)
+	}
+	diagnosis, err = svc.InspectAccess(ctx, 18088, probe)
+	if err != nil || diagnosis.Verdict != "unknown" {
+		t.Fatalf("flushed FORWARD guessed access: %+v %v", diagnosis, err)
+	}
+	if err := svc.SyncContainerProtection(ctx); err != nil {
+		t.Fatal(err)
 	}
 	client.probe(t, "tcp4", "10.75.0.1:18088", true)
 	client.probe(t, "tcp6", "[fd75::1]:18088", true)

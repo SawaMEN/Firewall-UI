@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -156,4 +157,134 @@ func (flags *nftTableFlags) UnmarshalJSON(raw []byte) error {
 	}
 	*flags = list
 	return nil
+}
+
+// This is the minimum attachment proof for auxiliary policy. Individual
+// close-port DROP expressions are verified separately before caching a write.
+func verifyNFTContainerHooks(raw []byte) error {
+	doc, err := decodeNFTPolicy(raw)
+	if err != nil {
+		return fmt.Errorf("decode container nftables policy: %w", err)
+	}
+	if nftTableInactive(doc, containerNFTTable) {
+		return errors.New("Container FORWARD hook is missing or changed")
+	}
+	for _, item := range doc.Nftables {
+		if c := item.Chain; c != nil && c.Family == "inet" && c.Table == containerNFTTable && c.Name == "forward" && c.Type == "filter" && c.Hook == "forward" && c.Priority == -50 && c.Policy == "accept" {
+			return nil
+		}
+	}
+	return errors.New("Container FORWARD hook is missing or changed")
+}
+
+// Prediction needs an unchanged snapshot of a policy we successfully applied.
+// Saved intent alone cannot establish the order or presence of advanced rules.
+func verifyNFTSnapshotFingerprint(raw []byte, expected [32]byte) error {
+	if expected == ([32]byte{}) {
+		return errors.New("nftables policy has not been verified since startup")
+	}
+	observed, err := normalizedNFTRulesetFingerprint(raw)
+	if err != nil {
+		return err
+	}
+	if observed != expected {
+		return errors.New("nftables policy changed since the last verified application")
+	}
+	return nil
+}
+
+// Confirm the generated marked rules were installed in the requested order
+// with the requested terminal verdict. Exact closed-port predicates have an
+// additional semantic check; subsequent drift compares the entire snapshot.
+func verifyNFTMarkedRules(raw []byte, script, table, prefix string) error {
+	doc, err := decodeNFTPolicy(raw)
+	if err != nil {
+		return err
+	}
+	type markedRule struct{ comment, verdict string }
+	expected := map[string][]markedRule{}
+	chain := ""
+	for _, line := range strings.Split(script, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "chain" {
+			chain = fields[1]
+		}
+		before, comment, ok := strings.Cut(line, " comment \"")
+		if !ok {
+			continue
+		}
+		comment = strings.TrimSuffix(comment, "\"")
+		if !strings.HasPrefix(comment, prefix) {
+			continue
+		}
+		words := strings.Fields(before)
+		if chain == "" || len(words) == 0 {
+			return errors.New("invalid generated nftables rule")
+		}
+		expected[chain] = append(expected[chain], markedRule{comment, words[len(words)-1]})
+	}
+	actual := map[string][]markedRule{}
+	for _, item := range doc.Nftables {
+		r := item.Rule
+		if r == nil || r.Family != "inet" || r.Table != table || !strings.HasPrefix(r.Comment, prefix) {
+			continue
+		}
+		verdict := ""
+		if len(r.Expr) > 0 {
+			last := r.Expr[len(r.Expr)-1]
+			if len(last) == 1 {
+				for key, value := range last {
+					if (key == "accept" || key == "drop") && string(value) == "null" {
+						verdict = key
+					}
+				}
+			}
+		}
+		actual[r.Chain] = append(actual[r.Chain], markedRule{r.Comment, verdict})
+	}
+	for chain, want := range expected {
+		got := actual[chain]
+		if len(got) != len(want) {
+			return fmt.Errorf("nftables marked policy is incomplete in %s/%s", table, chain)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				return fmt.Errorf("nftables marked policy order or verdict changed in %s/%s", table, chain)
+			}
+		}
+		delete(actual, chain)
+	}
+	if len(actual) > 0 {
+		return fmt.Errorf("unexpected marked nftables rules in %s", table)
+	}
+	return nil
+}
+
+// A newly supplied request port is not evidence that the previous FORWARD
+// transaction contained its protective exception.
+func nftForwardSafetyAllow(raw []byte, rule FirewallRule) bool {
+	doc, err := decodeNFTPolicy(raw)
+	if err != nil || nftTableInactive(doc, containerNFTTable) {
+		return false
+	}
+	for _, item := range doc.Nftables {
+		r := item.Rule
+		if r == nil || r.Family != "inet" || r.Table != containerNFTTable || r.Chain != "forward" || r.Comment != "fwui-container-safety:"+firewallRuleSpec(rule) {
+			continue
+		}
+		translated := make([]map[string]json.RawMessage, 0, len(r.Expr))
+		accepted := false
+		for _, statement := range r.Expr {
+			if value, ok := statement["accept"]; ok && len(statement) == 1 && string(value) == "null" {
+				translated = append(translated, map[string]json.RawMessage{"drop": json.RawMessage("null")})
+				accepted = true
+			} else {
+				translated = append(translated, statement)
+			}
+		}
+		if accepted && nftCloseExpressionsMatch(translated, FirewallAdvancedRule{Protocol: rule.Protocol, PortStart: rule.Port}, "forward") {
+			return true
+		}
+	}
+	return false
 }

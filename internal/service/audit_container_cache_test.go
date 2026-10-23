@@ -15,6 +15,11 @@ func TestContainerForwardPolicyChecksDriftWithoutResettingCounters(t *testing.T)
 	t.Setenv("FW_AUDIT_NFT_LOG", logPath)
 	live := filepath.Join(root, "live.json")
 	t.Setenv("FW_AUDIT_NFT_LIVE", live)
+	desired := filepath.Join(root, "desired.json")
+	t.Setenv("FW_AUDIT_NFT_DESIRED", desired)
+	if err := os.WriteFile(desired, []byte(closedPortNFTFixture("udp", 1332)), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(live, []byte(closedPortNFTFixture("udp", 1332)), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -23,7 +28,7 @@ func TestContainerForwardPolicyChecksDriftWithoutResettingCounters(t *testing.T)
 case "$*" in
   'list tables') echo 'table inet firewall_ui_containers';;
   '-j list table inet firewall_ui_containers') /bin/cat "$FW_AUDIT_NFT_LIVE";;
-  '-f -') /bin/cat >/dev/null; echo apply >> "$FW_AUDIT_NFT_LOG";;
+  '-f -') /bin/cat >/dev/null; /bin/cp "$FW_AUDIT_NFT_DESIRED" "$FW_AUDIT_NFT_LIVE"; echo apply >> "$FW_AUDIT_NFT_LOG";;
 esac
 `
 	for filename, script := range map[string]string{"ufw": ufw, "nft": nft} {

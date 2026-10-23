@@ -87,6 +87,11 @@ const russianDiagnosticMessages: Record<string, string> = {
     'Закрытие порта подтверждено правилами INPUT и DNAT/FORWARD.',
   'Owned nftables INPUT hook is missing or changed':
     'Входящая цепочка nftables панели отсутствует или изменена.',
+  'nftables policy has not been verified since startup': 'Правила nftables ещё не проверены после запуска.',
+  'nftables policy changed since the last verified application': 'Правила nftables изменились после последнего подтверждённого применения.',
+  'Container FORWARD policy has no verified live enforcement': 'Применение защиты контейнеров в FORWARD не подтверждено.',
+  'Native nftables policy has no verified live enforcement': 'Применение правил nftables не подтверждено.',
+  'Protected panel or SSH FORWARD rule precedes advanced rules': 'Защитное правило FORWARD для панели или SSH применяется раньше расширенных правил.',
   'Container FORWARD hook is missing or changed':
     'Цепочка FORWARD для защиты контейнеров отсутствует или изменена.',
   'UFW insertion order, not the displayed numeric priority, determines effective precedence.':

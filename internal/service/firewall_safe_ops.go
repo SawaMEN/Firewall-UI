@@ -57,7 +57,7 @@ func (s *FirewallService) syncManagedSafeLocked(ctx context.Context, backend fir
 	// Keep the DNAT/FORWARD container policy synchronized with managed ports.
 	defer func() {
 		if err == nil {
-			err = s.syncContainerProtectionLocked(ctx)
+			err = s.syncContainerProtectionLocked(ctx, safetyPort)
 		}
 	}()
 	if backend.name != "nftables" && backend.name != "iptables" {
@@ -337,6 +337,9 @@ func (s *FirewallService) SyncManagedSafe(ctx context.Context, safetyPort int) (
 		return FirewallManagedStatus{}, err
 	}
 	if isManagedNativeFirewall(backend.name) && configured && !desiredEnabled {
+		if err := s.reconcileDisabledNativeLocked(ctx, backend); err != nil {
+			return FirewallManagedStatus{}, err
+		}
 		return s.managedStatusSafeLocked(ctx, safetyPort)
 	}
 	if err := s.syncManagedSafeLocked(ctx, backend, safetyPort); err != nil {
@@ -453,4 +456,16 @@ func (s *FirewallService) changeManagedManualRuleSafe(ctx context.Context, port 
 		}
 	}
 	return s.managedStatusSafeLocked(ctx, safetyPort)
+}
+
+// Repair an interrupted disable instead of merely suppressing future ALLOWs.
+// These operations only remove the selected Firewall-UI-owned native layer.
+func (s *FirewallService) reconcileDisabledNativeLocked(ctx context.Context, backend firewallBackend) error {
+	if err := disableManagedBackendSafe(ctx, backend); err != nil {
+		return err
+	}
+	if err := s.syncContainerProtectionLocked(ctx); err != nil {
+		return err
+	}
+	return s.reconcileManagedPingStateLocked(false)
 }
