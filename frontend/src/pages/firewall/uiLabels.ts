@@ -42,6 +42,7 @@ const russianRuleLabels: Record<string, string> = {
   'Current panel connection': 'Текущее подключение к панели',
   'Manual rule': 'Ручное правило',
   'Host firewall': 'Системный файрволл',
+  'Listening port': 'Слушающий порт',
 };
 
 export function firewallSourceLabel(source: string, label: string | undefined, ru: boolean): string {
@@ -80,6 +81,19 @@ export function diagnosisVerdictLabel(verdict: string, ru: boolean): string {
 
 /** Known human-readable messages emitted by the service, preserved in English for API clients. */
 const russianDiagnosticMessages: Record<string, string> = {
+  'Saved close has no verified live kernel enforcement':
+    'Запрет сохранён, но его применение в ядре не подтверждено.',
+  'Verified explicit INPUT and DNAT/FORWARD port close':
+    'Закрытие порта подтверждено правилами INPUT и DNAT/FORWARD.',
+  'Owned nftables INPUT hook is missing or changed':
+    'Входящая цепочка nftables панели отсутствует или изменена.',
+  'nftables policy has not been verified since startup': 'Правила nftables ещё не проверены после запуска.',
+  'nftables policy changed since the last verified application': 'Правила nftables изменились после последнего подтверждённого применения.',
+  'Container FORWARD policy has no verified live enforcement': 'Применение защиты контейнеров в FORWARD не подтверждено.',
+  'Native nftables policy has no verified live enforcement': 'Применение правил nftables не подтверждено.',
+  'Protected panel or SSH FORWARD rule precedes advanced rules': 'Защитное правило FORWARD для панели или SSH применяется раньше расширенных правил.',
+  'Container FORWARD hook is missing or changed':
+    'Цепочка FORWARD для защиты контейнеров отсутствует или изменена.',
   'UFW insertion order, not the displayed numeric priority, determines effective precedence.':
     'В UFW порядок применения определяется порядком добавления правил, а не отображаемым числовым приоритетом.',
   'Effective results depend on active zone bindings and existing administrator rules.':

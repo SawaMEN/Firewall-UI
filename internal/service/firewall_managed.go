@@ -230,21 +230,38 @@ func nftablesSafeForManagedFirewall(ctx context.Context, binary string) (bool, e
 	if err := json.Unmarshal([]byte(out), &doc); err != nil {
 		return false, fmt.Errorf("decode nftables ruleset: %w", err)
 	}
+	if doc.Nftables == nil {
+		return false, errors.New("nftables JSON is missing its ruleset array")
+	}
 	for _, item := range doc.Nftables {
 		raw, ok := item["chain"]
 		if !ok {
 			continue
 		}
 		var chain struct {
-			Family string `json:"family"`
-			Table  string `json:"table"`
-			Name   string `json:"name"`
-			Hook   string `json:"hook"`
+			Family   string `json:"family"`
+			Table    string `json:"table"`
+			Name     string `json:"name"`
+			Hook     string `json:"hook"`
+			Type     string `json:"type"`
+			Priority int    `json:"prio"`
+			Policy   string `json:"policy"`
 		}
-		if json.Unmarshal(raw, &chain) != nil || chain.Hook != "input" {
+		if err := json.Unmarshal(raw, &chain); err != nil {
+			return false, fmt.Errorf("decode nftables chain: %w", err)
+		}
+		if chain.Hook != "input" {
 			continue
 		}
 		if chain.Family == "inet" && chain.Table == managedNftTable && chain.Name == managedNftChain {
+			continue
+		}
+		// Explicit port closes install our separate early INPUT drop hook.
+		// It must coexist with the main policy, including during restore
+		// when the main table is temporarily absent. Do not exempt other
+		// chains or a changed hook merely because the table name matches.
+		if chain.Family == "inet" && chain.Table == containerNFTTable && chain.Name == "input" &&
+			chain.Type == "filter" && chain.Priority == -50 && chain.Policy == "accept" {
 			continue
 		}
 		return false, nil
@@ -474,7 +491,18 @@ func disableManagedBackend(ctx context.Context, backend firewallBackend) error {
 			return err
 		}
 		_, err = runFirewallCommand(ctx, backend.binary, "delete", "table", "inet", managedNftTable)
-		return err
+		if err != nil {
+			return err
+		}
+		stillExists, err := managedNFTExists(ctx, backend.binary)
+		if err != nil {
+			return err
+		}
+		if stillExists {
+			return errors.New("nftables managed table remains after disabling")
+		}
+		managedNFTDesiredHash, managedNFTObservedHash = [32]byte{}, [32]byte{}
+		return nil
 	case "iptables":
 		return removeManagedIPTables(ctx, backend.binary)
 	default:
@@ -506,8 +534,10 @@ func applyManagedNftables(ctx context.Context, binary string, rules []FirewallRu
 		return err
 	}
 	if !safe {
-		cleanupErr := disableManagedBackend(ctx, firewallBackend{name: "nftables", binary: binary})
-		return errors.Join(errors.New("another nftables input hook appeared; cannot reconcile Firewall-UI policy"), cleanupErr)
+		// Refusing a new policy must preserve the last working firewall.
+		// Removing it here opens managed ports and can prevent rollback
+		// from detecting the owned backend while the other hook remains.
+		return errors.New("another nftables input hook appeared; cannot reconcile Firewall-UI policy; existing Firewall-UI rules were preserved")
 	}
 	exists, err := managedNFTExists(ctx, binary)
 	if err != nil {
@@ -550,7 +580,9 @@ func applyManagedNftables(ctx context.Context, binary string, rules []FirewallRu
 			if rule.Action == "deny" {
 				verdict = "drop"
 			}
-			if strings.HasSuffix(expression, " "+verdict) {
+			if expression == verdict {
+				expression = "counter " + verdict + " comment \"fwui-advanced:" + rule.ID + "\""
+			} else if strings.HasSuffix(expression, " "+verdict) {
 				expression = strings.TrimSuffix(expression, " "+verdict) + " counter " + verdict + " comment \"fwui-advanced:" + rule.ID + "\""
 			}
 			script.WriteString("  " + expression + "\n")
@@ -576,9 +608,29 @@ func applyManagedNftables(ctx context.Context, binary string, rules []FirewallRu
 	if err != nil {
 		return fmt.Errorf("apply nftables firewall: %w: %s", err, strings.TrimSpace(string(out)))
 	}
+	raw, err := runFirewallCommand(ctx, binary, "-j", "list", "table", "inet", managedNftTable)
+	if err != nil {
+		return fmt.Errorf("verify installed nftables policy: %w", err)
+	}
+	active, allows, err := nativeNFTState([]byte(raw))
+	if err != nil {
+		return fmt.Errorf("verify installed nftables policy: %w", err)
+	}
+	if !active {
+		return errors.New("installed nftables INPUT hook is missing or changed")
+	}
+	for _, rule := range rules {
+		spec := firewallRuleSpec(rule)
+		if spec != "" && !allows[spec] {
+			return fmt.Errorf("nftables did not install expected allow rule %s", spec)
+		}
+	}
+	if err := verifyNFTMarkedRules([]byte(raw), policy, managedNftTable, "fwui-advanced:"); err != nil {
+		return err
+	}
 	managedNFTDesiredHash = desiredHash
-	managedNFTObservedHash, _ = currentManagedNFTFingerprint(ctx, binary)
-	return nil
+	managedNFTObservedHash, err = normalizedNFTRulesetFingerprint([]byte(raw))
+	return err
 }
 
 func iptablesPortExpression(rule FirewallRule) string {

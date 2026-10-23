@@ -9,15 +9,26 @@ import (
 	"time"
 )
 
-func TestContainerForwardPolicyRepairsDriftAfterCachePeriod(t *testing.T) {
+func TestContainerForwardPolicyChecksDriftWithoutResettingCounters(t *testing.T) {
 	root := t.TempDir()
 	logPath := filepath.Join(root, "nft-writes")
 	t.Setenv("FW_AUDIT_NFT_LOG", logPath)
+	live := filepath.Join(root, "live.json")
+	t.Setenv("FW_AUDIT_NFT_LIVE", live)
+	desired := filepath.Join(root, "desired.json")
+	t.Setenv("FW_AUDIT_NFT_DESIRED", desired)
+	if err := os.WriteFile(desired, []byte(closedPortNFTFixture("udp", 1332)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(live, []byte(closedPortNFTFixture("udp", 1332)), 0600); err != nil {
+		t.Fatal(err)
+	}
 	ufw := "#!/bin/sh\ncase \"$*\" in\n status) echo 'Status: active';;\nesac\n"
 	nft := `#!/bin/sh
 case "$*" in
   'list tables') echo 'table inet firewall_ui_containers';;
-  '-f -') /bin/cat >/dev/null; echo apply >> "$FW_AUDIT_NFT_LOG";;
+  '-j list table inet firewall_ui_containers') /bin/cat "$FW_AUDIT_NFT_LIVE";;
+  '-f -') /bin/cat >/dev/null; /bin/cp "$FW_AUDIT_NFT_DESIRED" "$FW_AUDIT_NFT_LIVE"; echo apply >> "$FW_AUDIT_NFT_LOG";;
 esac
 `
 	for filename, script := range map[string]string{"ufw": ufw, "nft": nft} {
@@ -37,10 +48,12 @@ esac
 	if err := saveFirewallJSON(firewallAdvancedRulesKey, rules); err != nil {
 		t.Fatal(err)
 	}
-	oldHash, oldTime := containerPolicyHash, containerPolicyLastCheck
+	oldHash, oldTime, oldObserved := containerPolicyHash, containerPolicyLastCheck, containerPolicyObservedHash
 	containerPolicyHash = [32]byte{}
 	containerPolicyLastCheck = time.Time{}
-	t.Cleanup(func() { containerPolicyHash, containerPolicyLastCheck = oldHash, oldTime })
+	t.Cleanup(func() {
+		containerPolicyHash, containerPolicyLastCheck, containerPolicyObservedHash = oldHash, oldTime, oldObserved
+	})
 	svc := &FirewallService{}
 	check := func(want int) {
 		t.Helper()
@@ -58,5 +71,9 @@ esac
 	check(1)
 	check(1)
 	containerPolicyLastCheck = time.Now().Add(-2 * time.Minute)
-	check(2)
+	check(1) // An aged but unchanged ruleset must keep its counters.
+	if err := os.WriteFile(live, []byte(`{"nftables":[]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	check(2) // Drift must repair immediately, even inside the old cache period.
 }

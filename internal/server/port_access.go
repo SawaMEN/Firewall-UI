@@ -52,7 +52,7 @@ func (s *Server) setPortAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !*req.Closed {
-		if _, err := s.Firewall.AddManagedManualRuleSafe(ctx, req.Port, req.Protocol, "Открыт вручную", s.Port); err != nil {
+		if _, err := s.Firewall.EnsureManagedManualRuleSafe(ctx, req.Port, req.Protocol, "Открыт вручную", s.Port); err != nil {
 			err = s.recoverFirewallChange(before, err, r)
 			reply(w, 200, nil, err)
 			return

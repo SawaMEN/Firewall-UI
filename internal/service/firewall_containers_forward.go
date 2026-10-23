@@ -28,6 +28,7 @@ type ContainerProtectionStatus struct {
 }
 
 var containerPolicyHash [32]byte
+var containerPolicyObservedHash [32]byte
 var containerPolicyLastCheck time.Time
 
 func containerProtectionEnabled() (bool, error) {
@@ -41,6 +42,10 @@ func containerProtectionEnabled() (bool, error) {
 func (s *FirewallService) ContainerProtectionStatus(ctx context.Context) (ContainerProtectionStatus, error) {
 	firewallMu.Lock()
 	defer firewallMu.Unlock()
+	return s.containerProtectionStatusLocked(ctx)
+}
+
+func (s *FirewallService) containerProtectionStatusLocked(ctx context.Context) (ContainerProtectionStatus, error) {
 	enabled, err := containerProtectionEnabled()
 	if err != nil {
 		return ContainerProtectionStatus{}, err
@@ -57,8 +62,27 @@ func (s *FirewallService) ContainerProtectionStatus(ctx context.Context) (Contai
 		return status, nil
 	}
 	status.Supported = true
-	status.Active, err = containerTableExists(ctx, path)
-	return status, err
+	if !enabled {
+		return status, nil
+	}
+	exists, err := containerTableExists(ctx, path)
+	if err != nil || !exists {
+		return status, err
+	}
+	raw, err := runFirewallCommand(ctx, path, "-j", "list", "table", "inet", containerNFTTable)
+	if err != nil {
+		return status, err
+	}
+	if err := verifyNFTContainerHooks([]byte(raw)); err != nil {
+		status.Message = err.Error()
+		return status, nil
+	}
+	if err := verifyNFTSnapshotFingerprint([]byte(raw), containerPolicyObservedHash); err != nil {
+		status.Message = err.Error()
+		return status, nil
+	}
+	status.Active = true
+	return status, nil
 }
 
 // SetContainerProtection never changes a host policy unless the nftables
@@ -101,7 +125,7 @@ func containerTableExists(ctx context.Context, nft string) (bool, error) {
 
 // Always keep a dedicated, non-destructive FORWARD hook. No Docker chains,
 // host FORWARD policy or administrator-owned nftables objects are modified.
-func (s *FirewallService) syncContainerProtectionLocked(ctx context.Context) error {
+func (s *FirewallService) syncContainerProtectionLocked(ctx context.Context, safetyPorts ...int) error {
 	enabled, err := containerProtectionEnabled()
 	if err != nil {
 		return err
@@ -125,9 +149,13 @@ func (s *FirewallService) syncContainerProtectionLocked(ctx context.Context) err
 	}
 	backend, detectErr := detectManagedFirewallBackend(ctx)
 	if detectErr != nil {
-		return detectErr
-	}
-	if !isManagedNativeFirewall(backend.name) || !configured || managed {
+		// Disabling/rollback must be able to remove the owned auxiliary
+		// table even when a foreign hook now prevents native selection.
+		// Installation still requires a supported, inspectable backend.
+		if !configured || managed {
+			return detectErr
+		}
+	} else if !isManagedNativeFirewall(backend.name) || !configured || managed {
 		managed, err = backend.enabled(ctx)
 		if err != nil {
 			return err
@@ -147,9 +175,30 @@ func (s *FirewallService) syncContainerProtectionLocked(ctx context.Context) err
 	}
 	if !needForwardHook {
 		containerPolicyHash = [32]byte{}
+		containerPolicyObservedHash = [32]byte{}
 		if exists {
-			_, err = runFirewallCommand(ctx, nft, "delete", "table", "inet", containerNFTTable)
+			if _, err = runFirewallCommand(ctx, nft, "delete", "table", "inet", containerNFTTable); err != nil {
+				return err
+			}
+			stillExists, err := containerTableExists(ctx, nft)
+			if err != nil {
+				return err
+			}
+			if stillExists {
+				return errors.New("nftables auxiliary table remains after cleanup")
+			}
 		}
+		return nil
+	}
+	safetyPort := rememberedFirewallSafetyPort()
+	if len(safetyPorts) > 0 && safetyPorts[0] > 0 {
+		safetyPort = safetyPorts[0]
+	}
+	safety, err := s.managedDesiredRules(false, safetyPort)
+	if err != nil {
+		return err
+	}
+	if err := validateClosedPortSafetyAgainst(advanced, safety); err != nil {
 		return err
 	}
 	var ports []ContainerPort
@@ -166,17 +215,19 @@ func (s *FirewallService) syncContainerProtectionLocked(ctx context.Context) err
 			return err
 		}
 	}
-	script := buildContainerForwardRules(ports, manual, advanced)
+	script := buildContainerForwardRules(ports, manual, advanced, safety...)
 	fingerprint := sha256.Sum256([]byte(script))
-	if exists && fingerprint == containerPolicyHash && time.Since(containerPolicyLastCheck) < time.Minute {
-		return nil
+	if exists && fingerprint == containerPolicyHash && containerPolicyObservedHash != ([32]byte{}) {
+		raw, readErr := runFirewallCommand(ctx, nft, "-j", "list", "table", "inet", containerNFTTable)
+		if readErr == nil {
+			current, decodeErr := normalizedNFTRulesetFingerprint([]byte(raw))
+			if decodeErr == nil && current == containerPolicyObservedHash {
+				return nil
+			}
+		}
 	}
-	// The hash describes our last script, not the live kernel ruleset.
-	// Previously, once a matching hash was cached, an externally removed or
-	// modified FORWARD rule was never restored because this branch refreshed
-	// the timestamp without checking nftables. Reapply the owned table after
-	// the verification interval to repair drift, without touching other
-	// nftables tables. (Reapplying resets counters for this one table.)
+	// Reinstall only after a desired-policy change or observed kernel drift.
+	// Reading the live table detects drift without periodically zeroing counters.
 	var batch strings.Builder
 	if exists {
 		batch.WriteString("delete table inet " + containerNFTTable + "\n")
@@ -188,7 +239,33 @@ func (s *FirewallService) syncContainerProtectionLocked(ctx context.Context) err
 	if err != nil {
 		return fmt.Errorf("apply container FORWARD protection: %w: %s", err, strings.TrimSpace(string(output)))
 	}
-	containerPolicyHash = fingerprint
+	// A successful process exit is not evidence of an attached live hook.
+	// Never prime the no-op cache from an unverified or unreadable snapshot.
+	containerPolicyHash, containerPolicyObservedHash = [32]byte{}, [32]byte{}
+	raw, err := runFirewallCommand(ctx, nft, "-j", "list", "table", "inet", containerNFTTable)
+	if err != nil {
+		return fmt.Errorf("verify installed container policy: %w", err)
+	}
+	if err := verifyNFTContainerHooks([]byte(raw)); err != nil {
+		return err
+	}
+	for _, rule := range advanced {
+		if isClosePortRule(rule) {
+			if err := verifyNFTClosedPortJSON([]byte(raw), rule); err != nil {
+				return err
+			}
+		}
+	}
+	if len(ports) > 0 {
+		if err := verifyNFTMarkedRules([]byte(raw), script, containerNFTTable, "fwui-container-"); err != nil {
+			return err
+		}
+	}
+	observed, err := normalizedNFTRulesetFingerprint([]byte(raw))
+	if err != nil {
+		return err
+	}
+	containerPolicyHash, containerPolicyObservedHash = fingerprint, observed
 	containerPolicyLastCheck = time.Now()
 	return nil
 }
@@ -209,7 +286,7 @@ func containerMatch(port ContainerPort) string {
 	return match
 }
 
-func buildContainerForwardRules(ports []ContainerPort, manual []FirewallManualRule, advanced []FirewallAdvancedRule) string {
+func buildContainerForwardRules(ports []ContainerPort, manual []FirewallManualRule, advanced []FirewallAdvancedRule, safety ...FirewallRule) string {
 	// Stable ordering avoids resetting kernel counters on every socket scan.
 	unique := map[string]ContainerPort{}
 	for _, p := range ports {
@@ -259,6 +336,14 @@ func buildContainerForwardRules(ports []ContainerPort, manual []FirewallManualRu
 		}
 		b.WriteString("  meta l4proto " + rule.Protocol + " ct status dnat ct original proto-dst " +
 			strconv.Itoa(rule.PortStart) + " counter drop comment \"fwui-closed-port:" + rule.ID + "\"\n")
+	}
+	// A reverse proxy providing panel access can itself be published through
+	// Docker DNAT. INPUT safety ALLOWs cannot protect that FORWARD path.
+	for _, rule := range safety {
+		if !isFirewallSafetyRule(rule) || rule.Port < 1 || rule.Port > 65535 || (rule.Protocol != "tcp" && rule.Protocol != "udp") {
+			continue
+		}
+		b.WriteString("  meta l4proto " + rule.Protocol + " ct status dnat ct original proto-dst " + strconv.Itoa(rule.Port) + " counter accept comment \"fwui-container-safety:" + firewallRuleSpec(rule) + "\"\n")
 	}
 	b.WriteString("  ct state established,related accept\n")
 	for _, key := range keys {

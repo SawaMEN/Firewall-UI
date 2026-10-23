@@ -23,23 +23,14 @@ type FirewallTraffic struct {
 }
 
 func parseNFTTraffic(data []byte, table string) ([]TrafficCounter, error) {
-	var doc struct {
-		Nftables []map[string]json.RawMessage `json:"nftables"`
-	}
-	if err := json.Unmarshal(data, &doc); err != nil {
+	doc, err := decodeNFTPolicy(data)
+	if err != nil {
 		return nil, err
 	}
 	out := []TrafficCounter{}
 	for _, item := range doc.Nftables {
-		raw := item["rule"]
-		if len(raw) == 0 {
-			continue
-		}
-		var rule struct {
-			Comment string                       `json:"comment"`
-			Expr    []map[string]json.RawMessage `json:"expr"`
-		}
-		if json.Unmarshal(raw, &rule) != nil {
+		rule := item.Rule
+		if rule == nil {
 			continue
 		}
 		counter := TrafficCounter{Table: table, Rule: rule.Comment}
@@ -68,6 +59,8 @@ func parseNFTTraffic(data []byte, table string) ([]TrafficCounter, error) {
 }
 
 func (s *FirewallService) TrafficCounters(ctx context.Context) (FirewallTraffic, error) {
+	firewallMu.Lock()
+	defer firewallMu.Unlock()
 	result := FirewallTraffic{Counters: []TrafficCounter{}, Note: "Counters are kernel totals since the last rule installation; replacing nftables rules resets them. External firewall rules are not counted."}
 	nft, err := hostexec.LookPath("nft")
 	if err == nil {

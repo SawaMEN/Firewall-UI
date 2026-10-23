@@ -157,6 +157,23 @@ const { chromium } = require(path.join(process.env.PLAYWRIGHT_TOOLS, 'node_modul
   await page.setViewportSize({ width: 390, height: 844 });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'Rules mobile layout overflows');
   await page.screenshot({ path: path.join(output, 'paired-rules-mobile.png'), fullPage: true });
+  // A listener must remain visible if /proc PID lookup is unavailable.
+  const ownerlessSnapshot = { ports: ['tcp', 'udp'].map((protocol, index) => ({
+    socketId: `ownerless-${protocol}`, port: 19005 + index, protocol,
+    address: '0.0.0.0', family: 'IPv4', state: protocol === 'tcp' ? 'LISTEN' : 'UNCONNECTED',
+    listening: true, loopback: false, processes: [],
+  })), containers: [], updatedAt: new Date().toISOString() };
+  await page.route('**/api/ports?active=1', route => json(route, ownerlessSnapshot));
+  await page.route('**/api/ports/stream*', route => route.fulfill({ status: 200,
+    contentType: 'text/event-stream', body: `event: ports\ndata: ${JSON.stringify(ownerlessSnapshot)}\n\n` }));
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole('menuitem', { name: 'Порты и процессы' }).click();
+  await page.getByText('19005', { exact: true }).first().waitFor();
+  await page.getByText('19006', { exact: true }).first().waitFor();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('.mobile-process-list').getByText('19005', { exact: true }).waitFor();
+  await page.locator('.mobile-process-list').getByText('19006', { exact: true }).waitFor();
+  await page.screenshot({ path: path.join(output, 'ownerless-listeners-mobile.png'), fullPage: true });
   assert.deepEqual(errors, []);
   // Verify that a successful POST cannot reload the old server version.
   const updating = await browser.newContext({ storageState: await context.storageState() });

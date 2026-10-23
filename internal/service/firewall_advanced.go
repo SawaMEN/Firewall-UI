@@ -75,7 +75,7 @@ func (s *FirewallService) AdvancedRulesLive(ctx context.Context) ([]FirewallAdva
 	var nftErr error
 	var numbered, added string
 	var ufwErr error
-	if detectErr == nil && enabled && (backend.name == "ufw" || backend.name == "firewalld") {
+	if detectErr == nil && enabled && (backend.name == "ufw" || backend.name == "firewalld" || isManagedNativeFirewall(backend.name)) {
 		if nft, err := hostexec.LookPath("nft"); err != nil {
 			nftErr = fmt.Errorf("nftables unavailable: %w", err)
 		} else {
@@ -103,7 +103,7 @@ func (s *FirewallService) AdvancedRulesLive(ctx context.Context) ([]FirewallAdva
 			rule.EnforcementError = "Host firewall is disabled"
 			continue
 		}
-		if backend.name != "ufw" && backend.name != "firewalld" {
+		if backend.name != "ufw" && backend.name != "firewalld" && !isManagedNativeFirewall(backend.name) {
 			rule.EnforcementError = "Live closed-port verification is unavailable for " + backend.name
 			continue
 		}
@@ -340,7 +340,13 @@ func (s *FirewallService) applyAdvancedChangeLocked(ctx context.Context, rule Fi
 		return err
 	}
 	if backend.name == "nftables" || backend.name == "iptables" {
-		return s.syncManagedSafeLocked(ctx, backend, safetyPort)
+		if err := s.syncManagedSafeLocked(ctx, backend, safetyPort); err != nil {
+			return err
+		}
+		if add && isClosePortRule(rule) {
+			return verifyNFTPortClose(ctx, rule)
+		}
+		return nil
 	}
 	if add && isClosePortRule(rule) {
 		// The UFW command cannot reliably override pre-existing ALLOW

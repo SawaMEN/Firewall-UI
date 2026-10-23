@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.4.1
+
+**hotfix 1.4.1** — one consolidated commit and release after 1.4.0.
+Includes all fixes previously published as 1.4.1–1.4.4, including the latest
+manual TCP + UDP rule preservation. Superseded numbered releases are retired.
+
+- Preserve existing manual rules and their descriptions when reopening a port. Previously the port-access handler replaced custom or empty descriptions with “Открыт вручную”, splitting a paired TCP + UDP row after toggling one protocol.
+- Only create a default manual ALLOW when that protocol has no saved manual rule. Explicit manual-rule edits still update descriptions normally; closing a port keeps both saved manual entries.
+- Add regression tests for TCP/UDP/both reopen, empty/custom labels, settings reload, a missing peer protocol, explicit edits, and metadata preservation during real IPv4/IPv6 TCP/UDP DNAT close/reopen.
+- Verify the auxiliary FORWARD hook and all explicit INPUT/FORWARD closes after applying nftables rules; propagate readback errors and keep unverified snapshots out of the no-op cache.
+- Check marked advanced/container rule presence, order and terminal verdict after installation. Require an unchanged verified snapshot before presenting container protection as active or predicting nftables access.
+- Apply protected DNAT panel/SSH exceptions before advanced rules in access diagnostics, and pass the current request safety port to auxiliary policy generation.
+- Verify removal of owned nftables tables; reconcile lingering native rules when the saved switch is off after an interrupted disable.
+- Reject missing, null and malformed nftables ruleset arrays in traffic statistics; translate new diagnostics.
+- Extend kernel regressions with flushed-FORWARD status/diagnosis, protected DNAT prediction and interrupted-disable recovery. See `docs/audit-nftables-hotfix-1.4.1.md`.
+- Audit native nftables policy generation, live status, closes, rollback and container forwarding. See `docs/audit-nftables-hotfix-1.4.1.md` for confirmed defects, regression coverage and limits.
+- Verify active INPUT hook properties and exact kernel ALLOW entries; reject a successful command that did not install the expected native policy.
+- Keep frozen closed-port ALLOWs out of the live ruleset while preserving the service metadata needed to reopen them with auto-open disabled. Reconcile native policy even when automatic opening is off.
+- Require live INPUT/FORWARD enforcement on native close; repair repeated closes and orphaned drops whose saved flags are already absent.
+- Compare live container ruleset fingerprints instead of blindly caching or reinstalling every minute, preserving counters on unchanged policies and repairing drift. Inspect the actual FORWARD hook before showing broad container protection as active.
+- Preserve protected panel/reverse-proxy/SSH access through DNAT/FORWARD as well as INPUT; reject backup/runtime closes affecting these ports. Correct native backup enabled-state migration, validate nftables JSON envelopes and serialize traffic reads with mutations.
+- Base explicit-close diagnostics on verified kernel enforcement, including DNAT ports with broad container protection off; translate new diagnostic messages.
+- Require real-kernel isolated IPv4/IPv6 TCP/UDP INPUT and DNAT/FORWARD packet tests, advanced CIDR/interface/range/priority tests and expression syntax checks before building release binaries.
+- Fix native nftables port close/reopen and rollback failing with `existing nftables input hooks detected`: recognize the exact Firewall-UI-owned early INPUT hook in `firewall_ui_containers`, including recovery when the main table is missing. Continue rejecting foreign or changed input hooks.
+- Preserve the last working Firewall-UI policy if a real conflicting nftables hook appears; rejecting a change no longer deletes the installed protection.
+- Verify live closed-port enforcement for native nftables/iptables through the same actual INPUT and DNAT/FORWARD DROP checks used for system backends.
+- Keep listening TCP/UDP sockets visible in active lists and streams even when process/PID lookup is unavailable. Automatic opening, when enabled, uses the socket as evidence; loopback and explicitly closed ports remain excluded.
+- Add TCP/UDP close/repeat/reopen/recovery, foreign-hook preservation, ownerless-listener auto-sync, real socket monitoring, SSE and desktop/mobile browser regressions.
+
 ## 1.4.0
 
 A single consolidated release after **1.3.7**. All intervening implementation,

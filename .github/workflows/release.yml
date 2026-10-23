@@ -24,6 +24,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 2
       - name: Find verified builds for this commit
         id: builds
         env:
@@ -152,6 +153,13 @@ jobs:
           STABLE_VERSION="$(tr -d '[:space:]' < VERSION)"
           [[ "$STABLE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'VERSION must be MAJOR.MINOR.PATCH.' >&2; exit 1; }
           TAG="v$STABLE_VERSION"
+          if [[ "$STABLE_VERSION" == '1.4.1' && "$(git log -1 --format=%s)" == 'hotfix: 1.4.1' ]]; then
+            export BUILD_TIME="$(cat dist-dev/build-time.txt)"
+            python3 scripts/release-manifest.py stable "$STABLE_VERSION" "$TAG"
+            bash scripts/hotfix-1.4.1.sh publish
+            echo 'released=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "$TAG already published. Ordinary commits update dev only."
             exit 0
@@ -177,16 +185,30 @@ jobs:
           echo 'released=true' >> "$GITHUB_OUTPUT"
       - name: Verify published stable Docker image
         if: steps.stable.outputs.released == 'true'
-        run: |
-          source deploy/firewall-ui-docker
-          docker_download_image
-          test "$(docker run --rm --entrypoint /usr/local/bin/firewall-ui firewall-ui:stable -version)" = "$(tr -d '[:space:]' < VERSION)"
-      - name: Retire superseded intermediate releases after verified 1.4.0 publication
-        if: steps.stable.outputs.released == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [[ "$(tr -d '[:space:]' < VERSION)" == '1.4.1' && "$(git log -1 --format=%s)" == 'hotfix: 1.4.1' ]]; then
+            verify_dir="$(mktemp -d)"
+            gh release download v1.4.1 --pattern update.json --pattern firewall-ui-docker-linux-amd64.tar.gz --dir "$verify_dir"
+            cmp dist-stable/update.json "$verify_dir/update.json"
+            export FIREWALL_UI_DOCKER_IMAGE_ARCHIVE="$verify_dir/firewall-ui-docker-linux-amd64.tar.gz"
+            export FIREWALL_UI_DOCKER_IMAGE_SHA256="$(jq -r '.assets["docker-amd64"].sha256' "$verify_dir/update.json")"
+          fi
+          source deploy/firewall-ui-docker
+          docker_download_image
+          test "$(docker run --rm --entrypoint /usr/local/bin/firewall-ui firewall-ui:stable -version)" = "$(tr -d '[:space:]' < VERSION)"
+      - name: Retire superseded intermediate releases after verified consolidated publication
+        if: steps.stable.outputs.released == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_COMMIT: ${{ github.event.workflow_run.head_sha }}
+        run: |
           set -euo pipefail
+          if [[ "$(tr -d '[:space:]' < VERSION)" == '1.4.1' && "$(git log -1 --format=%s)" == 'hotfix: 1.4.1' ]]; then
+            bash scripts/hotfix-1.4.1.sh retire
+            exit 0
+          fi
           [[ "$(tr -d '[:space:]' < VERSION)" == '1.4.0' ]] || exit 0
           # The stable binaries and both Docker archives are already published
           # and verified above. Keep v1.3.7 as the previous stable release.

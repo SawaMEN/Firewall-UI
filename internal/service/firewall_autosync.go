@@ -110,8 +110,8 @@ func (s *FirewallService) StartAutoSync() {
 				// disabled" preference must not suppress synchronization when
 				// the administrator has actually enabled the host firewall.
 				if isManagedNativeFirewall(backend.name) && configured && !desiredEnabled {
-					if err := s.reconcileManagedPingStateLocked(false); err != nil {
-						log.Print("firewall ping reconcile failed:", err)
+					if err := s.reconcileDisabledNativeLocked(ctx, backend); err != nil {
+						log.Print("firewall disable reconcile failed:", err)
 					}
 					return
 				}
@@ -139,7 +139,7 @@ func (s *FirewallService) StartAutoSync() {
 					log.Print("UFW advanced rule reconcile failed: ", err)
 				}
 				auto, err := firewallAutoSync()
-				if err != nil || !auto {
+				if err != nil || (!auto && !isManagedNativeFirewall(backend.name)) {
 					return
 				}
 				if err := s.syncManagedSafeLocked(ctx, backend, rememberedFirewallSafetyPort()); err != nil {

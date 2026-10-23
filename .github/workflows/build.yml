@@ -62,14 +62,14 @@ jobs:
           restore-keys: |
             go-${{ runner.os }}-tests-${{ hashFiles('go.mod') }}-
       - name: Check shell scripts
-        run: bash -n install.sh deploy/firewall-ui deploy/firewall-ui-docker deploy/firewall-ui-switch scripts/build-release.sh && bash tests/installer.sh && bash tests/manager.sh && bash tests/access.sh && bash tests/uninstall.sh && bash tests/install-menu.sh && bash tests/connection.sh && bash tests/switch-install.sh && bash tests/shared-paths.sh && bash tests/docker-installer.sh && bash tests/docker-updates.sh && python3 tests/release-manifest.py
+        run: bash -n install.sh deploy/firewall-ui deploy/firewall-ui-docker deploy/firewall-ui-switch scripts/build-release.sh scripts/hotfix-1.4.1.sh && bash tests/installer.sh && bash tests/manager.sh && bash tests/access.sh && bash tests/uninstall.sh && bash tests/install-menu.sh && bash tests/connection.sh && bash tests/switch-install.sh && bash tests/shared-paths.sh && bash tests/docker-installer.sh && bash tests/docker-updates.sh && python3 tests/release-manifest.py && python3 tests/hotfix-release.py
       - name: Static analysis of shell scripts
         run: |
           if ! command -v shellcheck >/dev/null 2>&1; then
             sudo apt-get update -qq
             sudo apt-get install -y -qq shellcheck
           fi
-          shellcheck -S error install.sh deploy/firewall-ui deploy/firewall-ui-docker deploy/firewall-ui-switch scripts/build-release.sh tests/*.sh
+          shellcheck -S error install.sh deploy/firewall-ui deploy/firewall-ui-docker deploy/firewall-ui-switch scripts/build-release.sh scripts/hotfix-1.4.1.sh tests/*.sh
       - name: Check Go formatting
         run: |
           if [[ -n "$(gofmt -l ./cmd ./internal)" ]]; then
@@ -86,8 +86,24 @@ jobs:
       - name: Go static analysis
         if: github.event_name != 'pull_request'
         run: go vet ./...
+  nftables:
+    name: nftables kernel integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+      - name: Install kernel test tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq nftables iproute2 util-linux
+      - name: Compile isolated kernel tests
+        run: go test -c -o "$RUNNER_TEMP/nft-kernel-tests" ./internal/service
+      - name: Verify INPUT and DNAT/FORWARD with real IPv4 and IPv6 TCP/UDP packets
+        run: sudo unshare --net -- env FIREWALL_UI_NFT_KERNEL_TESTS=1 "$RUNNER_TEMP/nft-kernel-tests" -test.run '^TestNFTKernel' -test.v -test.timeout 120s
+
   binaries:
-    needs: [frontend, checks]
+    needs: [frontend, checks, nftables]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -119,7 +135,8 @@ jobs:
           DEV_VERSION="dev-${GITHUB_SHA::7}"
           scripts/build-release.sh "$ARCH" dev "$DEV_VERSION"
           STABLE_VERSION="$(tr -d '[:space:]' < VERSION)"
-          if [[ "$GITHUB_REF" == refs/heads/main && "$GITHUB_EVENT_NAME" != pull_request ]] && ! gh release view "v$STABLE_VERSION" >/dev/null 2>&1; then
+          if [[ "$GITHUB_REF" == refs/heads/main && "$GITHUB_EVENT_NAME" != pull_request ]] && \
+             { [[ "$STABLE_VERSION" == 1.4.1 && "$(git log -1 --format=%s)" == 'hotfix: 1.4.1' ]] || ! gh release view "v$STABLE_VERSION" >/dev/null 2>&1; }; then
             scripts/build-release.sh "$ARCH" stable "$STABLE_VERSION"
           fi
           printf '%s\n' "$BUILD_TIME" > dist-dev/build-time.txt
