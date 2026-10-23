@@ -491,7 +491,18 @@ func disableManagedBackend(ctx context.Context, backend firewallBackend) error {
 			return err
 		}
 		_, err = runFirewallCommand(ctx, backend.binary, "delete", "table", "inet", managedNftTable)
-		return err
+		if err != nil {
+			return err
+		}
+		stillExists, err := managedNFTExists(ctx, backend.binary)
+		if err != nil {
+			return err
+		}
+		if stillExists {
+			return errors.New("nftables managed table remains after disabling")
+		}
+		managedNFTDesiredHash, managedNFTObservedHash = [32]byte{}, [32]byte{}
+		return nil
 	case "iptables":
 		return removeManagedIPTables(ctx, backend.binary)
 	default:
@@ -613,6 +624,9 @@ func applyManagedNftables(ctx context.Context, binary string, rules []FirewallRu
 		if spec != "" && !allows[spec] {
 			return fmt.Errorf("nftables did not install expected allow rule %s", spec)
 		}
+	}
+	if err := verifyNFTMarkedRules([]byte(raw), policy, managedNftTable, "fwui-advanced:"); err != nil {
+		return err
 	}
 	managedNFTDesiredHash = desiredHash
 	managedNFTObservedHash, err = normalizedNFTRulesetFingerprint([]byte(raw))

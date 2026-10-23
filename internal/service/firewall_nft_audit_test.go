@@ -220,13 +220,14 @@ func TestNFTDisableCleansAuxiliaryDespiteForeignHook(t *testing.T) {
 	}
 	logPath := filepath.Join(root, "calls")
 	t.Setenv("NFT_AUDIT_DISABLE_LOG", logPath)
+	t.Setenv("NFT_AUDIT_DELETED", filepath.Join(root, "deleted"))
 	script := `#!/bin/sh
 echo "$*" >> "$NFT_AUDIT_DISABLE_LOG"
 case "$*" in
  'list table inet firewall_ui') exit 1;;
  '-j list ruleset') echo '{"nftables":[{"chain":{"family":"inet","table":"administrator","name":"input","hook":"input"}}]}';;
- 'list tables') echo 'table inet administrator'; echo 'table inet firewall_ui_containers';;
- 'delete table inet firewall_ui_containers') :;;
+ 'list tables') echo 'table inet administrator'; if ! test -f "$NFT_AUDIT_DELETED"; then echo 'table inet firewall_ui_containers'; fi;;
+ 'delete table inet firewall_ui_containers') echo deleted > "$NFT_AUDIT_DELETED";;
 esac
 `
 	if err := os.WriteFile(filepath.Join(root, "nft"), []byte(script), 0755); err != nil {

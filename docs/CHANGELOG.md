@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.3
+
+- Verify the auxiliary FORWARD hook and all explicit INPUT/FORWARD closes after applying nftables rules; propagate readback errors and keep unverified snapshots out of the no-op cache.
+- Check marked advanced/container rule presence, order and terminal verdict after installation. Require an unchanged verified snapshot before presenting container protection as active or predicting nftables access.
+- Apply protected DNAT panel/SSH exceptions before advanced rules in access diagnostics, and pass the current request safety port to auxiliary policy generation.
+- Verify removal of owned nftables tables; reconcile lingering native rules when the saved switch is off after an interrupted disable.
+- Reject missing, null and malformed nftables ruleset arrays in traffic statistics; translate new diagnostics.
+- Extend kernel regressions with flushed-FORWARD status/diagnosis, protected DNAT prediction and interrupted-disable recovery. See `docs/audit-nftables-1.4.3.md`.
+
 ## 1.4.2
 
 - Audit native nftables policy generation, live status, closes, rollback and container forwarding. See `docs/audit-nftables-1.4.2.md` for confirmed defects, regression coverage and limits.

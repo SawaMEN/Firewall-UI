@@ -6,6 +6,8 @@ import (
 	"net"
 	"sort"
 	"strings"
+
+	"github.com/SawaMEN/Firewall-UI/internal/hostexec"
 )
 
 type RuleConflict struct {
@@ -289,11 +291,67 @@ func (s *FirewallService) InspectAccess(ctx context.Context, safetyPort int, pro
 			return out, nil
 		}
 	}
+	if len(out.Containers) > 0 {
+		containerStatus, err := s.containerProtectionStatusLocked(ctx)
+		if err != nil {
+			return out, err
+		}
+		if !containerStatus.Active {
+			out.Reason = "Container FORWARD policy has no verified live enforcement"
+			if containerStatus.Message != "" {
+				out.Notes = append(out.Notes, containerStatus.Message)
+			}
+			return out, nil
+		}
+	} else if status.Backend == "nftables" && status.Enabled {
+		nft, err := hostexec.LookPath("nft")
+		if err != nil {
+			return out, err
+		}
+		raw, err := runFirewallCommand(ctx, nft, "-j", "list", "table", "inet", managedNftTable)
+		if err != nil {
+			return out, err
+		}
+		if err := verifyNFTSnapshotFingerprint([]byte(raw), managedNFTObservedHash); err != nil {
+			out.Reason = "Native nftables policy has no verified live enforcement"
+			out.Notes = append(out.Notes, err.Error())
+			return out, nil
+		}
+	}
 	if !status.Enabled {
 		out.Reason = "Firewall-UI management is disabled"
 		return out, nil
 	}
 	sortAdvancedRules(advanced)
+	if len(out.Containers) > 0 {
+		safety, err := s.managedDesiredRules(false, safetyPort)
+		if err != nil {
+			return out, err
+		}
+		for _, rule := range safety {
+			if isFirewallSafetyRule(rule) && rule.Port == probe.Port && rule.Protocol == probe.Protocol {
+				nft, err := hostexec.LookPath("nft")
+				if err != nil {
+					return out, err
+				}
+				raw, err := runFirewallCommand(ctx, nft, "-j", "list", "table", "inet", containerNFTTable)
+				if err != nil {
+					return out, err
+				}
+				if err := verifyNFTSnapshotFingerprint([]byte(raw), containerPolicyObservedHash); err != nil {
+					out.Reason = "Container FORWARD policy has no verified live enforcement"
+					return out, nil
+				}
+				if !nftForwardSafetyAllow([]byte(raw), rule) {
+					continue
+				}
+				out.Rule = firewallRuleSpec(rule)
+				out.Verdict = "predicted-allow"
+				out.Reason = "Protected panel or SSH FORWARD rule precedes advanced rules"
+				return out, nil
+			}
+		}
+	}
 	if len(out.Containers) == 0 && (status.Backend == "nftables" || status.Backend == "iptables") {
 		// Native backends evaluate protected panel/SSH access before advanced rules.
 		for _, rule := range status.Rules {
