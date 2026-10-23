@@ -68,6 +68,8 @@ func parseNFTTraffic(data []byte, table string) ([]TrafficCounter, error) {
 }
 
 func (s *FirewallService) TrafficCounters(ctx context.Context) (FirewallTraffic, error) {
+	firewallMu.Lock()
+	defer firewallMu.Unlock()
 	result := FirewallTraffic{Counters: []TrafficCounter{}, Note: "Counters are kernel totals since the last rule installation; replacing nftables rules resets them. External firewall rules are not counted."}
 	nft, err := hostexec.LookPath("nft")
 	if err == nil {

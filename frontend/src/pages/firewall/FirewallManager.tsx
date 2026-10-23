@@ -23,7 +23,7 @@ import { usePageVisibility } from '@/hooks/usePageVisibility';
 import { firewallOverviewRules, formatProtocols, groupFirewallRules, isManagedPortClose } from './portGroups';
 import { ProtocolRulesTable } from './ProtocolRulesTable';
 import FirewallDiagnostics from './FirewallDiagnostics';
-import { accessStateLabel, firewallActionLabel, firewallSourceLabel } from './uiLabels';
+import { accessStateLabel, diagnosticText, firewallActionLabel, firewallSourceLabel } from './uiLabels';
 import type { ColumnsType } from 'antd/es/table';
 
 type FirewallRule = {
@@ -421,7 +421,7 @@ export function FirewallManager() {
         type="warning"
         showIcon
         title={
-          status.canInstallUfw ? text.noFirewall : status.message || text.failed
+          status.canInstallUfw ? text.noFirewall : diagnosticText(status.message, ru) || text.failed
         }
         description={
           status.canInstallUfw ? (
@@ -648,7 +648,7 @@ export function FirewallManager() {
             type="warning"
             showIcon
             style={{ marginTop: 12 }}
-            title={status.message}
+            title={diagnosticText(status.message, ru)}
           />
         )}
         <div className="firewall-toggle-grid">

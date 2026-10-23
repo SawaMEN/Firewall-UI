@@ -261,6 +261,24 @@ func (s *FirewallService) InspectAccess(ctx context.Context, safetyPort int, pro
 			out.Containers = append(out.Containers, port)
 		}
 	}
+	advanced, err := loadAdvancedFirewallRules()
+	if err != nil {
+		return out, err
+	}
+	for _, rule := range advanced {
+		if !isClosePortRule(rule) || rule.PortStart != probe.Port || rule.Protocol != probe.Protocol {
+			continue
+		}
+		out.Rule = rule.ID
+		if err := verifyNFTPortClose(ctx, rule); err != nil {
+			out.Reason = "Saved close has no verified live kernel enforcement"
+			out.Notes = append(out.Notes, err.Error())
+		} else {
+			out.Verdict = "predicted-deny"
+			out.Reason = "Verified explicit INPUT and DNAT/FORWARD port close"
+		}
+		return out, nil
+	}
 	if len(out.Containers) > 0 {
 		protected, _ := containerProtectionEnabled()
 		if protected {
@@ -274,10 +292,6 @@ func (s *FirewallService) InspectAccess(ctx context.Context, safetyPort int, pro
 	if !status.Enabled {
 		out.Reason = "Firewall-UI management is disabled"
 		return out, nil
-	}
-	advanced, err := loadAdvancedFirewallRules()
-	if err != nil {
-		return out, err
 	}
 	sortAdvancedRules(advanced)
 	if len(out.Containers) == 0 && (status.Backend == "nftables" || status.Backend == "iptables") {

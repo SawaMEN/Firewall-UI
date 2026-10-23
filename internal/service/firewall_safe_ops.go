@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/SawaMEN/Firewall-UI/internal/hostexec"
 )
 
 func normalizeFirewallLabelUnicode(label string) string {
@@ -78,6 +80,22 @@ func (s *FirewallService) syncManagedSafeLocked(ctx context.Context, backend fir
 		desired = appendFrozenInboundRules(desired, managed)
 	}
 
+	// The ownership ledger also carries the frozen service set while auto-open
+	// is off. Keep closed services there so an explicit reopen can restore
+	// their previous ALLOW, but never emit that ALLOW into the live policy.
+	ledger := append([]FirewallRule(nil), desired...)
+	closed, err := closedPortSpecs()
+	if err != nil {
+		return err
+	}
+	filtered := desired[:0]
+	for _, rule := range desired {
+		if !closed[firewallRuleSpec(rule)] || isFirewallSafetyRule(rule) {
+			filtered = append(filtered, rule)
+		}
+	}
+	desired = filtered
+
 	switch backend.name {
 	case "nftables":
 		if err := applyManagedNftables(ctx, backend.binary, desired); err != nil {
@@ -92,7 +110,7 @@ func (s *FirewallService) syncManagedSafeLocked(ctx context.Context, backend fir
 			return err
 		}
 	}
-	return saveManagedOwnedRules(desired)
+	return saveManagedOwnedRules(ledger)
 }
 
 func decorateFrozenNativeStatus(status FirewallManagedStatus, managed []FirewallRule) FirewallManagedStatus {
@@ -129,6 +147,38 @@ func (s *FirewallService) managedStatusSafeLocked(ctx context.Context, safetyPor
 		return FirewallManagedStatus{}, err
 	}
 	status = decorateFrozenNativeStatus(status, managed)
+	closed, err := closedPortSpecs()
+	if err != nil {
+		return FirewallManagedStatus{}, err
+	}
+	visible := status.Rules[:0]
+	for _, rule := range status.Rules {
+		if !closed[firewallRuleSpec(rule)] || isFirewallSafetyRule(rule) {
+			visible = append(visible, rule)
+		}
+	}
+	status.Rules = visible
+	if status.Backend == "nftables" && status.Enabled {
+		binary, err := hostexec.LookPath("nft")
+		if err != nil {
+			return FirewallManagedStatus{}, err
+		}
+		raw, err := runFirewallCommand(ctx, binary, "-j", "list", "table", "inet", managedNftTable)
+		if err != nil {
+			return FirewallManagedStatus{}, err
+		}
+		active, allows, err := nativeNFTState([]byte(raw))
+		if err != nil {
+			return FirewallManagedStatus{}, fmt.Errorf("inspect native nftables policy: %w", err)
+		}
+		status.Enabled, status.SystemActive = active, active
+		if !active {
+			status.Message = "Owned nftables INPUT hook is missing or changed"
+		}
+		for i := range status.Rules {
+			status.Rules[i].Exists = active && allows[firewallRuleSpec(status.Rules[i])]
+		}
+	}
 	// Enabled always mirrors the live host firewall, not the saved UI preference.
 	// UFW/firewalld can be toggled outside Firewall-UI, so reflect that state.
 	return status, nil

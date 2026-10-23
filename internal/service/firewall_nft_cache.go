@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 )
 
 var managedNFTDesiredHash [32]byte
@@ -16,6 +17,13 @@ func normalizedNFTRulesetFingerprint(raw []byte) ([32]byte, error) {
 	var document any
 	if err := json.Unmarshal(raw, &document); err != nil {
 		return [32]byte{}, err
+	}
+	object, ok := document.(map[string]any)
+	if !ok {
+		return [32]byte{}, fmt.Errorf("invalid nftables JSON document")
+	}
+	if _, ok := object["nftables"].([]any); !ok {
+		return [32]byte{}, fmt.Errorf("nftables JSON is missing its ruleset array")
 	}
 	var scrub func(any)
 	scrub = func(value any) {

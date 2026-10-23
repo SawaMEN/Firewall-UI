@@ -230,6 +230,9 @@ func nftablesSafeForManagedFirewall(ctx context.Context, binary string) (bool, e
 	if err := json.Unmarshal([]byte(out), &doc); err != nil {
 		return false, fmt.Errorf("decode nftables ruleset: %w", err)
 	}
+	if doc.Nftables == nil {
+		return false, errors.New("nftables JSON is missing its ruleset array")
+	}
 	for _, item := range doc.Nftables {
 		raw, ok := item["chain"]
 		if !ok {
@@ -244,7 +247,10 @@ func nftablesSafeForManagedFirewall(ctx context.Context, binary string) (bool, e
 			Priority int    `json:"prio"`
 			Policy   string `json:"policy"`
 		}
-		if json.Unmarshal(raw, &chain) != nil || chain.Hook != "input" {
+		if err := json.Unmarshal(raw, &chain); err != nil {
+			return false, fmt.Errorf("decode nftables chain: %w", err)
+		}
+		if chain.Hook != "input" {
 			continue
 		}
 		if chain.Family == "inet" && chain.Table == managedNftTable && chain.Name == managedNftChain {
@@ -563,7 +569,9 @@ func applyManagedNftables(ctx context.Context, binary string, rules []FirewallRu
 			if rule.Action == "deny" {
 				verdict = "drop"
 			}
-			if strings.HasSuffix(expression, " "+verdict) {
+			if expression == verdict {
+				expression = "counter " + verdict + " comment \"fwui-advanced:" + rule.ID + "\""
+			} else if strings.HasSuffix(expression, " "+verdict) {
 				expression = strings.TrimSuffix(expression, " "+verdict) + " counter " + verdict + " comment \"fwui-advanced:" + rule.ID + "\""
 			}
 			script.WriteString("  " + expression + "\n")
@@ -589,9 +597,26 @@ func applyManagedNftables(ctx context.Context, binary string, rules []FirewallRu
 	if err != nil {
 		return fmt.Errorf("apply nftables firewall: %w: %s", err, strings.TrimSpace(string(out)))
 	}
+	raw, err := runFirewallCommand(ctx, binary, "-j", "list", "table", "inet", managedNftTable)
+	if err != nil {
+		return fmt.Errorf("verify installed nftables policy: %w", err)
+	}
+	active, allows, err := nativeNFTState([]byte(raw))
+	if err != nil {
+		return fmt.Errorf("verify installed nftables policy: %w", err)
+	}
+	if !active {
+		return errors.New("installed nftables INPUT hook is missing or changed")
+	}
+	for _, rule := range rules {
+		spec := firewallRuleSpec(rule)
+		if spec != "" && !allows[spec] {
+			return fmt.Errorf("nftables did not install expected allow rule %s", spec)
+		}
+	}
 	managedNFTDesiredHash = desiredHash
-	managedNFTObservedHash, _ = currentManagedNFTFingerprint(ctx, binary)
-	return nil
+	managedNFTObservedHash, err = normalizedNFTRulesetFingerprint([]byte(raw))
+	return err
 }
 
 func iptablesPortExpression(rule FirewallRule) string {
