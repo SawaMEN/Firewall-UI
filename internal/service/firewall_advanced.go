@@ -340,7 +340,13 @@ func (s *FirewallService) applyAdvancedChangeLocked(ctx context.Context, rule Fi
 		return err
 	}
 	if backend.name == "nftables" || backend.name == "iptables" {
-		return s.syncManagedSafeLocked(ctx, backend, safetyPort)
+		if err := s.syncManagedSafeLocked(ctx, backend, safetyPort); err != nil {
+			return err
+		}
+		if add && isClosePortRule(rule) {
+			return verifyNFTPortClose(ctx, rule)
+		}
+		return nil
 	}
 	if add && isClosePortRule(rule) {
 		// The UFW command cannot reliably override pre-existing ALLOW

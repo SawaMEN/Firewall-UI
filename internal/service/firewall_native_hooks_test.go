@@ -66,6 +66,13 @@ func TestNativeNFTCloseReopenAndRecovery(t *testing.T) {
 			t.Setenv("PATH", root)
 			t.Setenv("FWUI_HOOK_ROOT", root)
 			Configure(filepath.Join(root, "state.json"), 8088, 0)
+			if err := (&SettingService{}).setBool(firewallAutoSyncKey, false); err != nil {
+				t.Fatal(err)
+			}
+			mainJSON := strings.TrimSuffix(nativeNFTFixture("8088/tcp"), "]}") + "," + strings.TrimPrefix(nativeNFTFixture("22/tcp"), `{"nftables":[`)
+			if err := os.WriteFile(filepath.Join(root, "main.json"), []byte(mainJSON), 0600); err != nil {
+				t.Fatal(err)
+			}
 			pingPath := filepath.Join(root, "ping")
 			if err := os.WriteFile(pingPath, []byte("0\n"), 0600); err != nil {
 				t.Fatal(err)
@@ -89,7 +96,7 @@ case "$*" in
  '-j list ruleset')
   if test -f "$FWUI_HOOK_ROOT/aux"; then /bin/cat "$FWUI_HOOK_ROOT/closed.json"; else echo '{"nftables":[]}'; fi;;
  '-j list table inet firewall_ui_containers') test -f "$FWUI_HOOK_ROOT/aux" && /bin/cat "$FWUI_HOOK_ROOT/closed.json";;
- '-j list table inet firewall_ui') echo '{"nftables":[]}';;
+ '-j list table inet firewall_ui') /bin/cat "$FWUI_HOOK_ROOT/main.json";;
  '-f -')
   /bin/cat > "$FWUI_HOOK_ROOT/batch"
   if /bin/grep -q 'table inet firewall_ui {' "$FWUI_HOOK_ROOT/batch"; then
@@ -129,6 +136,17 @@ esac
 			}
 			if _, err := svc.SetPortClosedSafe(ctx, 1332, proto, false, 8088); err != nil {
 				t.Fatalf("cannot reopen after recovery: %v", err)
+			}
+			// Kernel drops may outlive the saved close after an interrupted
+			// restore. Opening again must clean the stale owned policy.
+			if err := os.WriteFile(filepath.Join(root, "aux"), []byte("orphaned close"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := svc.SetPortClosedSafe(ctx, 1332, proto, false, 8088); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(filepath.Join(root, "aux")); !os.IsNotExist(err) {
+				t.Fatalf("orphaned drop survived reopen: %v", err)
 			}
 		})
 	}

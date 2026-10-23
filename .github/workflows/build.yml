@@ -86,8 +86,24 @@ jobs:
       - name: Go static analysis
         if: github.event_name != 'pull_request'
         run: go vet ./...
+  nftables:
+    name: nftables kernel integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+      - name: Install kernel test tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq nftables iproute2 util-linux
+      - name: Compile isolated kernel tests
+        run: go test -c -o "$RUNNER_TEMP/nft-kernel-tests" ./internal/service
+      - name: Verify INPUT and DNAT/FORWARD with real IPv4 and IPv6 TCP/UDP packets
+        run: sudo unshare --net -- env FIREWALL_UI_NFT_KERNEL_TESTS=1 "$RUNNER_TEMP/nft-kernel-tests" -test.run '^TestNFTKernel' -test.v -test.timeout 120s
+
   binaries:
-    needs: [frontend, checks]
+    needs: [frontend, checks, nftables]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

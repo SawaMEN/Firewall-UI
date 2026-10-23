@@ -139,7 +139,7 @@ func (s *FirewallService) StartAutoSync() {
 					log.Print("UFW advanced rule reconcile failed: ", err)
 				}
 				auto, err := firewallAutoSync()
-				if err != nil || !auto {
+				if err != nil || (!auto && !isManagedNativeFirewall(backend.name)) {
 					return
 				}
 				if err := s.syncManagedSafeLocked(ctx, backend, rememberedFirewallSafetyPort()); err != nil {

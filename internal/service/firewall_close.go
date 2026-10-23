@@ -67,6 +67,11 @@ func (s *FirewallService) SetPortClosedSafe(ctx context.Context, port int, proto
 				return nil, fmt.Errorf("%w: reserved port rule ID is already used", ErrInvalidFirewallChange)
 			}
 			if closed {
+				if isManagedNativeFirewall(backend.name) {
+					if err := s.syncManagedSafeLocked(ctx, backend, safetyPort); err != nil {
+						return nil, err
+					}
+				}
 				// A saved close is not proof that the live rule still exists.
 				// Repeated close requests must repair a missing/stale UFW rule
 				// and install the DNAT hook after an upgrade or restart.
@@ -100,7 +105,11 @@ func (s *FirewallService) SetPortClosedSafe(ctx context.Context, port int, proto
 		}
 	}
 	if !closed && !found {
-		return rules, nil
+		// Repair stale owned drops even if their saved flag was already removed.
+		if isManagedNativeFirewall(backend.name) {
+			return rules, s.syncManagedSafeLocked(ctx, backend, safetyPort)
+		}
+		return rules, s.syncContainerProtectionLocked(ctx)
 	}
 	next := removeAdvancedByID(rules, id)
 	if closed {
@@ -120,4 +129,38 @@ func (s *FirewallService) SetPortClosedSafe(ctx context.Context, port int, proto
 		return nil, errors.Join(err, restoreErr)
 	}
 	return next, nil
+}
+
+// Imported backups may have been made with different panel or SSH ports.
+// Validate their explicit closes before any state or host firewall mutation.
+func (s *FirewallService) validateClosedPortSafety(rules []FirewallAdvancedRule, safetyPort int) error {
+	hasClose := false
+	for _, rule := range rules {
+		if isClosePortRule(rule) {
+			hasClose = true
+			break
+		}
+	}
+	if !hasClose {
+		return nil
+	}
+	safety, err := s.managedDesiredRules(false, safetyPort)
+	if err != nil {
+		return err
+	}
+	return validateClosedPortSafetyAgainst(rules, safety)
+}
+
+func validateClosedPortSafetyAgainst(rules []FirewallAdvancedRule, safety []FirewallRule) error {
+	for _, rule := range rules {
+		if !isClosePortRule(rule) {
+			continue
+		}
+		for _, protected := range safety {
+			if isFirewallSafetyRule(protected) && protected.Port == rule.PortStart && protected.Protocol == rule.Protocol {
+				return fmt.Errorf("%w: a protected panel or SSH port cannot be closed", ErrInvalidFirewallChange)
+			}
+		}
+	}
+	return nil
 }

@@ -44,7 +44,7 @@ func exportFirewallBackupLocked() (FirewallBackup, error) {
 	probe, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if backend, detectErr := detectManagedFirewallBackend(probe); detectErr == nil &&
-		(backend.name == "ufw" || backend.name == "firewalld") {
+		(backend.name == "ufw" || backend.name == "firewalld" || !configured) {
 		enabled, err = backend.enabled(probe)
 		if err != nil {
 			return FirewallBackup{}, fmt.Errorf("read live %s state for backup: %w", backend.name, err)
@@ -142,6 +142,9 @@ func (s *FirewallService) RestoreBackup(ctx context.Context, backup FirewallBack
 	backup, err = validatedFirewallBackup(backup)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidFirewallChange, err)
+	}
+	if err := s.validateClosedPortSafety(backup.AdvancedRules, safetyPort); err != nil {
+		return err
 	}
 	currentAdvanced, err := loadAdvancedFirewallRules()
 	if err != nil {

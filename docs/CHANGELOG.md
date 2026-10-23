@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.2
+
+- Audit native nftables policy generation, live status, closes, rollback and container forwarding. See `docs/audit-nftables-1.4.2.md` for confirmed defects, regression coverage and limits.
+- Verify active INPUT hook properties and exact kernel ALLOW entries; reject a successful command that did not install the expected native policy.
+- Keep frozen closed-port ALLOWs out of the live ruleset while preserving the service metadata needed to reopen them with auto-open disabled. Reconcile native policy even when automatic opening is off.
+- Require live INPUT/FORWARD enforcement on native close; repair repeated closes and orphaned drops whose saved flags are already absent.
+- Compare live container ruleset fingerprints instead of blindly caching or reinstalling every minute, preserving counters on unchanged policies and repairing drift. Inspect the actual FORWARD hook before showing broad container protection as active.
+- Preserve protected panel/reverse-proxy/SSH access through DNAT/FORWARD as well as INPUT; reject backup/runtime closes affecting these ports. Correct native backup enabled-state migration, validate nftables JSON envelopes and serialize traffic reads with mutations.
+- Base explicit-close diagnostics on verified kernel enforcement, including DNAT ports with broad container protection off; translate new diagnostic messages.
+- Require real-kernel isolated IPv4/IPv6 TCP/UDP INPUT and DNAT/FORWARD packet tests, advanced CIDR/interface/range/priority tests and expression syntax checks before building release binaries.
+
 ## 1.4.1
 
 - Fix native nftables port close/reopen and rollback failing with `existing nftables input hooks detected`: recognize the exact Firewall-UI-owned early INPUT hook in `firewall_ui_containers`, including recovery when the main table is missing. Continue rejecting foreign or changed input hooks.

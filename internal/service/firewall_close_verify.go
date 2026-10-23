@@ -45,14 +45,12 @@ type closeNFTRule struct {
 }
 
 func verifyNFTClosedPortJSON(raw []byte, rule FirewallAdvancedRule) error {
-	var doc struct {
-		Nftables []struct {
-			Chain *closeNFTChain `json:"chain"`
-			Rule  *closeNFTRule  `json:"rule"`
-		} `json:"nftables"`
-	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
+	doc, err := decodeNFTPolicy(raw)
+	if err != nil {
 		return fmt.Errorf("decode kernel closed-port rules: %w", err)
+	}
+	if nftTableInactive(doc, containerNFTTable) {
+		return errors.New("nftables closed-port table is dormant or has unsupported flags; active hooks cannot be verified")
 	}
 	for _, hook := range []string{"input", "forward"} {
 		attached, blocked, bypass := false, false, false

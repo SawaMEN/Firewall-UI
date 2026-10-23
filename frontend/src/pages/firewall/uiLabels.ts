@@ -81,6 +81,14 @@ export function diagnosisVerdictLabel(verdict: string, ru: boolean): string {
 
 /** Known human-readable messages emitted by the service, preserved in English for API clients. */
 const russianDiagnosticMessages: Record<string, string> = {
+  'Saved close has no verified live kernel enforcement':
+    'Запрет сохранён, но его применение в ядре не подтверждено.',
+  'Verified explicit INPUT and DNAT/FORWARD port close':
+    'Закрытие порта подтверждено правилами INPUT и DNAT/FORWARD.',
+  'Owned nftables INPUT hook is missing or changed':
+    'Входящая цепочка nftables панели отсутствует или изменена.',
+  'Container FORWARD hook is missing or changed':
+    'Цепочка FORWARD для защиты контейнеров отсутствует или изменена.',
   'UFW insertion order, not the displayed numeric priority, determines effective precedence.':
     'В UFW порядок применения определяется порядком добавления правил, а не отображаемым числовым приоритетом.',
   'Effective results depend on active zone bindings and existing administrator rules.':
