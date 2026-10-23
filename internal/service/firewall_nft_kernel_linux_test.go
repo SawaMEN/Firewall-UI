@@ -436,6 +436,25 @@ func TestNFTKernelDNATForward(t *testing.T) {
 		t.Fatalf("DNAT: %v %s", err, out)
 	}
 	manual := []FirewallManualRule{{Port: 19332, Protocol: "tcp"}, {Port: 19332, Protocol: "udp"}}
+	manualLabel := "Мой TCP + UDP сервис"
+	if err := saveFirewallManualLabels(map[string]string{"19332/tcp": manualLabel, "19332/udp": manualLabel}); err != nil {
+		t.Fatal(err)
+	}
+	assertManualPair := func() {
+		t.Helper()
+		rules, err := loadManualFirewallRules()
+		if err != nil {
+			t.Fatal(err)
+		}
+		labels, err := loadFirewallManualLabels()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rules) != 2 || labels["19332/tcp"] != manualLabel || labels["19332/udp"] != manualLabel {
+			t.Fatalf("close/reopen changed manual TCP+UDP metadata: %+v %+v", rules, labels)
+		}
+	}
+
 	if err := saveFirewallJSON(firewallManualRulesKey, manual); err != nil {
 		t.Fatal(err)
 	}
@@ -464,9 +483,14 @@ func TestNFTKernelDNATForward(t *testing.T) {
 			t.Fatal(err)
 		}
 		client.probe(t, network, target, false)
+		assertManualPair()
 		if _, err := svc.SetPortClosedSafe(ctx, 19332, network[:3], false, 18088); err != nil {
 			t.Fatal(err)
 		}
+		if _, err := svc.EnsureManagedManualRuleSafe(ctx, 19332, network[:3], "Открыт вручную", 18088); err != nil {
+			t.Fatal(err)
+		}
+		assertManualPair()
 		client.probe(t, network, target, true)
 	}
 	// Freeze automatic service ALLOWs, close them and reopen without losing

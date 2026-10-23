@@ -349,14 +349,20 @@ func (s *FirewallService) SyncManagedSafe(ctx context.Context, safetyPort int) (
 }
 
 func (s *FirewallService) AddManagedManualRuleSafe(ctx context.Context, port int, protocol, label string, safetyPort int) (FirewallManagedStatus, error) {
-	return s.changeManagedManualRuleSafe(ctx, port, protocol, label, safetyPort, true)
+	return s.changeManagedManualRuleSafe(ctx, port, protocol, label, safetyPort, true, false)
 }
 
 func (s *FirewallService) DeleteManagedManualRuleSafe(ctx context.Context, port int, protocol string, safetyPort int) (FirewallManagedStatus, error) {
-	return s.changeManagedManualRuleSafe(ctx, port, protocol, "", safetyPort, false)
+	return s.changeManagedManualRuleSafe(ctx, port, protocol, "", safetyPort, false, false)
 }
 
-func (s *FirewallService) changeManagedManualRuleSafe(ctx context.Context, port int, protocol, label string, safetyPort int, add bool) (FirewallManagedStatus, error) {
+// EnsureManagedManualRuleSafe records an explicit open without editing an
+// existing manual rule. Metadata editing belongs to AddManagedManualRuleSafe.
+func (s *FirewallService) EnsureManagedManualRuleSafe(ctx context.Context, port int, protocol, label string, safetyPort int) (FirewallManagedStatus, error) {
+	return s.changeManagedManualRuleSafe(ctx, port, protocol, label, safetyPort, true, true)
+}
+
+func (s *FirewallService) changeManagedManualRuleSafe(ctx context.Context, port int, protocol, label string, safetyPort int, add, preserveExisting bool) (FirewallManagedStatus, error) {
 	firewallMu.Lock()
 	defer firewallMu.Unlock()
 	if port < 1 || port > 65535 {
@@ -383,6 +389,9 @@ func (s *FirewallService) changeManagedManualRuleSafe(ctx context.Context, port 
 	for _, proto := range protocols {
 		key := firewallRuleKey(port, proto)
 		if add {
+			if _, exists := set[key]; exists && preserveExisting {
+				continue
+			}
 			set[key] = FirewallManualRule{Port: port, Protocol: proto}
 			if label != "" {
 				labels[key] = label

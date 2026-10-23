@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.4
+
+- Preserve existing manual rules and their descriptions when reopening a port. Previously the port-access handler replaced custom or empty descriptions with “Открыт вручную”, splitting a paired TCP + UDP row after toggling one protocol.
+- Only create a default manual ALLOW when that protocol has no saved manual rule. Explicit manual-rule edits still update descriptions normally; closing a port keeps both saved manual entries.
+- Add regression tests for TCP/UDP/both reopen, empty/custom labels, settings reload, a missing peer protocol, explicit edits, and metadata preservation during real IPv4/IPv6 TCP/UDP DNAT close/reopen.
+
 ## 1.4.3
 
 - Verify the auxiliary FORWARD hook and all explicit INPUT/FORWARD closes after applying nftables rules; propagate readback errors and keep unverified snapshots out of the no-op cache.
