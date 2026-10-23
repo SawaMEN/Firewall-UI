@@ -236,15 +236,26 @@ func nftablesSafeForManagedFirewall(ctx context.Context, binary string) (bool, e
 			continue
 		}
 		var chain struct {
-			Family string `json:"family"`
-			Table  string `json:"table"`
-			Name   string `json:"name"`
-			Hook   string `json:"hook"`
+			Family   string `json:"family"`
+			Table    string `json:"table"`
+			Name     string `json:"name"`
+			Hook     string `json:"hook"`
+			Type     string `json:"type"`
+			Priority int    `json:"prio"`
+			Policy   string `json:"policy"`
 		}
 		if json.Unmarshal(raw, &chain) != nil || chain.Hook != "input" {
 			continue
 		}
 		if chain.Family == "inet" && chain.Table == managedNftTable && chain.Name == managedNftChain {
+			continue
+		}
+		// Explicit port closes install our separate early INPUT drop hook.
+		// It must coexist with the main policy, including during restore
+		// when the main table is temporarily absent. Do not exempt other
+		// chains or a changed hook merely because the table name matches.
+		if chain.Family == "inet" && chain.Table == containerNFTTable && chain.Name == "input" &&
+			chain.Type == "filter" && chain.Priority == -50 && chain.Policy == "accept" {
 			continue
 		}
 		return false, nil
@@ -506,8 +517,10 @@ func applyManagedNftables(ctx context.Context, binary string, rules []FirewallRu
 		return err
 	}
 	if !safe {
-		cleanupErr := disableManagedBackend(ctx, firewallBackend{name: "nftables", binary: binary})
-		return errors.Join(errors.New("another nftables input hook appeared; cannot reconcile Firewall-UI policy"), cleanupErr)
+		// Refusing a new policy must preserve the last working firewall.
+		// Removing it here opens managed ports and can prevent rollback
+		// from detecting the owned backend while the other hook remains.
+		return errors.New("another nftables input hook appeared; cannot reconcile Firewall-UI policy; existing Firewall-UI rules were preserved")
 	}
 	exists, err := managedNFTExists(ctx, binary)
 	if err != nil {

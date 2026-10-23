@@ -42,6 +42,7 @@ const russianRuleLabels: Record<string, string> = {
   'Current panel connection': 'Текущее подключение к панели',
   'Manual rule': 'Ручное правило',
   'Host firewall': 'Системный файрволл',
+  'Listening port': 'Слушающий порт',
 };
 
 export function firewallSourceLabel(source: string, label: string | undefined, ru: boolean): string {

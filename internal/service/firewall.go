@@ -115,14 +115,20 @@ func (s *FirewallService) desiredRules(auto bool, safetyPort int) ([]FirewallRul
 			}
 		}
 		for _, p := range ports {
-			if !p.Listening || p.Loopback || len(p.Processes) == 0 {
+			// Process lookup is best-effort (permissions, PID namespaces and
+			// process-exit races). The listening socket is the evidence.
+			if !p.Listening || p.Loopback {
 				continue
 			}
 			names := []string{}
 			for _, process := range p.Processes {
 				names = append(names, process.Name)
 			}
-			add(p.Port, p.Protocol, "service", strings.Join(names, ", "))
+			label := strings.Join(names, ", ")
+			if strings.TrimSpace(label) == "" {
+				label = "Listening port"
+			}
+			add(p.Port, p.Protocol, "service", label)
 		}
 	}
 	out := make([]FirewallRule, 0, len(m))

@@ -110,7 +110,7 @@ func (s *Server) handleExtendedAPI(w http.ResponseWriter, r *http.Request) bool 
 func activePortSnapshot(snapshot service.PortSnapshot) service.PortSnapshot {
 	ports := make([]service.Port, 0, len(snapshot.Ports))
 	for _, port := range snapshot.Ports {
-		if port.Listening && len(port.Processes) > 0 {
+		if port.Listening {
 			ports = append(ports, port)
 		}
 	}

@@ -283,7 +283,7 @@ export function PortsTable() {
     if (diagnostics) return snapshot.ports;
     const map = new Map<string, Port>();
     for (const port of snapshot.ports) {
-      if (!port.listening || !port.processes.length) continue;
+      if (!port.listening) continue;
       const k = `${port.family}-${port.address}-${port.protocol}-${port.port}`;
       const old = map.get(k);
       if (old) {

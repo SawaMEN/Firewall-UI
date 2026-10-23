@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.1
+
+- Fix native nftables port close/reopen and rollback failing with `existing nftables input hooks detected`: recognize the exact Firewall-UI-owned early INPUT hook in `firewall_ui_containers`, including recovery when the main table is missing. Continue rejecting foreign or changed input hooks.
+- Preserve the last working Firewall-UI policy if a real conflicting nftables hook appears; rejecting a change no longer deletes the installed protection.
+- Verify live closed-port enforcement for native nftables/iptables through the same actual INPUT and DNAT/FORWARD DROP checks used for system backends.
+- Keep listening TCP/UDP sockets visible in active lists and streams even when process/PID lookup is unavailable. Automatic opening, when enabled, uses the socket as evidence; loopback and explicitly closed ports remain excluded.
+- Add TCP/UDP close/repeat/reopen/recovery, foreign-hook preservation, ownerless-listener auto-sync, real socket monitoring, SSE and desktop/mobile browser regressions.
+
 ## 1.4.0
 
 A single consolidated release after **1.3.7**. All intervening implementation,
